@@ -31,5 +31,9 @@ secrets.json
 # Claude Code local permissions (project-personal)
 .claude/settings.local.json
 
+# Claude Code project-context file — kept locally for Claude sessions only,
+# deliberately NOT pushed to GitHub.
+CLAUDE.md
+
 # Sample runsheets — real church PDFs may contain volunteer names / PII
 *.pdf
