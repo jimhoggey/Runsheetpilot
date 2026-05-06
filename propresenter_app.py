@@ -11,6 +11,33 @@ End-user delivery: bundled .app/.dmg (Mac) and .exe (Windows) via PyInstaller.
 Dev usage:
   Mac:     ./launch_mac.sh   (or python3 propresenter_app.py)
   Windows: run.bat
+
+File map (for new contributors)
+───────────────────────────────
+This is intentionally a single file so PyInstaller has one entry point.
+Navigate by the "# ── ..." section dividers; inside the inline UI block,
+JS sections use matching "// ── ..." dividers near the top of <script>.
+
+Top-level regions, in order:
+  1. Constants, user data dir, logging
+  2. Flask app + global error handlers
+  3. PDF extraction
+  4. ProPresenter paths (cross-platform)
+  5. Library scan from disk
+  6. Fuzzy matching (song title → library)
+  7. AI prompt template + per-type colour map
+  8. Time/duration parsing + PP timer creation
+  9. Settings load/save
+ 10. API routes (one block per /api/* endpoint)
+ 11. HTML / CSS / JS — the entire UI, inlined (~half the file)
+ 12. Server bootstrap (port, browser, waitress)
+
+Common feature touch-points:
+  - new API endpoint    → region 10  + JS caller in region 11
+  - new UI panel        → HTML in region 11 + JS handler in region 11
+  - new settings field  → _default_settings() in region 9 + UI in region 11
+  - new runsheet type   → DEFAULT_PROMPT (region 7), TYPE_COLORS (region 7),
+                          tagClass() and CSS .tag-* (region 11)
 """
 
 import datetime as _dt
@@ -620,15 +647,18 @@ def api_fetch_library():
 def api_upload_and_parse():
     import requests as req
 
+    # 1. Validate request
     if "pdf" not in request.files:
         return jsonify({"error": "No PDF uploaded"}), 400
     pdf_file = request.files["pdf"]
     if not pdf_file.filename:
         return jsonify({"error": "Empty filename"}), 400
 
+    # 2. Save upload to a temp path (we delete it after extraction either way)
     tmp_path = UPLOAD_FOLDER / f"runsheet_{int(time.time()*1000)}.pdf"
     pdf_file.save(str(tmp_path))
 
+    # 3. Resolve API key + model (form values override saved settings)
     settings = load_settings()
     or_key = (request.form.get("or_key") or settings.get("or_key") or "").strip()
     model = (request.form.get("or_model")
@@ -640,6 +670,7 @@ def api_upload_and_parse():
         return jsonify({"error": "OpenRouter API key required."}), 400
 
     try:
+        # 4. Extract text from the PDF (always clean up the temp file)
         try:
             raw = extract_pdf_text(str(tmp_path))
         finally:
@@ -650,10 +681,11 @@ def api_upload_and_parse():
                 "Could not extract text from PDF. "
                 "Make sure it is a text-based PDF (not a scanned image)."}), 400
 
-        # Use the user-customised prompt if they've set one, else default.
-        # The {RUNSHEET} placeholder is replaced with the extracted PDF text.
-        # If the user removes the placeholder, we append the runsheet at the
-        # end so the model still sees it.
+        # 5. Assemble the prompt
+        # User-customised prompt if they've set one, else built-in default.
+        # {RUNSHEET} is replaced with the extracted PDF text; if the user
+        # removed the placeholder, we append the runsheet at the end so the
+        # model still sees it.
         prompt_template = (settings.get("ai_prompt") or "").strip() \
             or DEFAULT_PROMPT
         runsheet_text = raw[:7000]
@@ -663,6 +695,10 @@ def api_upload_and_parse():
             prompt = (f"{prompt_template}\n\nRUNSHEET:\n---\n"
                       f"{runsheet_text}\n---")
 
+        # 6. Call OpenRouter
+        # Specific 4xx responses become friendly JSON errors (HTTP 200 so the
+        # JS reads the message); everything else falls through to raise_for_status
+        # and surfaces as a generic 500.
         log.info(f"OpenRouter request: model={model}, raw_chars={len(raw)}")
         resp = req.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -693,11 +729,11 @@ def api_upload_and_parse():
                 "Check the model id at openrouter.ai/models."}), 200
         resp.raise_for_status()
 
+        # 7. Parse the AI response — strip markdown fences, accept either
+        # {service_name, items} (preferred) or a bare items array (older models).
         content = resp.json()["choices"][0]["message"]["content"].strip()
         content = re.sub(r"^```[a-z]*\n?", "", content)
         content = re.sub(r"\n?```$", "", content)
-        # Accept either {service_name, items} (preferred) or a bare items array
-        # (older / less compliant models).
         m_obj = re.search(r"\{.*\}", content, re.DOTALL)
         m_arr = re.search(r"\[.*\]", content, re.DOTALL)
         if m_obj:
@@ -715,7 +751,7 @@ def api_upload_and_parse():
         else:
             return jsonify({"error": "AI returned unexpected JSON shape."}), 500
 
-        # Fallback: derive a name from the filename
+        # 8. If the AI didn't supply a service name, derive one from the filename
         if not service_name and pdf_file.filename:
             stem = re.sub(r"\.pdf$", "", pdf_file.filename, flags=re.IGNORECASE)
             service_name = re.sub(r"[_]+", " ", stem).strip()
@@ -790,6 +826,9 @@ def api_create_playlist():
             m = mi.get("match")
             if p.get("type") == "song" and m:
                 pres_uuid = m.get("uuid", "")
+                # is_hidden / is_pco are required by the PP API. We never
+                # produce hidden items and don't integrate with Planning
+                # Center Online — both stay False on every item we send.
                 items.append({
                     "id":          {"uuid":  pres_uuid,
                                     "name":  m.get("name", ""),
@@ -1548,6 +1587,11 @@ button:focus-visible, .quit-btn:focus-visible {
     </button>
   </div>
 
+  <!-- Second host/port section. The same values appear in the API tab above
+       (#pp-host / #pp-port), but PP host/port is also relevant when *creating*
+       the playlist, so we surface it again here. The two pairs are mirrored
+       in JS (loadSettings binds input listeners both ways) so the user only
+       ever sees one set of values. -->
   <div class="sidebar-section">
     <div class="sec-title"><span>ProPresenter Connection</span></div>
     <div class="row" style="margin-bottom:8px">
@@ -1683,6 +1727,20 @@ button:focus-visible, .quit-btn:focus-visible {
 </div>
 
 <script>
+/* ─────────────────────────────────────────────────────────────────────────
+   UI script. Sections below match the regions in the Python module map:
+     1. Globals + UI helpers
+     2. Settings: load + auto-save
+     3. PDF upload + drag-and-drop
+     4. Library load (disk + API)
+     5. Connection test
+     6. Parse + render results table
+     7. Create playlist in ProPresenter
+     8. AI prompt modal
+     9. Quit + boot
+   ───────────────────────────────────────────────────────────────────────── */
+
+// ─── 1. Globals + UI helpers ──────────────────────────────────────────────
 let libraryItems = [];
 let matchedItems = [];
 let uploadedFile = null;
@@ -1719,6 +1777,7 @@ function setLoading(msg) {
   setStatus(`<div class="spinner"></div>${msg}`);
 }
 
+// ─── 2. Settings: load + auto-save ────────────────────────────────────────
 async function loadSettings() {
   const s = await fetch('/api/settings').then(r => r.json());
   document.getElementById('pp-host').value    = s.pp_host  || 'localhost';
@@ -1799,6 +1858,7 @@ async function saveSettings() {
   }
 }
 
+// ─── 3. PDF upload + drag-and-drop ────────────────────────────────────────
 function handleDragOver(e) {
   e.preventDefault();
   document.getElementById('drop-zone').classList.add('drag-over');
@@ -1823,6 +1883,7 @@ function handleFileSelect(file) {
   setStatus(`PDF loaded: ${file.name} — click Parse to send to AI.`);
 }
 
+// ─── 4. Library load (disk + API) ─────────────────────────────────────────
 function setLibStatus(msg, cls) {
   const el = document.getElementById('lib-status');
   el.textContent = msg;
@@ -1866,6 +1927,11 @@ async function fetchLibraryApi() {
   }
 }
 
+// ─── 5. Connection test ───────────────────────────────────────────────────
+// Two near-identical test functions because the host/port fields appear in
+// two sidebar sections (Library API tab + ProPresenter Connection). Each one
+// reads the values from its own section's inputs so the user can verify
+// either form before relying on it.
 async function _runTest(host, port) {
   return await fetch('/api/test_connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -1890,6 +1956,7 @@ async function testConnection2() {
     : `❌ Failed:\n${res.error}\n\nMake sure ProPresenter is running and Network is enabled.`);
 }
 
+// ─── 6. Parse runsheet + render results table ─────────────────────────────
 async function parseRunsheet() {
   if (!uploadedFile) { setStatus('Upload a PDF first.', 'var(--red)'); return; }
   if (!document.getElementById('or-key').value.trim()) {
@@ -2021,6 +2088,7 @@ function pickManual(idx) {
   renderResults();
 }
 
+// ─── 7. Create playlist in ProPresenter ───────────────────────────────────
 async function createPlaylist() {
   if (!matchedItems.length) { setStatus('Parse a runsheet first.', 'var(--red)'); return; }
   const name = document.getElementById('playlist-name').value.trim();
@@ -2087,7 +2155,7 @@ async function createPlaylist() {
   }
 }
 
-// ── AI prompt modal ────────────────────────────────────────────────────────
+// ─── 8. AI prompt modal ───────────────────────────────────────────────────
 let promptSaveTimer = null;
 
 async function openPromptModal() {
@@ -2153,6 +2221,7 @@ async function resetPrompt() {
   }
 }
 
+// ─── 9. Quit + boot ───────────────────────────────────────────────────────
 async function quitApp() {
   if (!confirm('Quit the ProPresenter Runsheet Builder?\n\nYou can reopen it from your Applications folder.')) return;
   try { await fetch('/api/quit', {method:'POST'}); } catch (_) {}
