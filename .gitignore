@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+build_venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local user data (these live in the OS app-data dir, but just in case)
+# settings.json holds the OpenRouter API key — must never be committed
+settings.json
+*.log
+
+# Secrets / env files — defensive (not used today, but never commit if added later)
+.env
+.env.*
+*.secret
+secrets.json
+
+# Claude Code local permissions (project-personal)
+.claude/settings.local.json
+
+# Sample runsheets — real church PDFs may contain volunteer names / PII
+*.pdf
