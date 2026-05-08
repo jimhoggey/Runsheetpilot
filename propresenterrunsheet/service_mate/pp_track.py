@@ -10,9 +10,26 @@ operator is actually doing in PP. Three signals, in priority order:
      walk backward through the playlist from the active item to find the
      most recent header, strip its decorations, and fuzzy-match against
      the runsheet titles.
+
+     Two robustness measures here, both tuned for the click-once-but-it's-
+     wrong bug:
+       * UUID-first resolution. PP can briefly return a stale or off-by-one
+         `playlist_item.id.index` right after an operator clicks; the
+         `playlist_item.id.uuid` it returns alongside is more reliable, so
+         we look up the active item's position in the cached playlist by
+         UUID and only fall back to the numeric index when UUID matching
+         fails (empty UUID, or test fixtures that don't carry UUIDs).
+       * Stickiness. Even with UUID matching we require the same target
+         section to come back from two consecutive polls before we commit
+         to advancing — that way a single bad poll right after a click
+         can't drag the clocks to the wrong section. Adds up to one
+         poll-interval (~2 s) of lag, which is acceptable for service ops.
   2. Running [RB] timer. Provides accurate remaining time when one of our
      timers is actually running.
-  3. Active presentation name match. Fallback for non-playlist usage.
+  3. Active presentation name match. Fallback for non-playlist usage —
+     SUPPRESSED whenever PP has an active playlist (signal 1 owns that
+     case, and falling through to name-fuzzy here was a major source of
+     "advanced to the wrong section" bugs).
 
 Manual cue clicks set a 10-second override window during which all three
 are suppressed so the operator's input isn't fought."""
@@ -33,6 +50,13 @@ log = logging.getLogger("pp_runsheet")
 # or when the cache is older than this many seconds.
 _PP_PLAYLIST_CACHE = {"uuid": None, "items": [], "fetched_at": 0.0}
 _PP_PLAYLIST_CACHE_TTL_S = 60
+
+# Stickiness for signal 1: require this many consecutive polls returning the
+# same target section before we actually advance `current_index`. Defends
+# against single bad polls right after a click (PP can briefly report stale
+# or off-by-one indices before its internal state settles).
+SECTION_ADVANCE_MIN_POLLS = 2
+_PENDING_SECTION_TARGET: dict = {"index": None, "count": 0}
 
 # Strip header decorations the create-playlist code adds, so we can match the
 # header name back to the original runsheet item title.
@@ -82,51 +106,79 @@ def _pp_get_playlist_items(base: str, playlist_uuid: str) -> list:
     return cache["items"] if cache["uuid"] == playlist_uuid else []
 
 
-def _pp_active_section_index(state: dict, base: str):
-    """Map the currently-active PP playlist item back to a runsheet item index.
+def _resolve_active_position(plist: list, active_uuid: str, active_index) -> int:
+    """Find the position of the currently-active playlist item in the cached
+    items list. Prefers UUID match — more robust than the numeric index, which
+    PP has been observed to briefly report stale or off-by-one right after an
+    operator clicks. Falls back to the numeric index when UUID matching fails
+    (empty UUID, or items that don't carry UUIDs in some test setups).
+    Returns -1 when neither matches."""
+    if active_uuid:
+        for i, item in enumerate(plist):
+            if (item.get("id") or {}).get("uuid") == active_uuid:
+                return i
+    if isinstance(active_index, int) and 0 <= active_index < len(plist):
+        return active_index
+    return -1
 
-    Operators commonly insert media items between our header rows; clicking
-    one of those should still advance the Service Mate to the section that
-    media belongs to. So we walk backward through the playlist from the
-    active item to find the most recent header, strip its decorations, and
-    fuzzy-match against the runsheet titles.
 
-    Returns a runsheet index, or None if no confident match."""
+def _pp_active_section_probe(state: dict, base: str) -> dict:
+    """Probe PP for the currently-active playlist item and resolve it back to
+    a runsheet section index. Returns a dict with:
+
+        section_idx: int | None
+            Best-matching runsheet index. None when no confident match.
+        has_active_playlist: bool
+            Whether PP currently has an active playlist at all. The caller
+            uses this to suppress signal 3 (the name-fuzzy fallback) — if
+            a playlist is active, signal 1 owns that case and we should
+            not fall through, even when section_idx itself is None."""
     import requests as req
+    result = {"section_idx": None, "has_active_playlist": False}
     try:
         r = req.get(f"{base}/v1/playlist/active", timeout=2)
         if not r.ok:
-            return None
+            return result
         data = r.json() or {}
         pres = data.get("presentation")
         if not isinstance(pres, dict):
-            return None
+            return result
         playlist = pres.get("playlist") or {}
         playlist_item = pres.get("playlist_item") or {}
         playlist_uuid = playlist.get("uuid")
-        active_index = (playlist_item.get("id") or {}).get("index")
-        if not playlist_uuid or active_index is None:
-            return None
+        if not playlist_uuid:
+            return result
+        # We have an active playlist — record that even if we end up unable
+        # to resolve a confident section match below.
+        result["has_active_playlist"] = True
+        playlist_item_id = playlist_item.get("id") or {}
+        active_uuid = playlist_item_id.get("uuid") or ""
+        active_index = playlist_item_id.get("index")
+        if not active_uuid and active_index is None:
+            return result
         plist = _pp_get_playlist_items(base, playlist_uuid)
-        if active_index >= len(plist):
-            # Cache might be stale — force refresh and retry once.
+        pos = _resolve_active_position(plist, active_uuid, active_index)
+        if pos < 0:
+            # Cache might be stale (operator just rearranged items in PP) —
+            # force a refresh and retry once.
             _PP_PLAYLIST_CACHE["uuid"] = None
             plist = _pp_get_playlist_items(base, playlist_uuid)
-            if active_index >= len(plist):
-                return None
+            pos = _resolve_active_position(plist, active_uuid, active_index)
+            if pos < 0:
+                return result
         # Find the section header for the active item: itself if it's a
         # header, else walk backward.
         header_name = ""
-        if plist[active_index].get("type") == "header":
-            header_name = (plist[active_index].get("id") or {}).get("name", "")
+        if plist[pos].get("type") == "header":
+            header_name = (plist[pos].get("id") or {}).get("name", "")
         else:
-            for i in range(active_index - 1, -1, -1):
+            for i in range(pos - 1, -1, -1):
                 if plist[i].get("type") == "header":
                     header_name = (plist[i].get("id") or {}).get("name", "")
                     break
         clean = _clean_header_name(header_name)
         if not clean:
-            return None
+            return result
         items = state.get("items") or []
         best_i, best_score = -1, 0.0
         nn = _norm(clean)
@@ -137,10 +189,19 @@ def _pp_active_section_index(state: dict, base: str):
             if score > best_score:
                 best_score, best_i = score, i
         if best_i >= 0 and best_score >= 0.6:
-            return best_i
+            result["section_idx"] = best_i
     except Exception:
         log.debug("PP /v1/playlist/active fetch failed", exc_info=True)
-    return None
+    return result
+
+
+def _pp_active_section_index(state: dict, base: str):
+    """Map the currently-active PP playlist item back to a runsheet item
+    index. Thin wrapper around `_pp_active_section_probe` — preserved as a
+    standalone callable for the test suite. Returns the section index, or
+    None when no confident match (or when PP isn't reachable / has no
+    active playlist)."""
+    return _pp_active_section_probe(state, base)["section_idx"]
 
 
 def _maybe_advance_from_pp(state: dict) -> dict:
@@ -170,12 +231,29 @@ def _maybe_advance_from_pp(state: dict) -> dict:
     if not items:
         return state
 
-    # 1) Active playlist section (primary signal)
-    section_idx = _pp_active_section_index(state, base)
-    if section_idx is not None and section_idx != state.get("current_index"):
-        state["current_index"] = section_idx
-        state["current_started_at"] = _dt.datetime.now().isoformat()
-        state["pp_source"] = "section"
+    # 1) Active playlist section (primary signal) — gated by stickiness so a
+    # single bad poll right after a click can't drag us to the wrong section.
+    probe = _pp_active_section_probe(state, base)
+    section_idx = probe["section_idx"]
+    has_active_playlist = probe["has_active_playlist"]
+
+    if section_idx is not None:
+        if section_idx == state.get("current_index"):
+            # Already there — clear any pending target.
+            _PENDING_SECTION_TARGET["index"] = None
+            _PENDING_SECTION_TARGET["count"] = 0
+        elif _PENDING_SECTION_TARGET["index"] == section_idx:
+            _PENDING_SECTION_TARGET["count"] += 1
+            if _PENDING_SECTION_TARGET["count"] >= SECTION_ADVANCE_MIN_POLLS:
+                state["current_index"] = section_idx
+                state["current_started_at"] = _dt.datetime.now().isoformat()
+                state["pp_source"] = "section"
+                _PENDING_SECTION_TARGET["index"] = None
+                _PENDING_SECTION_TARGET["count"] = 0
+        else:
+            # New target — start counting; don't advance yet.
+            _PENDING_SECTION_TARGET["index"] = section_idx
+            _PENDING_SECTION_TARGET["count"] = 1
 
     # 2) Running [RB] timer — overlays accurate remaining time on top of (1).
     timer_running = False
@@ -208,7 +286,12 @@ def _maybe_advance_from_pp(state: dict) -> dict:
     except Exception:
         log.debug("PP /v1/timers/current poll failed", exc_info=True)
 
-    if section_idx is not None or timer_running:
+    # Suppress signal 3 (name-fuzzy fallback) whenever PP has an active
+    # playlist. Signal 1 owns the playlist case — letting signal 3 fire here
+    # was a major source of "advanced to the wrong section" bugs (it would
+    # match the active presentation's name against a runsheet item below the
+    # current section while signal 1 was briefly returning None).
+    if section_idx is not None or timer_running or has_active_playlist:
         return state
 
     # 3) Active presentation name match (fallback for non-playlist mode)

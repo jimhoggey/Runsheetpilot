@@ -264,3 +264,255 @@ def test_pp_active_section_index_returns_none_when_pp_unreachable(app_module, mo
     assert app_module._pp_active_section_index(
         {"items": [{"title": "a"}]}, "http://localhost:55416"
     ) is None
+
+
+def test_pp_active_section_uuid_match_wins_over_index(app_module, monkeypatch):
+    """The bug case: PP briefly returns a stale or off-by-one numeric index
+    after an operator clicks a media item. The accompanying UUID is correct,
+    so we should resolve the active item's position by UUID and walk back
+    from THERE — not from the bogus index, which would land on the next
+    section's header."""
+    playlist_uuid = "PLIST-UUID"
+    # PP says active item is at index=3 (the next section's header), but its
+    # UUID matches the SERMON item which actually lives at position 1.
+    active_response = {"presentation": {
+        "playlist":      {"uuid": playlist_uuid, "name": "Sunday", "index": 0},
+        "playlist_item": {"id": {"uuid": "SERMON-UUID",
+                                 "name": "Sermon Slides", "index": 3}},
+    }}
+    full_playlist_response = {"items": [
+        {"id": {"uuid": "PREACH-HDR", "name": "Preach  —  10:30 AM"},
+         "type": "header"},
+        {"id": {"uuid": "SERMON-UUID", "name": "Sermon Slides"},
+         "type": "presentation"},
+        {"id": {"uuid": "RESPONSE-HDR", "name": "Response  —  11:00 AM"},
+         "type": "header"},
+        {"id": {"uuid": "RESPONSE-SONG", "name": "Response Song"},
+         "type": "presentation"},
+    ]}
+
+    def fake_get(url, *a, **kw):
+        if url.endswith("/v1/playlist/active"):
+            return _StubResponse(active_response)
+        if f"/v1/playlist/{playlist_uuid}" in url:
+            return _StubResponse(full_playlist_response)
+        return _StubResponse({}, status=404)
+
+    from propresenterrunsheet.service_mate import pp_track
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
+                        {"uuid": None, "items": [], "fetched_at": 0.0})
+    import requests as req
+    monkeypatch.setattr(req, "get", fake_get)
+
+    state = {"items": [
+        {"title": "Preach"},       # idx 0 — what we should land on
+        {"title": "Response"},     # idx 1 — wrong answer (the bug)
+    ], "current_index": 0}
+    # Without the UUID-first fix, `index=3` would point at "Response  —  11 AM",
+    # which is itself a header → we'd return idx 1 (Response). With UUID-first
+    # we resolve to position 1 (Sermon Slides), walk back to position 0
+    # (Preach header), match runsheet idx 0.
+    assert app_module._pp_active_section_index(
+        state, "http://localhost:55416"
+    ) == 0
+
+
+def test_maybe_advance_requires_two_polls_before_committing(app_module, monkeypatch):
+    """Stickiness: a single poll showing a new target shouldn't move
+    current_index — that lets a transient bad poll right after a click drag
+    the clocks to the wrong section. We require the same target to come back
+    on the next poll before committing."""
+    playlist_uuid = "PLIST-UUID"
+    active_response = {"presentation": {
+        "playlist":      {"uuid": playlist_uuid, "name": "Sunday", "index": 0},
+        "playlist_item": {"id": {"uuid": "SERMON-UUID",
+                                 "name": "Sermon Slides", "index": 1}},
+    }}
+    full_playlist_response = {"items": [
+        {"id": {"uuid": "PREACH-HDR", "name": "Preach"},  "type": "header"},
+        {"id": {"uuid": "SERMON-UUID", "name": "Sermon"},
+         "type": "presentation"},
+    ]}
+
+    def fake_get(url, *a, **kw):
+        if url.endswith("/v1/playlist/active"):
+            return _StubResponse(active_response)
+        if f"/v1/playlist/{playlist_uuid}" in url:
+            return _StubResponse(full_playlist_response)
+        if url.endswith("/v1/timers/current"):
+            return _StubResponse([])
+        return _StubResponse({}, status=404)
+
+    from propresenterrunsheet.service_mate import pp_track
+    from propresenterrunsheet import settings as ppr_settings
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
+                        {"uuid": None, "items": [], "fetched_at": 0.0})
+    monkeypatch.setattr(pp_track, "_PENDING_SECTION_TARGET",
+                        {"index": None, "count": 0})
+    monkeypatch.setattr(ppr_settings, "load_settings",
+                        lambda: {"pp_host": "localhost", "pp_port": "55416"})
+    import requests as req
+    monkeypatch.setattr(req, "get", fake_get)
+
+    state = {"items": [
+        {"title": "Welcome"},  # idx 0 — current
+        {"title": "Preach"},   # idx 1 — target
+    ], "current_index": 0,
+       "auto_track": {"enabled": True}}
+
+    # First poll: target detected (1), but pending — no commit yet.
+    state = app_module._maybe_advance_from_pp(state)
+    assert state["current_index"] == 0
+    assert pp_track._PENDING_SECTION_TARGET["index"] == 1
+    assert pp_track._PENDING_SECTION_TARGET["count"] == 1
+
+    # Second poll: same target — commits.
+    state = app_module._maybe_advance_from_pp(state)
+    assert state["current_index"] == 1
+    assert state.get("pp_source") == "section"
+    assert pp_track._PENDING_SECTION_TARGET["index"] is None
+    assert pp_track._PENDING_SECTION_TARGET["count"] == 0
+
+
+def test_maybe_advance_resets_pending_when_target_changes(app_module, monkeypatch):
+    """A flickering signal (target jumps poll-to-poll) shouldn't ever commit.
+    The pending counter resets to 1 whenever the target changes."""
+    playlist_uuid = "PLIST-UUID"
+    full_playlist_response = {"items": [
+        {"id": {"uuid": "H-PREACH", "name": "Preach"},  "type": "header"},
+        {"id": {"uuid": "SLIDE-A", "name": "Slide A"},  "type": "presentation"},
+        {"id": {"uuid": "H-RESP",  "name": "Response"}, "type": "header"},
+        {"id": {"uuid": "SLIDE-B", "name": "Slide B"},  "type": "presentation"},
+    ]}
+    # Alternate which item PP claims is active on each call.
+    active_uuids = iter(["SLIDE-A", "SLIDE-B", "SLIDE-A"])
+
+    def fake_get(url, *a, **kw):
+        if url.endswith("/v1/playlist/active"):
+            uuid = next(active_uuids)
+            return _StubResponse({"presentation": {
+                "playlist":      {"uuid": playlist_uuid},
+                "playlist_item": {"id": {"uuid": uuid, "name": "x", "index": 0}},
+            }})
+        if f"/v1/playlist/{playlist_uuid}" in url:
+            return _StubResponse(full_playlist_response)
+        if url.endswith("/v1/timers/current"):
+            return _StubResponse([])
+        return _StubResponse({}, status=404)
+
+    from propresenterrunsheet.service_mate import pp_track
+    from propresenterrunsheet import settings as ppr_settings
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
+                        {"uuid": None, "items": [], "fetched_at": 0.0})
+    monkeypatch.setattr(pp_track, "_PENDING_SECTION_TARGET",
+                        {"index": None, "count": 0})
+    monkeypatch.setattr(ppr_settings, "load_settings",
+                        lambda: {"pp_host": "localhost", "pp_port": "55416"})
+    import requests as req
+    monkeypatch.setattr(req, "get", fake_get)
+
+    state = {"items": [
+        {"title": "Preach"},    # idx 0
+        {"title": "Response"},  # idx 1
+    ], "current_index": 0,
+       "auto_track": {"enabled": True}}
+
+    # Three flickering polls — each one is a different target than the last,
+    # so the counter never reaches the threshold; current_index stays put.
+    for _ in range(3):
+        state = app_module._maybe_advance_from_pp(state)
+    assert state["current_index"] == 0
+
+
+def test_maybe_advance_suppresses_signal_3_when_playlist_active(app_module, monkeypatch):
+    """When PP has an active playlist but signal 1 can't resolve a confident
+    section, signal 3 (presentation-name fuzzy match) must NOT fire — it was
+    a major source of "advanced to wrong section" bugs. Signal 3 is only the
+    right channel when there's no active playlist at all."""
+    playlist_uuid = "PLIST-UUID"
+    # Active playlist exists, but the active item's header doesn't appear in
+    # our cached playlist (e.g., operator added an unrelated item) → signal 1
+    # returns None for section_idx, but has_active_playlist is True.
+    active_response = {"presentation": {
+        "playlist":      {"uuid": playlist_uuid, "name": "Sunday"},
+        "playlist_item": {"id": {"uuid": "UNKNOWN-UUID",
+                                 "name": "Unknown", "index": 99}},
+    }}
+    full_playlist_response = {"items": [
+        {"id": {"uuid": "H-WELCOME", "name": "Welcome"}, "type": "header"},
+    ]}
+    # Signal 3 would happily match this against runsheet item "Response".
+    presentation_response = {"presentation": {
+        "id": {"name": "Response"},
+    }}
+
+    def fake_get(url, *a, **kw):
+        if url.endswith("/v1/playlist/active"):
+            return _StubResponse(active_response)
+        if f"/v1/playlist/{playlist_uuid}" in url:
+            return _StubResponse(full_playlist_response)
+        if url.endswith("/v1/timers/current"):
+            return _StubResponse([])
+        if url.endswith("/v1/presentation/active"):
+            return _StubResponse(presentation_response)
+        return _StubResponse({}, status=404)
+
+    from propresenterrunsheet.service_mate import pp_track
+    from propresenterrunsheet import settings as ppr_settings
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
+                        {"uuid": None, "items": [], "fetched_at": 0.0})
+    monkeypatch.setattr(pp_track, "_PENDING_SECTION_TARGET",
+                        {"index": None, "count": 0})
+    monkeypatch.setattr(ppr_settings, "load_settings",
+                        lambda: {"pp_host": "localhost", "pp_port": "55416"})
+    import requests as req
+    monkeypatch.setattr(req, "get", fake_get)
+
+    state = {"items": [
+        {"title": "Welcome"},   # idx 0 — current
+        {"title": "Response"},  # idx 1 — what signal 3 would advance to
+    ], "current_index": 0,
+       "auto_track": {"enabled": True}}
+
+    state = app_module._maybe_advance_from_pp(state)
+    # Suppression worked: signal 3 didn't fire, so we stayed at 0.
+    assert state["current_index"] == 0
+    assert state.get("pp_source") != "presentation"
+
+
+def test_maybe_advance_signal_3_still_fires_without_active_playlist(app_module, monkeypatch):
+    """Sanity check: the suppression in the previous test only kicks in when
+    a playlist is active. With no active playlist (PP in non-playlist mode),
+    signal 3 should still work — that's its whole purpose."""
+    # No active playlist — /v1/playlist/active returns empty/no presentation.
+    def fake_get(url, *a, **kw):
+        if url.endswith("/v1/playlist/active"):
+            return _StubResponse({"presentation": None})
+        if url.endswith("/v1/timers/current"):
+            return _StubResponse([])
+        if url.endswith("/v1/presentation/active"):
+            return _StubResponse({"presentation": {
+                "id": {"name": "Sermon"},
+            }})
+        return _StubResponse({}, status=404)
+
+    from propresenterrunsheet.service_mate import pp_track
+    from propresenterrunsheet import settings as ppr_settings
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
+                        {"uuid": None, "items": [], "fetched_at": 0.0})
+    monkeypatch.setattr(pp_track, "_PENDING_SECTION_TARGET",
+                        {"index": None, "count": 0})
+    monkeypatch.setattr(ppr_settings, "load_settings",
+                        lambda: {"pp_host": "localhost", "pp_port": "55416"})
+    import requests as req
+    monkeypatch.setattr(req, "get", fake_get)
+
+    state = {"items": [
+        {"title": "Welcome"},
+        {"title": "Sermon"},
+    ], "current_index": 0,
+       "auto_track": {"enabled": True}}
+
+    state = app_module._maybe_advance_from_pp(state)
+    assert state["current_index"] == 1
+    assert state.get("pp_source") == "presentation"
