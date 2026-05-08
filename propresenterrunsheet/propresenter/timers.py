@@ -57,10 +57,7 @@ def _create_pp_timers(base: str, playlist_name: str, matched: list) -> dict:
     `timer_names` maps runsheet item index → exact timer name created, used
     by the Service Mate auto-track to identify the running [RB] timer."""
     import requests as req
-    # Lazy import: phase 4 of the refactor will move these into the package
-    # (as parsing/duration.py); for now they live in propresenter_app.py and
-    # importing at module top would cycle through the package's __init__.
-    from propresenter_app import _extract_duration_min, _extract_time_str
+    from ..parsing.duration import _extract_duration_min, _extract_time_str
 
     deleted = _delete_existing_rb_timers(base)
 

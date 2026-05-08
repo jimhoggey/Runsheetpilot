@@ -149,11 +149,8 @@ def _maybe_advance_from_pp(state: dict) -> dict:
     Manual cue clicks set a 10-second override window during which all three
     signals are suppressed so the operator's input isn't fought."""
     import requests as req
-    # Lazy import: load_settings still lives in propresenter_app (phase 4 of
-    # the refactor moves it). Importing it at module top would cycle through
-    # the package's __init__.py.
-    from propresenter_app import load_settings
     from ..propresenter.timers import _RB_TIMER_PREFIX
+    from ..settings import load_settings
 
     auto = (state.get("auto_track") or {})
     if not auto.get("enabled", True):
