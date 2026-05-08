@@ -1,0 +1,54 @@
+name: Tests
+
+# Run on every PR and on every push to main, so reviewers see status before
+# merging and main never silently goes red.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to a PR cancels the in-flight run for that same branch — saves
+# CI minutes when you push a fix-up commit.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Match what the user is realistically running locally (3.9 system
+        # Python on macOS) and what's current on supported distros.
+        python-version: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Syntax check (fast fail before pytest)
+        run: python -c "import ast; ast.parse(open('propresenter_app.py').read())"
+
+      - name: Import smoke test
+        # Catches import-time crashes (missing deps, bad globals, etc.) that
+        # pytest's collection would otherwise surface as a confusing collection
+        # error. Cheap; runs in <1s.
+        run: python -c "import propresenter_app; print('imported OK, version', propresenter_app.VERSION)"
+
+      - name: Run pytest
+        run: pytest tests/ -v
