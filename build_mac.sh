@@ -69,6 +69,8 @@ pyinstaller \
     --hidden-import flask \
     --hidden-import pdfplumber \
     --hidden-import tkinter \
+    --add-data "templates:templates" \
+    --add-data "static:static" \
     "$ENTRY"
 
 if [ ! -d "dist/${APP_BUNDLE_NAME}" ]; then
