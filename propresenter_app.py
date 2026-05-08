@@ -533,9 +533,13 @@ RUNSHEET_STATE_FILE = DATA_DIR / "runsheet_state.json"
 CLOCKS_CONFIG_FILE  = DATA_DIR / "clocks.json"
 
 # Display constants — Ultra is 240×240 RGB.
+# Firmware (v9.0.39 confirmed) only renders JPG/GIF in Photo Album mode — PNG
+# uploads succeed but the device won't display them. So we encode as JPEG.
 SM_W, SM_H = 240, 240
-SM_FILENAME = "rb_cue.png"  # uploaded under /image/ on the device
-SM_ULTRA_IMAGE_THEME = 3    # Ultra=3, Pro=4 (per HACS device.py)
+SM_FILENAME = "rb_cue.jpg"           # uploaded under /image/ on the device
+SM_TESTCARD_FILENAME = "rb_test.jpg"
+SM_JPEG_QUALITY = 90
+SM_ULTRA_IMAGE_THEME = 3   # Theme 3 = "Photo Album" (custom image full-screen)
 
 # Role accent colours used in the rendered cue images. Hex tuples (RGB).
 ROLE_ACCENT = {
@@ -697,9 +701,10 @@ def _compute_remaining_seconds(state: dict):
 
 
 def _render_cue(role: str, state: dict) -> bytes:
-    """Render a 240×240 PNG for a given role and the current runsheet state.
-    Returns PNG bytes (always — no exceptions to caller; on failure returns
-    a plain placeholder image)."""
+    """Render a 240×240 JPEG for a given role and the current runsheet state.
+    Returns JPEG bytes (always — no exceptions to caller; on failure returns
+    a plain placeholder image). JPEG (not PNG) because v9.0.39 firmware only
+    displays JPG/GIF in Photo Album mode."""
     from PIL import Image, ImageDraw, ImageFont
     from io import BytesIO
     accent = ROLE_ACCENT.get(role, (120, 120, 140))
@@ -788,7 +793,7 @@ def _render_cue(role: str, state: dict) -> bytes:
         draw.text((8, SM_H - 22), ct, fill=(255, 255, 255), font=f_cue)
 
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
     return buf.getvalue()
 
 
@@ -852,7 +857,7 @@ def _render_test_card(role: str, ip: str = "") -> bytes:
         tw3 = draw.textlength(ip, font=f_sm)
         draw.text(((SM_W - tw3) / 2, 156), ip, fill=(220, 220, 235), font=f_sm)
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
     return buf.getvalue()
 
 
@@ -861,16 +866,26 @@ def _render_test_card(role: str, ip: str = "") -> bytes:
 _CLOCK_THEME_SET: set = set()
 
 
-def _push_to_clock(ip: str, png_bytes: bytes,
+def _push_to_clock(ip: str, image_bytes: bytes,
                    filename: str = SM_FILENAME) -> bool:
     """Upload an image to a GeekMagic Ultra and switch its display to it.
     Returns True on success. Treats the firmware's malformed-HTTP-after-POST
-    quirk as success (HACS does the same)."""
+    quirk as success (HACS does the same).
+
+    `image_bytes` should be JPEG or GIF — v9.0.39 firmware does not display
+    PNG in Photo Album mode (uploads succeed silently but never render)."""
     import requests as req
     if not ip:
         return False
     base = f"http://{ip}"
-    files = {"file": (filename, png_bytes, "image/png")}
+    fl = (filename or SM_FILENAME).lower()
+    if fl.endswith(".gif"):
+        ctype = "image/gif"
+    elif fl.endswith(".png"):
+        ctype = "image/png"
+    else:
+        ctype = "image/jpeg"
+    files = {"file": (filename, image_bytes, ctype)}
     try:
         try:
             r = req.post(f"{base}/doUpload", params={"dir": "/image/"},
@@ -878,11 +893,15 @@ def _push_to_clock(ip: str, png_bytes: bytes,
             if not r.ok:
                 log.warning(f"Clock {ip} upload returned {r.status_code}")
         except (req.exceptions.ChunkedEncodingError,
+                req.exceptions.InvalidHeader,
+                req.exceptions.ContentDecodingError,
                 req.exceptions.ConnectionError) as e:
-            # Ultra firmware sends malformed HTTP on POST — Python's parser
-            # raises here even though the upload usually succeeded. We swallow
-            # it and try the GET that follows; if that succeeds, we know the
-            # image landed.
+            # Ultra firmware (v9.0.39) sends malformed HTTP on POST —
+            # specifically, it returns a response with two unmatching
+            # Content-Length headers (e.g. "3888, 11"). urllib3 / requests
+            # raise InvalidHeader (newer) or ChunkedEncodingError (older)
+            # even though the upload itself succeeded. Verified by checking
+            # that GET /image/<filename> returns 200 after such errors.
             log.debug(f"Clock {ip} POST raised {type(e).__name__} (ignored — "
                       "Ultra firmware quirk)")
         # Switch to custom-image mode (only first time per process)
@@ -1377,6 +1396,23 @@ def api_upload_and_parse():
             if isinstance(it, dict):
                 _ensure_item_cues(it)
 
+        # Also seed the Service Mate runsheet state on parse — so the user can
+        # test the clock cue flow without going through Create Playlist (which
+        # requires ProPresenter to be running). Create Playlist later overwrites
+        # this with the timer-name-stamped version for auto-track.
+        try:
+            sm_state = {
+                "service_name":       service_name or pdf_file.filename or "Runsheet",
+                "items":              items,
+                "current_index":      0,
+                "current_started_at": _dt.datetime.now().isoformat(),
+                "auto_track":         {"enabled": True},
+            }
+            _write_runsheet_state(sm_state)
+            log.info(f"Service Mate state seeded from parse: {len(items)} items")
+        except Exception:
+            log.exception("Service Mate parse-time state write failed")
+
         log.info(f"AI parsed {len(items)} runsheet items, "
                  f"suggested name: {service_name!r}")
         return jsonify({
@@ -1737,10 +1773,10 @@ def api_clock_test(clock_id: str):
     if not ip:
         return jsonify({"ok": False, "error": "no IP set"}), 200
     role = clock.get("role") or "screen"
-    png = _render_test_card(role, ip)
+    jpg = _render_test_card(role, ip)
     if cfg.get("brightness"):
         _set_clock_brightness(ip, int(cfg["brightness"]))
-    ok = _push_to_clock(ip, png, filename="rb_test.png")
+    ok = _push_to_clock(ip, jpg, filename=SM_TESTCARD_FILENAME)
     return jsonify({"ok": ok})
 
 
@@ -1760,8 +1796,8 @@ def api_clocks_preview():
         "current_index": 0,
         "current_started_at": _dt.datetime.now().isoformat(),
     }
-    png = _render_cue(role, state)
-    return Response(png, mimetype="image/png",
+    jpg = _render_cue(role, state)
+    return Response(jpg, mimetype="image/jpeg",
                     headers={"Cache-Control": "no-store"})
 
 
