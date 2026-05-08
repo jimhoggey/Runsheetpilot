@@ -155,6 +155,54 @@ def test_clock_probe_unknown_id_404s(client):
     assert r.status_code == 404
 
 
+# ── Standby (pre-service waiting page) ───────────────────────────────────────
+
+def test_standby_sets_flag_and_clears_items(client):
+    # Seed a real runsheet first…
+    client.post("/api/runsheet/state", json={
+        "items": [{"type": "song", "title": "a"},
+                  {"type": "song", "title": "b"}],
+        "current_index": 1,
+    })
+    # …then hit standby.
+    r = client.post("/api/clocks/standby")
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
+    state = client.get("/api/runsheet/state").get_json()
+    assert state["standby"] is True
+    assert state["items"] == []
+
+
+def test_standby_invalidates_push_cache(client, app_module):
+    """The endpoint must clear `_CLOCKS_LOOP_LAST_PUSHED` so the daemon
+    re-pushes on the next tick instead of waiting for the 40 s anti-bitrot
+    refresh."""
+    app_module._CLOCKS_LOOP_LAST_PUSHED["screen"] = ("deadbeef", 12345.0)
+    client.post("/api/clocks/standby")
+    assert "screen" not in app_module._CLOCKS_LOOP_LAST_PUSHED
+
+
+def test_loading_runsheet_clears_standby(client):
+    client.post("/api/clocks/standby")
+    assert client.get("/api/runsheet/state").get_json()["standby"] is True
+    # Posting a real runsheet replaces state — standby key falls out.
+    client.post("/api/runsheet/state", json={
+        "items": [{"type": "song", "title": "a"}],
+    })
+    state = client.get("/api/runsheet/state").get_json()
+    assert "standby" not in state or state["standby"] is False
+
+
+def test_preview_shows_standby_when_flag_set(client):
+    """When the operator has hit Standby, the inline preview should mirror
+    the device — so all three roles return a JPEG (the standby page)."""
+    client.post("/api/clocks/standby")
+    for role in ("screen", "sound", "lights"):
+        r = client.get(f"/api/clocks/preview?role={role}")
+        assert r.status_code == 200
+        assert r.data.startswith(JPEG_MAGIC)
+
+
 # ── Inline clock preview ─────────────────────────────────────────────────────
 
 def test_preview_returns_jpeg_for_each_role(client):
