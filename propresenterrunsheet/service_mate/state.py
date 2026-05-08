@@ -13,10 +13,14 @@ attributes so tests can monkeypatch them onto an isolated tmpdir
 (see tests/conftest.py)."""
 
 import json
+import logging
 
-from propresenter_app import DATA_DIR, log
+from propresenter_app import DATA_DIR
 
 from .constants import ROLE_CUE_TABLES, SM_VERBOSITY_DEFAULT
+
+
+log = logging.getLogger("pp_runsheet")
 
 
 RUNSHEET_STATE_FILE = DATA_DIR / "runsheet_state.json"

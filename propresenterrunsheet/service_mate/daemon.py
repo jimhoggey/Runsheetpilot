@@ -9,10 +9,9 @@ Kept separate from the route handlers so the loop can run independently of
 any HTTP request — boot the server, the daemon starts and keeps the clocks
 fresh."""
 
+import logging
 import threading
 import time
-
-from propresenter_app import log
 
 from .constants import (
     SM_LOOP_INTERVAL_S, SM_PP_POLL_EVERY_N_TICKS, SM_VERBOSITIES,
@@ -22,6 +21,9 @@ from .geekmagic import _push_to_clock
 from .pp_track import _maybe_advance_from_pp
 from .render import _render_cue, _render_standby
 from .state import _read_clocks_config, _read_runsheet_state, _write_runsheet_state
+
+
+log = logging.getLogger("pp_runsheet")
 
 
 # Module-level so other endpoints (e.g. /api/clocks/<id>/test, /standby) can

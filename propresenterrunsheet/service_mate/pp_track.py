@@ -19,10 +19,14 @@ are suppressed so the operator's input isn't fought."""
 
 import datetime as _dt
 import difflib
+import logging
 import re
 import time
 
-from propresenter_app import log
+from ..propresenter.library import _norm
+
+
+log = logging.getLogger("pp_runsheet")
 
 
 # Cached playlist contents — refreshed when the active playlist UUID changes
@@ -40,14 +44,6 @@ _HDR_PAREN_TIME_RE = re.compile(
     r"\s*\(\s*\d{1,2}:\d{2}\s*[AaPp][Mm]\s*\)\s*$"
 )
 _HDR_BOOK_RE = re.compile(r"^📖\s*")
-
-
-def _norm(s: str) -> str:
-    """Local copy of the fuzzy-matching normaliser. Duplicated (rather than
-    imported) from propresenter_app to keep this module's dependency surface
-    tight — phase 3 of the refactor will move both copies into a shared
-    propresenter/library.py and unify them."""
-    return re.sub(r"[^\w\s]", "", (s or "").lower().strip())
 
 
 def _clean_header_name(name: str) -> str:
@@ -153,10 +149,11 @@ def _maybe_advance_from_pp(state: dict) -> dict:
     Manual cue clicks set a 10-second override window during which all three
     signals are suppressed so the operator's input isn't fought."""
     import requests as req
-    # Lazy import: load_settings + _RB_TIMER_PREFIX live in propresenter_app
-    # for now. Phase 3/4 of the refactor moves them. Importing at module top
-    # would create a cycle through the package's __init__.py.
-    from propresenter_app import load_settings, _RB_TIMER_PREFIX
+    # Lazy import: load_settings still lives in propresenter_app (phase 4 of
+    # the refactor moves it). Importing it at module top would cycle through
+    # the package's __init__.py.
+    from propresenter_app import load_settings
+    from ..propresenter.timers import _RB_TIMER_PREFIX
 
     auto = (state.get("auto_track") or {})
     if not auto.get("enabled", True):

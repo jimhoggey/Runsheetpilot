@@ -78,9 +78,10 @@ def api_runsheet_cue():
 
 @bp.route("/api/runsheet/state", methods=["DELETE"])
 def api_runsheet_state_delete():
+    import logging
     # Read the file path through the module so monkeypatched tmp paths in
     # tests are honoured (conftest patches _sm_state.RUNSHEET_STATE_FILE).
-    from propresenter_app import log
+    log = logging.getLogger("pp_runsheet")
     try:
         if _sm_state.RUNSHEET_STATE_FILE.exists():
             _sm_state.RUNSHEET_STATE_FILE.unlink()
