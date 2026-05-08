@@ -100,6 +100,48 @@ The Windows `.exe` must be built on a Windows machine — PyInstaller doesn't cr
 
 ---
 
+## Service Mate — GeekMagic clocks (optional)
+
+If you have one or more **GeekMagic SmallTV-Ultra** clocks on your LAN, the
+app can use them as silent visual cue prompters at the Screen, Sound, and
+Lights stations during a service. Each clock shows the **current** runsheet
+item, a live MM:SS countdown, and a short **role-aware** hint of what's next
+(e.g. for the sound op, "Mic on for Ps Nick"; for the lights op, "Spot —
+preacher").
+
+### Setup
+
+1. Plug the clock into USB power, connect it to your Wi-Fi via the GeekMagic
+   mobile app, and note its IP address (your router's client list works too).
+2. In the app's **Service Mate · GeekMagic clocks** panel, enter the IP for
+   each role (Screen, Sound, Lights). Click **Probe** to confirm the IP — a
+   green ✓ means the clock answered. Click **Test** to push a coloured test
+   card.
+3. Upload + parse a runsheet, then **Create Playlist** — the runsheet is
+   saved to disk and the clocks immediately start showing item 1.
+4. Use the **Prev / Next** buttons in the Cue panel to step through the
+   service, or leave **Auto-track ProPresenter** on and the clocks will
+   follow whichever `[RB]` countdown timer is running in ProPresenter.
+
+### How it works
+
+The clocks have no app-level "show this text" endpoint. The app renders a
+240×240 PNG every couple of seconds (current item, countdown, cue line) and
+pushes it to each clock over HTTP using the device's stock firmware — no
+flashing required. Per-role cues are LLM-generated when the runsheet is
+parsed, with a built-in rule-table fallback if the LLM doesn't supply one.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Probe says "✗ ConnectionError" | The IP is wrong, or the clock is on a different subnet from your computer. |
+| Test pushes but the screen doesn't update | The clock is in clock/weather mode. The first push of a session sends `theme=3` to switch it into custom-image mode — wait ~3 seconds. |
+| Clock shows old image after restart | The app's runsheet state is on disk; pull up the page and click any **Next/Prev** button to force a refresh. |
+| Auto-track doesn't follow | Auto-track only follows `[RB]`-prefixed timers (the ones this app creates). Make sure **Create timers** was on when you created the playlist. |
+
+---
+
 ## Where settings and logs live
 
 The app stores its config and logs **outside** the source tree so they survive across reinstalls and work inside frozen bundles:
@@ -109,4 +151,4 @@ The app stores its config and logs **outside** the source tree so they survive a
 | Mac | `~/Library/Application Support/ProPresenter Runsheet Builder/` |
 | Windows | `%APPDATA%\ProPresenter Runsheet Builder\` |
 
-Files in there: `settings.json` (includes your OpenRouter API key — gitignored, never committed), `app.log` (rotated, 512 KB × 3).
+Files in there: `settings.json` (includes your OpenRouter API key — gitignored, never committed), `app.log` (rotated, 512 KB × 3), `runsheet_state.json` (Service Mate cue state), `clocks.json` (Service Mate clock IPs).
