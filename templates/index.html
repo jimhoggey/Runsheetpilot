@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ProPresenter Runsheet Builder</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+
+<header>
+  <h1>🎛 ProPresenter Runsheet Builder</h1>
+  <div class="header-right">
+    <span class="badge" id="version-badge">v—</span>
+    <button class="quit-btn" onclick="quitApp()" title="Stop the app and close the browser tab">Quit</button>
+  </div>
+</header>
+
+<div class="layout">
+
+<aside>
+
+  <div class="sidebar-section">
+    <div class="sec-title">
+      <span>Library Source</span>
+      <span class="save-dot" id="save-dot">auto-save</span>
+    </div>
+    <div class="sidebar-tabs">
+      <button class="tab active" id="tab-btn-disk" onclick="switchTab('disk')">📁 From Disk</button>
+      <button class="tab" id="tab-btn-api" onclick="switchTab('api')">🔌 Via API</button>
+    </div>
+
+    <div id="tab-disk" class="tab-panel active">
+      <div class="field"><label>ProPresenter Library Folder</label>
+        <input id="lib-dir" type="text" placeholder="Path to your Libraries folder…">
+      </div>
+      <button class="btn btn-grn btn-full" onclick="scanLibrary()">↓ Scan Library from Disk</button>
+    </div>
+
+    <div id="tab-api" class="tab-panel">
+      <div class="field"><label>Host</label>
+        <input id="pp-host" type="text" value="localhost">
+      </div>
+      <div class="field"><label>Port</label>
+        <input id="pp-port" type="text" value="50001" style="width:90px">
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-dim btn-sm" onclick="testConnection()">Test</button>
+        <button class="btn btn-grn" onclick="fetchLibraryApi()">↓ Fetch Library</button>
+      </div>
+    </div>
+
+    <div id="lib-status">No library loaded</div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sec-title"><span>OpenRouter API</span></div>
+    <div class="field"><label>API Key</label>
+      <input id="or-key" type="password" placeholder="sk-or-…" autocomplete="off">
+    </div>
+    <div class="field"><label>Model — paste any OpenRouter model string</label>
+      <input id="or-model" type="text"
+             placeholder="e.g. google/gemini-2.0-flash-exp:free"
+             title="Any model from openrouter.ai/models">
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:-6px;margin-bottom:8px">
+      Find models at <code>openrouter.ai/models</code>
+    </div>
+    <button class="btn btn-dim btn-sm btn-full" onclick="openPromptModal()">
+      📝 Show / edit AI prompt
+    </button>
+  </div>
+
+  <!-- Second host/port section. The same values appear in the API tab above
+       (#pp-host / #pp-port), but PP host/port is also relevant when *creating*
+       the playlist, so we surface it again here. The two pairs are mirrored
+       in JS (loadSettings binds input listeners both ways) so the user only
+       ever sees one set of values. -->
+  <div class="sidebar-section">
+    <div class="sec-title"><span>ProPresenter Connection</span></div>
+    <div class="row" style="margin-bottom:8px">
+      <div class="field" style="flex:2;margin-bottom:0"><label>Host</label>
+        <input id="pp-host2" type="text" value="localhost" style="margin-bottom:0">
+      </div>
+      <div class="field" style="flex:1;margin-bottom:0"><label>Port</label>
+        <input id="pp-port2" type="text" value="50001" style="margin-bottom:0">
+      </div>
+    </div>
+    <button class="btn btn-dim btn-sm" onclick="testConnection2()" style="margin-bottom:8px">⚡ Test Connection</button>
+    <div style="font-size:.72rem;color:var(--muted)">
+      Enable in ProPresenter → Preferences → Integrations → Network
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sec-title"><span>Timers</span></div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;
+                  font-size:.82rem;color:#e8e8f0;margin-bottom:8px">
+      <input type="checkbox" id="create-timers" checked
+             style="width:auto;margin:0;cursor:pointer">
+      <span>Create countdown timers from runsheet times</span>
+    </label>
+    <div style="font-size:.72rem;color:var(--muted);line-height:1.5">
+      For every section with a duration (e.g. <code>30 min</code> sermon),
+      a countdown timer is added in PP's Timer panel. Operator starts each
+      one when the section begins. Old <code>[RB]</code> timers are cleared
+      first so re-runs don't pile up.
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sec-title"><span>Match Sensitivity</span></div>
+    <label>Threshold: <span id="thresh-val" style="color:var(--acc);font-weight:700">55%</span></label>
+    <input type="range" id="threshold" min="30" max="90" value="55" style="margin-bottom:8px"
+           oninput="document.getElementById('thresh-val').textContent=this.value+'%'">
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sec-title"><span>Export .playlist File To</span></div>
+    <div class="field"><label>Folder (leave blank to skip export)</label>
+      <input id="export-dir" type="text" placeholder="~/Desktop">
+    </div>
+  </div>
+
+  <div class="footer-info" id="footer-info">—</div>
+
+</aside>
+
+<main>
+
+  <div class="card">
+    <div class="card-title">📄 Upload Runsheet PDF</div>
+    <div id="drop-zone" onclick="document.getElementById('pdf-input').click()"
+         ondragover="handleDragOver(event)" ondrop="handleDrop(event)"
+         ondragleave="this.classList.remove('drag-over')">
+      <div class="icon">☁️</div>
+      <div style="font-weight:600;margin-bottom:4px">Drop your PDF here or click to browse</div>
+      <div class="hint">Runsheet · Order of Service · any PDF</div>
+    </div>
+    <input id="pdf-input" type="file" accept=".pdf" style="display:none"
+           onchange="handleFileSelect(this.files[0])">
+    <div style="margin-top:10px">
+      <button class="btn btn-acc btn-full" id="parse-btn" onclick="parseRunsheet()">
+        🔍 Parse Runsheet with AI
+      </button>
+    </div>
+  </div>
+
+  <div id="status-bar">
+    <span>Ready — load your library, then upload a PDF.</span>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🎵 Create Playlist in ProPresenter</div>
+    <div class="row" style="align-items:stretch">
+      <div style="flex:1">
+        <label>Playlist Name</label>
+        <input id="playlist-name" type="text" placeholder="Sunday Service · 4 May 2026" style="margin-bottom:0">
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button class="btn btn-grn" id="create-btn" style="padding:10px 18px" onclick="createPlaylist()">
+          ✓ Create Playlist + Export File
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="results-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px">#</th>
+          <th style="width:100px">Type</th>
+          <th>Title / Description</th>
+          <th>Matched Library Item</th>
+          <th style="width:56px">Score</th>
+        </tr>
+      </thead>
+      <tbody id="results-body">
+        <tr><td colspan="5" style="color:var(--muted);padding:24px;text-align:center">
+          Parse a runsheet to see items here.
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="result-notice"></div>
+
+  <!-- ═══════════ Service Mate (GeekMagic clocks) ═══════════ -->
+  <div class="card" id="sm-card">
+    <div class="card-title">📺 Service Mate · GeekMagic clocks</div>
+    <p style="color:var(--muted);margin:0 0 12px 0;font-size:0.84rem">
+      Each Service Mate is a GeekMagic SmallTV-Ultra on your LAN. The app
+      pushes a 240×240 cue every couple of seconds: current item, countdown,
+      and a role-aware hint of what's next.
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+      <thead>
+        <tr style="color:var(--muted);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase">
+          <th style="text-align:left;padding:6px 4px;width:80px">Role</th>
+          <th style="text-align:left;padding:6px 4px">IP address</th>
+          <th style="text-align:left;padding:6px 4px;width:120px">Layout</th>
+          <th style="text-align:left;padding:6px 4px;width:200px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sm-clocks-body">
+        <!-- filled by JS -->
+      </tbody>
+    </table>
+
+    <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="sm-enabled" onchange="smSaveSettings()">
+        <span style="font-size:0.85rem">Pushing to clocks</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="sm-autotrack" onchange="smSaveAutoTrack()">
+        <span style="font-size:0.85rem">Auto-track ProPresenter</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin:0">
+        <span style="font-size:0.85rem">Brightness</span>
+        <input type="range" id="sm-brightness" min="1" max="100" value="70"
+               style="width:120px" onchange="smSaveSettings()">
+        <span id="sm-brightness-val" style="font-size:0.78rem;color:var(--muted);min-width:30px">70</span>
+      </label>
+    </div>
+
+    <div class="row" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
+      <div style="flex:1 1 220px">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">
+          Cue control
+        </div>
+        <div id="sm-current" style="font-size:0.92rem;font-weight:600;margin-bottom:4px;min-height:1.3em">
+          —
+        </div>
+        <div id="sm-next" style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;min-height:1.2em">
+          —
+        </div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          <button class="btn btn-dim btn-sm" onclick="smCue(-1)">◀ Prev</button>
+          <button class="btn btn-acc btn-sm" onclick="smCue(+1)">Next ▶</button>
+          <button class="btn btn-dim btn-sm" onclick="smRestart()" title="Restart current item's countdown">↺</button>
+          <button class="btn btn-dim btn-sm" onclick="smStandby()"
+                  title="Send all clocks to a pre-service waiting page"
+                  style="margin-left:auto">⏸ Standby</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">
+          Live preview
+        </div>
+        <select id="sm-preview-role" onchange="smRefreshPreview()" style="font-size:0.78rem;padding:3px 6px">
+          <option value="screen">Screen</option>
+          <option value="sound">Sound</option>
+          <option value="lights">Lights</option>
+        </select>
+        <img id="sm-preview" alt="preview" width="160" height="160"
+             style="border-radius:8px;border:1px solid var(--border);background:#0a0a14">
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<!-- ═══════════ Edit AI Prompt Modal ═══════════ -->
+<div id="prompt-modal" class="modal-backdrop"
+     onclick="if(event.target===this)closePromptModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>📝 AI Prompt</h2>
+      <button class="btn btn-dim btn-sm" onclick="closePromptModal()">✕ Close</button>
+    </div>
+    <div class="modal-hint">
+      The runsheet text replaces the <code>{RUNSHEET}</code> placeholder
+      (or is appended if you remove it). Changes auto-save.
+      Empty text reverts to the built-in default.
+    </div>
+    <textarea id="prompt-textarea" spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-dim btn-sm" onclick="resetPrompt()">↺ Reset to default</button>
+      <span id="prompt-save-dot" class="save-dot">auto-save</span>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
