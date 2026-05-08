@@ -541,6 +541,36 @@ SM_TESTCARD_FILENAME = "rb_test.jpg"
 SM_JPEG_QUALITY = 90
 SM_ULTRA_IMAGE_THEME = 3   # Theme 3 = "Photo Album" (custom image full-screen)
 
+# Daemon loop cadence — render every TICK; only POLL ProPresenter every Nth
+# tick. 500 ms render lets the on-screen countdown step every 1 s instead of
+# every 2 s; PP polling stays at 2 s so we don't hammer ProPresenter's API.
+SM_LOOP_INTERVAL_S = 0.5
+SM_PP_POLL_EVERY_N_TICKS = 4
+
+# Per-verbosity font sizes — tweak here, layouts in _render_cue_compact /
+# _render_cue_detailed pick from these.
+SM_FONTS = {
+    "compact": {
+        "label":   14,   # top role/type strip
+        "title":   22,   # current item title
+        "clock":   56,   # countdown
+        "next":    13,   # "NEXT — TYPE" label
+        "cue":     15,   # bottom cue band
+    },
+    "detailed": {
+        "label":   12,
+        "title":   18,
+        "notes":   12,
+        "clock":   42,
+        "next":    12,
+        "next_t":  14,   # next-item title (rendered, unlike compact)
+        "then":    12,   # "then: <next-cue>" hint line
+        "cue":     14,
+    },
+}
+SM_VERBOSITY_DEFAULT = "compact"
+SM_VERBOSITIES = ("compact", "detailed")
+
 # Role accent colours used in the rendered cue images. Hex tuples (RGB).
 ROLE_ACCENT = {
     "screen": (59, 130, 246),   # blue
@@ -591,9 +621,12 @@ ROLE_CUE_TABLES = {
 def _default_clocks_config() -> dict:
     return {
         "clocks": [
-            {"id": "screen", "ip": "", "role": "screen", "name": "Screen station"},
-            {"id": "sound",  "ip": "", "role": "sound",  "name": "Sound station"},
-            {"id": "lights", "ip": "", "role": "lights", "name": "Lights station"},
+            {"id": "screen", "ip": "", "role": "screen",
+             "name": "Screen station", "verbosity": SM_VERBOSITY_DEFAULT},
+            {"id": "sound",  "ip": "", "role": "sound",
+             "name": "Sound station",  "verbosity": SM_VERBOSITY_DEFAULT},
+            {"id": "lights", "ip": "", "role": "lights",
+             "name": "Lights station", "verbosity": SM_VERBOSITY_DEFAULT},
         ],
         "brightness": 70,
         "enabled":    True,
@@ -700,105 +733,217 @@ def _compute_remaining_seconds(state: dict):
     return int(dur_min * 60 - elapsed)
 
 
-def _render_cue(role: str, state: dict) -> bytes:
-    """Render a 240×240 JPEG for a given role and the current runsheet state.
-    Returns JPEG bytes (always — no exceptions to caller; on failure returns
-    a plain placeholder image). JPEG (not PNG) because v9.0.39 firmware only
-    displays JPG/GIF in Photo Album mode."""
-    from PIL import Image, ImageDraw, ImageFont
+def _sm_font(size: int):
+    """Pick the first available proportional font on this OS, else default."""
+    from PIL import ImageFont
+    for path in (
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _draw_role_strip(draw, role: str, accent: tuple, type_label: str,
+                     height: int, font):
+    """Top role-coloured strip: ROLE on the left, item TYPE on the right."""
+    draw.rectangle([(0, 0), (SM_W, height)], fill=accent)
+    text_y = max(0, (height - font.size) // 2 - 1)
+    draw.text((8, text_y), role.upper(), fill=(255, 255, 255), font=font)
+    tw = draw.textlength(type_label, font=font)
+    draw.text((SM_W - 8 - tw, text_y), type_label, fill=(255, 255, 255), font=font)
+
+
+def _draw_cue_band(draw, accent: tuple, cue_text: str, font):
+    """Bottom accent-tinted band with the cue line for this role."""
+    if not cue_text:
+        return
+    band_color = tuple(min(255, int(c * 0.35)) for c in accent)
+    band_h = font.size + 11
+    draw.rectangle([(0, SM_H - band_h), (SM_W, SM_H)], fill=band_color)
+    ct = cue_text
+    while draw.textlength(ct, font=font) > SM_W - 16 and len(ct) > 4:
+        ct = ct[:-2]
+    if ct != cue_text:
+        ct = ct[:-1] + "…"
+    draw.text((8, SM_H - band_h + 5), ct, fill=(255, 255, 255), font=font)
+
+
+def _new_canvas():
+    from PIL import Image
+    return Image.new("RGB", (SM_W, SM_H), (16, 16, 28))
+
+
+def _save_jpeg(img) -> bytes:
     from io import BytesIO
-    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
+
+
+def _resolve_current(state: dict):
+    """Return (cur_item, next_item, remaining_seconds) for the active state."""
     items = state.get("items") or []
     idx = int(state.get("current_index") or 0)
     if not items:
-        cur, nxt = None, None
-    else:
-        idx = max(0, min(idx, len(items) - 1))
-        cur = items[idx]
-        nxt = _next_visible_item(items, idx)
-    remaining = _compute_remaining_seconds(state)
-    img = Image.new("RGB", (SM_W, SM_H), (16, 16, 28))
+        return None, None, None
+    idx = max(0, min(idx, len(items) - 1))
+    return items[idx], _next_visible_item(items, idx), \
+        _compute_remaining_seconds(state)
+
+
+def _render_cue(role: str, state: dict, verbosity: str = SM_VERBOSITY_DEFAULT) -> bytes:
+    """Render a 240×240 JPEG for a given role + verbosity. JPEG (not PNG)
+    because the v9.0.39 firmware only displays JPG/GIF in Photo Album mode.
+    Verbosity dispatches to the compact (less words, large fonts) or detailed
+    (more words, smaller fonts) layout."""
+    if verbosity not in SM_VERBOSITIES:
+        verbosity = SM_VERBOSITY_DEFAULT
+    if verbosity == "detailed":
+        return _render_cue_detailed(role, state)
+    return _render_cue_compact(role, state)
+
+
+def _render_cue_compact(role: str, state: dict) -> bytes:
+    """Glance-from-across-the-room layout. Big title, huge countdown, just
+    the next item TYPE (no full title), single cue line at the bottom."""
+    from PIL import ImageDraw
+    f = SM_FONTS["compact"]
+    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    cur, nxt, remaining = _resolve_current(state)
+
+    img = _new_canvas()
     draw = ImageDraw.Draw(img)
 
-    def font(size: int):
-        # Try common system fonts so we get something proportional, else default.
-        for path in (
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/System/Library/Fonts/SFNS.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ):
-            try:
-                return ImageFont.truetype(path, size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    f_label = _sm_font(f["label"])
+    f_title = _sm_font(f["title"])
+    f_clock = _sm_font(f["clock"])
+    f_next  = _sm_font(f["next"])
+    f_cue   = _sm_font(f["cue"])
 
-    f_label  = font(14)
-    f_title  = font(20)
-    f_small  = font(13)
-    f_clock  = font(56)
-    f_next   = font(13)
-    f_cue    = font(15)
-
-    # Top strip — role accent + "NOW · TYPE"
-    draw.rectangle([(0, 0), (SM_W, 28)], fill=accent)
-    role_label = role.upper()
     type_label = (cur.get("type") if cur else "").upper().replace("_", " ") or "—"
-    draw.text((8, 6), f"{role_label}", fill=(255, 255, 255), font=f_label)
-    draw.text((SM_W - 8 - draw.textlength(type_label, font=f_label), 6),
-              type_label, fill=(255, 255, 255), font=f_label)
+    _draw_role_strip(draw, role, accent, type_label, height=28, font=f_label)
 
-    # Current title — wrap to 2 lines if needed
     cur_title = (cur.get("title") if cur else "(no runsheet)") or "(empty)"
     _draw_wrapped(draw, cur_title, (12, 36), SM_W - 24, f_title,
                   (236, 236, 243), max_lines=2)
 
-    # Big countdown
     mmss = _format_mmss(remaining) if remaining is not None else "--:--"
     tw = draw.textlength(mmss, font=f_clock)
     cd_color = (239, 68, 68) if (remaining is not None and remaining < 30) \
         else (255, 255, 255)
     draw.text(((SM_W - tw) / 2, 92), mmss, fill=cd_color, font=f_clock)
 
-    # Divider
     draw.line([(12, 168), (SM_W - 12, 168)], fill=(60, 60, 80), width=1)
 
-    # NEXT block
     if nxt:
         nxt_type = (nxt.get("type") or "").upper().replace("_", " ")
         draw.text((12, 174), f"NEXT — {nxt_type}", fill=(140, 140, 170),
                   font=f_next)
         nxt_title = nxt.get("title") or ""
-        _draw_wrapped(draw, nxt_title, (12, 190), SM_W - 24, f_small,
+        _draw_wrapped(draw, nxt_title, (12, 190), SM_W - 24, f_next,
                       (220, 220, 235), max_lines=1)
     else:
         draw.text((12, 174), "END OF SERVICE", fill=(140, 140, 170), font=f_next)
 
-    # Cue line for this role — prefer item.cues[role], else rule table
-    cue_text = _cue_for(role, cur) if cur else ""
-    if cue_text:
-        # Bottom band, accent-tinted
-        band_color = tuple(min(255, int(c * 0.35)) for c in accent)
-        draw.rectangle([(0, SM_H - 26), (SM_W, SM_H)], fill=band_color)
-        # Truncate visually
-        ct = cue_text
-        while draw.textlength(ct, font=f_cue) > SM_W - 16 and len(ct) > 4:
-            ct = ct[:-2]
-        if ct != cue_text:
-            ct = ct[:-1] + "…"
-        draw.text((8, SM_H - 22), ct, fill=(255, 255, 255), font=f_cue)
+    _draw_cue_band(draw, accent, _cue_for(role, cur) if cur else "", f_cue)
+    return _save_jpeg(img)
 
-    buf = BytesIO()
-    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
-    return buf.getvalue()
+
+def _render_cue_detailed(role: str, state: dict) -> bytes:
+    """Standing-right-next-to-the-screen layout. Smaller fonts, includes notes,
+    full next-item title, and a 'then:' hint with the next role cue."""
+    from PIL import ImageDraw
+    f = SM_FONTS["detailed"]
+    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    cur, nxt, remaining = _resolve_current(state)
+
+    img = _new_canvas()
+    draw = ImageDraw.Draw(img)
+
+    f_label = _sm_font(f["label"])
+    f_title = _sm_font(f["title"])
+    f_notes = _sm_font(f["notes"])
+    f_clock = _sm_font(f["clock"])
+    f_next  = _sm_font(f["next"])
+    f_next_t = _sm_font(f["next_t"])
+    f_then  = _sm_font(f["then"])
+    f_cue   = _sm_font(f["cue"])
+
+    type_label = (cur.get("type") if cur else "").upper().replace("_", " ") or "—"
+    _draw_role_strip(draw, role, accent, type_label, height=22, font=f_label)
+
+    # Title + notes — leave 12 px each side so glyphs don't bleed past the
+    # canvas edge (PIL's textlength under-reports the right side bearing for
+    # the last character, which can let a string render wider than the value
+    # we measured).
+    cur_title = (cur.get("title") if cur else "(no runsheet)") or "(empty)"
+    _draw_wrapped(draw, cur_title, (12, 28), SM_W - 24, f_title,
+                  (236, 236, 243), max_lines=2)
+    notes = (cur.get("notes") if cur else "") or ""
+    if notes:
+        _draw_wrapped(draw, notes, (12, 28 + (f["title"] + 4) * 2 + 2),
+                      SM_W - 24, f_notes, (140, 140, 170), max_lines=1)
+
+    # Countdown — slightly smaller, centred
+    mmss = _format_mmss(remaining) if remaining is not None else "--:--"
+    tw = draw.textlength(mmss, font=f_clock)
+    cd_color = (239, 68, 68) if (remaining is not None and remaining < 30) \
+        else (255, 255, 255)
+    draw.text(((SM_W - tw) / 2, 96), mmss, fill=cd_color, font=f_clock)
+
+    # NEXT — full title + a 'then:' hint pulled from the next item's role cue
+    next_y = 148
+    if nxt:
+        nxt_type = (nxt.get("type") or "").upper().replace("_", " ")
+        draw.text((12, next_y), f"NEXT — {nxt_type}", fill=(140, 140, 170),
+                  font=f_next)
+        _draw_wrapped(draw, nxt.get("title") or "",
+                      (12, next_y + f["next"] + 3), SM_W - 24, f_next_t,
+                      (220, 220, 235), max_lines=1)
+        then_cue = _cue_for(role, nxt)
+        if then_cue:
+            then_y = next_y + f["next"] + 3 + f["next_t"] + 4
+            then_text = f"then: {then_cue}"
+            tt = then_text
+            while draw.textlength(tt, font=f_then) > SM_W - 24 and len(tt) > 8:
+                tt = tt[:-2]
+            if tt != then_text:
+                tt = tt[:-1] + "…"
+            draw.text((12, then_y), tt, fill=(120, 120, 150), font=f_then)
+    else:
+        draw.text((12, next_y), "END OF SERVICE", fill=(140, 140, 170), font=f_next)
+
+    _draw_cue_band(draw, accent, _cue_for(role, cur) if cur else "", f_cue)
+    return _save_jpeg(img)
+
+
+def _text_width(font, text: str) -> int:
+    """Truer width than draw.textlength — uses the glyph bounding box so the
+    rightmost character's side-bearing is counted. Without this, long titles
+    can bleed past the canvas edge because Pillow's textlength only reports
+    the advance width."""
+    if not text:
+        return 0
+    try:
+        l, _, r, _ = font.getbbox(text)
+        return max(int(r - l), 0)
+    except Exception:
+        # ImageFont.load_default() doesn't have getbbox in older Pillow
+        return int(font.getlength(text)) if hasattr(font, "getlength") else 0
 
 
 def _draw_wrapped(draw, text, xy, max_w, font, fill, max_lines: int = 2):
-    """Greedy word-wrap to fit max_w; truncates with … past max_lines."""
+    """Greedy word-wrap to fit max_w; ellipsizes only when words got dropped.
+    Uses _text_width (bbox-based) so bearings are accounted for."""
     if not text:
         return
     words = str(text).split()
@@ -806,7 +951,7 @@ def _draw_wrapped(draw, text, xy, max_w, font, fill, max_lines: int = 2):
     cur = ""
     for w in words:
         test = (cur + " " + w).strip()
-        if draw.textlength(test, font=font) <= max_w:
+        if _text_width(font, test) <= max_w:
             cur = test
         else:
             if cur:
@@ -818,15 +963,18 @@ def _draw_wrapped(draw, text, xy, max_w, font, fill, max_lines: int = 2):
         lines.append(cur)
     if len(lines) > max_lines:
         lines = lines[:max_lines]
-    if lines:
-        # If the last line still overflows after truncation, ellipsize.
+
+    # Only ellipsize when we actually dropped words. Otherwise the previous
+    # bug fired: every wrapped block was speculatively trimmed to fit
+    # last + "…", chopping legitimate trailing characters off perfectly-fitting
+    # text.
+    rendered_word_count = sum(len(line.split()) for line in lines)
+    if lines and rendered_word_count < len(words):
         last = lines[-1]
-        while draw.textlength(last + ("…" if last and last[-1] != "…" else ""),
-                              font=font) > max_w and len(last) > 2:
+        while _text_width(font, last + "…") > max_w and len(last) > 2:
             last = last[:-1]
-        if len(words) > sum(len(line.split()) for line in lines):
-            last = (last.rstrip() + "…")[:max(2, len(last) + 1)]
-        lines[-1] = last
+        lines[-1] = last.rstrip() + "…"
+
     y = xy[1]
     line_h = font.size + 4
     for line in lines:
@@ -1187,49 +1335,61 @@ def _parse_pp_time(s):
     return None
 
 
-def _clocks_loop_tick(last_pushed: dict) -> None:
-    """One pass of the background loop. Called by start_clocks_loop."""
+# Module-level so other endpoints (e.g. /api/clocks/<id>/test) can invalidate
+# a clock's "last pushed" entry, forcing the loop to re-push on the next tick.
+_CLOCKS_LOOP_LAST_PUSHED: dict = {}
+
+
+def _clocks_loop_tick(tick: int) -> None:
+    """One pass of the background loop. `tick` increments each call; we use it
+    to throttle ProPresenter polling so the loop can render at 500 ms while PP
+    only gets hit every SM_PP_POLL_EVERY_N_TICKS ticks."""
     state = _read_runsheet_state()
     cfg = _read_clocks_config()
     if not state or not cfg.get("enabled") or not cfg.get("clocks"):
         return
-    state = _maybe_advance_from_pp(state)
-    # Persist any auto-track changes back so the UI sees them.
-    try:
-        _write_runsheet_state(state)
-    except Exception:
-        log.exception("Failed to persist runsheet state mid-loop")
+    if tick % SM_PP_POLL_EVERY_N_TICKS == 0:
+        state = _maybe_advance_from_pp(state)
+        try:
+            _write_runsheet_state(state)
+        except Exception:
+            log.exception("Failed to persist runsheet state mid-loop")
     for clock in cfg["clocks"]:
         ip = (clock.get("ip") or "").strip()
         role = clock.get("role") or clock.get("id") or "screen"
         cid = clock.get("id") or role
+        verbosity = (clock.get("verbosity") or SM_VERBOSITY_DEFAULT).lower()
+        if verbosity not in SM_VERBOSITIES:
+            verbosity = SM_VERBOSITY_DEFAULT
         if not ip:
             continue
         try:
-            png = _render_cue(role, state)
+            jpg = _render_cue(role, state, verbosity=verbosity)
         except Exception:
             log.exception(f"render failed for role={role}")
             continue
         import hashlib
-        h = hashlib.sha1(png).hexdigest()
-        # Re-push at least every 20 ticks (~40s) even if unchanged so the
-        # countdown stays roughly fresh on screen if the device reset itself.
-        prev = last_pushed.get(cid) or ("", 0)
-        if prev[0] == h and (time.time() - prev[1]) < 20:
+        h = hashlib.sha1(jpg).hexdigest()
+        # Re-push every ~40 s even if unchanged, so the device recovers if it
+        # was rebooted or the image was cleared.
+        prev = _CLOCKS_LOOP_LAST_PUSHED.get(cid) or ("", 0.0)
+        if prev[0] == h and (time.time() - prev[1]) < 40:
             continue
-        if _push_to_clock(ip, png):
-            last_pushed[cid] = (h, time.time())
+        if _push_to_clock(ip, jpg):
+            _CLOCKS_LOOP_LAST_PUSHED[cid] = (h, time.time())
 
 
 def _clocks_loop() -> None:
-    last_pushed: dict = {}
-    log.info("Service Mate loop started")
+    log.info(f"Service Mate loop started "
+             f"(tick={SM_LOOP_INTERVAL_S}s, pp-poll every {SM_PP_POLL_EVERY_N_TICKS} ticks)")
+    tick = 0
     while True:
         try:
-            _clocks_loop_tick(last_pushed)
+            _clocks_loop_tick(tick)
         except Exception:
             log.exception("clocks_loop tick failed")
-        time.sleep(2)
+        tick = (tick + 1) % 1_000_000
+        time.sleep(SM_LOOP_INTERVAL_S)
 
 
 def start_clocks_loop() -> None:
@@ -1859,11 +2019,15 @@ def api_clocks_post():
         for c in body["clocks"]:
             if not isinstance(c, dict):
                 continue
+            verbosity = (c.get("verbosity") or SM_VERBOSITY_DEFAULT).strip().lower()
+            if verbosity not in SM_VERBOSITIES:
+                verbosity = SM_VERBOSITY_DEFAULT
             cleaned.append({
-                "id":   (c.get("id") or c.get("role") or "").strip().lower(),
-                "ip":   (c.get("ip") or "").strip(),
-                "role": (c.get("role") or c.get("id") or "screen").strip().lower(),
-                "name": (c.get("name") or "").strip(),
+                "id":        (c.get("id") or c.get("role") or "").strip().lower(),
+                "ip":        (c.get("ip") or "").strip(),
+                "role":      (c.get("role") or c.get("id") or "screen").strip().lower(),
+                "name":      (c.get("name") or "").strip(),
+                "verbosity": verbosity,
             })
         cfg["clocks"] = cleaned
     if "brightness" in body:
@@ -1905,26 +2069,41 @@ def api_clock_test(clock_id: str):
     if cfg.get("brightness"):
         _set_clock_brightness(ip, int(cfg["brightness"]))
     ok = _push_to_clock(ip, jpg, filename=SM_TESTCARD_FILENAME)
+    # Test card and live cue are different files on the device — clearing the
+    # last-pushed hash for this clock means the next loop tick re-pushes the
+    # cue image, returning the device to the live view within ~1 s. Otherwise
+    # the test card would stay until the cue content next changed.
+    _CLOCKS_LOOP_LAST_PUSHED.pop(clock_id, None)
     return jsonify({"ok": ok})
 
 
 @app.route("/api/clocks/preview", methods=["GET"])
 def api_clocks_preview():
-    """Return the rendered PNG for a given role — used by the UI for an
-    inline preview without the device, and for development."""
+    """Return the rendered JPEG for a given role + verbosity — used by the UI
+    for an inline preview without the device, and for development."""
     role = (request.args.get("role") or "screen").lower()
     if role not in ROLE_ACCENT:
         role = "screen"
+    verbosity = (request.args.get("verbosity") or SM_VERBOSITY_DEFAULT).lower()
+    if verbosity not in SM_VERBOSITIES:
+        verbosity = SM_VERBOSITY_DEFAULT
     state = _read_runsheet_state() or {
         "items": [
             {"type": "song", "title": "Build My Life", "duration_min": 5,
-             "notes": "9:30 AM"},
-            {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30}
+             "notes": "9:30 AM",
+             "cues": {"screen": "Cue song slides",
+                      "sound":  "Band mics live · MC mute",
+                      "lights": "Stage wash — band"}},
+            {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30,
+             "notes": "10:14 AM",
+             "cues": {"screen": "Sermon slides",
+                      "sound":  "Mic on for Ps Nick",
+                      "lights": "Spot — preacher"}}
         ],
         "current_index": 0,
         "current_started_at": _dt.datetime.now().isoformat(),
     }
-    jpg = _render_cue(role, state)
+    jpg = _render_cue(role, state, verbosity=verbosity)
     return Response(jpg, mimetype="image/jpeg",
                     headers={"Cache-Control": "no-store"})
 
@@ -2685,6 +2864,7 @@ button:focus-visible, .quit-btn:focus-visible {
         <tr style="color:var(--muted);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase">
           <th style="text-align:left;padding:6px 4px;width:80px">Role</th>
           <th style="text-align:left;padding:6px 4px">IP address</th>
+          <th style="text-align:left;padding:6px 4px;width:120px">Layout</th>
           <th style="text-align:left;padding:6px 4px;width:200px">Actions</th>
         </tr>
       </thead>
@@ -3297,6 +3477,7 @@ function smRenderClocksTable() {
   const body = document.getElementById('sm-clocks-body');
   body.innerHTML = '';
   for (const c of smClocksConfig.clocks) {
+    const verb = (c.verbosity || 'compact');
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="padding:6px 4px;font-weight:600;text-transform:capitalize">${c.role}</td>
@@ -3304,6 +3485,13 @@ function smRenderClocksTable() {
         <input type="text" placeholder="192.168.x.x" value="${(c.ip||'').replace(/"/g,'&quot;')}"
                data-id="${c.id}" class="sm-ip-input"
                style="width:100%;padding:6px 8px;font-family:var(--font-mono);font-size:0.82rem">
+      </td>
+      <td style="padding:6px 4px">
+        <select data-id="${c.id}" class="sm-verb-select"
+                style="width:100%;padding:5px 6px;font-size:0.82rem">
+          <option value="compact"${verb==='compact'?' selected':''}>Compact</option>
+          <option value="detailed"${verb==='detailed'?' selected':''}>Detailed</option>
+        </select>
       </td>
       <td style="padding:6px 4px">
         <button class="btn btn-dim btn-sm" onclick="smProbe('${c.id}')">Probe</button>
@@ -3319,13 +3507,26 @@ function smRenderClocksTable() {
       if (e.key === 'Enter') inp.blur();
     });
   });
+  // Layout selects auto-save and refresh the preview if it's showing this role
+  body.querySelectorAll('.sm-verb-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      smSaveSettings();
+      smRefreshPreview();
+    });
+  });
 }
 
 async function smSaveSettings() {
-  const inputs = document.querySelectorAll('.sm-ip-input');
+  const ipInputs = document.querySelectorAll('.sm-ip-input');
+  const verbSels = document.querySelectorAll('.sm-verb-select');
   const updated = smClocksConfig.clocks.map(c => {
-    const inp = Array.from(inputs).find(i => i.dataset.id === c.id);
-    return {...c, ip: inp ? inp.value.trim() : c.ip};
+    const ipInp = Array.from(ipInputs).find(i => i.dataset.id === c.id);
+    const verbSel = Array.from(verbSels).find(s => s.dataset.id === c.id);
+    return {
+      ...c,
+      ip: ipInp ? ipInp.value.trim() : c.ip,
+      verbosity: verbSel ? verbSel.value : (c.verbosity || 'compact'),
+    };
   });
   const brightness = parseInt(document.getElementById('sm-brightness').value, 10);
   document.getElementById('sm-brightness-val').textContent = brightness;
@@ -3433,7 +3634,12 @@ async function smSaveAutoTrack() {
 function smRefreshPreview() {
   const role = document.getElementById('sm-preview-role').value;
   const img = document.getElementById('sm-preview');
-  img.src = `/api/clocks/preview?role=${encodeURIComponent(role)}&t=${Date.now()}`;
+  // Match the verbosity of the clock with this role, so preview = what the
+  // device will show. Falls back to "compact" if no clock has this role.
+  const clock = (smClocksConfig.clocks || []).find(c => c.role === role);
+  const verb = (clock && clock.verbosity) || 'compact';
+  img.src = `/api/clocks/preview?role=${encodeURIComponent(role)}`
+          + `&verbosity=${encodeURIComponent(verb)}&t=${Date.now()}`;
 }
 
 smInit();
