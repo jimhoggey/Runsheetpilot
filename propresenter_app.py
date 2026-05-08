@@ -1009,6 +1009,42 @@ def _render_test_card(role: str, ip: str = "") -> bytes:
     return buf.getvalue()
 
 
+def _render_standby(role: str) -> bytes:
+    """Pre-service waiting page — shown when the operator has reset the clocks
+    or when no runsheet is loaded. Same role-coloured strip as the live cue
+    so the device looks visually consistent. Shows "STANDBY", a friendly
+    sub-line, and the current wall-clock time so anyone glancing at the screen
+    knows the device is alive and waiting."""
+    from PIL import ImageDraw
+    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    img = _new_canvas()
+    draw = ImageDraw.Draw(img)
+
+    f_label = _sm_font(14)
+    f_big   = _sm_font(40)
+    f_sub   = _sm_font(14)
+    f_clock = _sm_font(28)
+
+    _draw_role_strip(draw, role, accent, "STANDBY", height=28, font=f_label)
+
+    big = "STANDBY"
+    tw = _text_width(f_big, big)
+    draw.text(((SM_W - tw) / 2, 70), big, fill=(236, 236, 243), font=f_big)
+
+    sub = "Awaiting service start"
+    tw2 = _text_width(f_sub, sub)
+    draw.text(((SM_W - tw2) / 2, 122), sub, fill=(140, 140, 170), font=f_sub)
+
+    now = _dt.datetime.now().strftime("%H:%M")
+    tw3 = _text_width(f_clock, now)
+    draw.text(((SM_W - tw3) / 2, 158), now, fill=(200, 200, 220), font=f_clock)
+
+    band_color = tuple(min(255, int(c * 0.35)) for c in accent)
+    band_h = f_sub.size + 11
+    draw.rectangle([(0, SM_H - band_h), (SM_W, SM_H)], fill=band_color)
+    return _save_jpeg(img)
+
+
 # Track which IPs we've already set theme=3 on this process — saves an HTTP
 # call per push. Cleared on restart.
 _CLOCK_THEME_SET: set = set()
@@ -1344,11 +1380,15 @@ def _clocks_loop_tick(tick: int) -> None:
     """One pass of the background loop. `tick` increments each call; we use it
     to throttle ProPresenter polling so the loop can render at 500 ms while PP
     only gets hit every SM_PP_POLL_EVERY_N_TICKS ticks."""
-    state = _read_runsheet_state()
+    state = _read_runsheet_state() or {}
     cfg = _read_clocks_config()
-    if not state or not cfg.get("enabled") or not cfg.get("clocks"):
+    if not cfg.get("enabled") or not cfg.get("clocks"):
         return
-    if tick % SM_PP_POLL_EVERY_N_TICKS == 0:
+    # Standby = explicit operator reset, OR no runsheet has ever been loaded.
+    # In both cases we want the clocks showing a clean waiting page rather
+    # than a stale cue or going dark.
+    standby = bool(state.get("standby")) or not state.get("items")
+    if not standby and tick % SM_PP_POLL_EVERY_N_TICKS == 0:
         state = _maybe_advance_from_pp(state)
         try:
             _write_runsheet_state(state)
@@ -1364,7 +1404,8 @@ def _clocks_loop_tick(tick: int) -> None:
         if not ip:
             continue
         try:
-            jpg = _render_cue(role, state, verbosity=verbosity)
+            jpg = (_render_standby(role) if standby
+                   else _render_cue(role, state, verbosity=verbosity))
         except Exception:
             log.exception(f"render failed for role={role}")
             continue
@@ -2077,6 +2118,27 @@ def api_clock_test(clock_id: str):
     return jsonify({"ok": ok})
 
 
+@app.route("/api/clocks/standby", methods=["POST"])
+def api_clocks_standby():
+    """Reset all clocks to the pre-service waiting page. Persists `standby:true`
+    in the runsheet state so the daemon keeps pushing the standby image; the
+    flag is cleared automatically on the next runsheet load (parse / create
+    playlist / explicit POST /api/runsheet/state with items)."""
+    state = {
+        "standby": True,
+        "items": [],
+        "current_index": 0,
+        "current_started_at": _dt.datetime.now().isoformat(),
+    }
+    _write_runsheet_state(state)
+    # Force every clock to re-push on the next loop tick (~500 ms) instead of
+    # waiting for the next content change. Without this, clocks that are
+    # already showing the standby image (e.g. after a server restart) wouldn't
+    # tick refresh until the 40 s anti-bitrot push.
+    _CLOCKS_LOOP_LAST_PUSHED.clear()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/clocks/preview", methods=["GET"])
 def api_clocks_preview():
     """Return the rendered JPEG for a given role + verbosity — used by the UI
@@ -2087,22 +2149,31 @@ def api_clocks_preview():
     verbosity = (request.args.get("verbosity") or SM_VERBOSITY_DEFAULT).lower()
     if verbosity not in SM_VERBOSITIES:
         verbosity = SM_VERBOSITY_DEFAULT
-    state = _read_runsheet_state() or {
-        "items": [
-            {"type": "song", "title": "Build My Life", "duration_min": 5,
-             "notes": "9:30 AM",
-             "cues": {"screen": "Cue song slides",
-                      "sound":  "Band mics live · MC mute",
-                      "lights": "Stage wash — band"}},
-            {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30,
-             "notes": "10:14 AM",
-             "cues": {"screen": "Sermon slides",
-                      "sound":  "Mic on for Ps Nick",
-                      "lights": "Spot — preacher"}}
-        ],
-        "current_index": 0,
-        "current_started_at": _dt.datetime.now().isoformat(),
-    }
+    state = _read_runsheet_state() or {}
+    # If the operator hit Standby (or saved an explicit standby flag), preview
+    # mirrors what the device is actually showing right now.
+    if state.get("standby"):
+        return Response(_render_standby(role), mimetype="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+    # No runsheet at all → fall through to demo data so first-time users can
+    # see what a live cue will look like before loading a PDF.
+    if not state.get("items"):
+        state = {
+            "items": [
+                {"type": "song", "title": "Build My Life", "duration_min": 5,
+                 "notes": "9:30 AM",
+                 "cues": {"screen": "Cue song slides",
+                          "sound":  "Band mics live · MC mute",
+                          "lights": "Stage wash — band"}},
+                {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30,
+                 "notes": "10:14 AM",
+                 "cues": {"screen": "Sermon slides",
+                          "sound":  "Mic on for Ps Nick",
+                          "lights": "Spot — preacher"}}
+            ],
+            "current_index": 0,
+            "current_started_at": _dt.datetime.now().isoformat(),
+        }
     jpg = _render_cue(role, state, verbosity=verbosity)
     return Response(jpg, mimetype="image/jpeg",
                     headers={"Cache-Control": "no-store"})
@@ -2901,10 +2972,13 @@ button:focus-visible, .quit-btn:focus-visible {
         <div id="sm-next" style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;min-height:1.2em">
           —
         </div>
-        <div class="row" style="gap:6px">
+        <div class="row" style="gap:6px;flex-wrap:wrap">
           <button class="btn btn-dim btn-sm" onclick="smCue(-1)">◀ Prev</button>
           <button class="btn btn-acc btn-sm" onclick="smCue(+1)">Next ▶</button>
           <button class="btn btn-dim btn-sm" onclick="smRestart()" title="Restart current item's countdown">↺</button>
+          <button class="btn btn-dim btn-sm" onclick="smStandby()"
+                  title="Send all clocks to a pre-service waiting page"
+                  style="margin-left:auto">⏸ Standby</button>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
@@ -3581,11 +3655,18 @@ async function smRefreshState() {
     const idx = state.current_index || 0;
     const cur = items[idx];
     const nxt = items[idx + 1];
-    document.getElementById('sm-current').textContent =
-      cur ? `Now · ${cur.title || cur.type || '—'}` : '— (no runsheet loaded)';
-    document.getElementById('sm-next').textContent =
-      nxt ? `Next · ${nxt.title || nxt.type || ''}` :
-      (cur ? 'Last item — end of service' : 'Create a playlist to seed the runsheet');
+    if (state.standby) {
+      document.getElementById('sm-current').textContent =
+        '⏸ Standby · clocks showing waiting page';
+      document.getElementById('sm-next').textContent =
+        'Load a runsheet to resume';
+    } else {
+      document.getElementById('sm-current').textContent =
+        cur ? `Now · ${cur.title || cur.type || '—'}` : '— (no runsheet loaded)';
+      document.getElementById('sm-next').textContent =
+        nxt ? `Next · ${nxt.title || nxt.type || ''}` :
+        (cur ? 'Last item — end of service' : 'Create a playlist to seed the runsheet');
+    }
     // Sync auto-track checkbox without firing a save
     const autoBox = document.getElementById('sm-autotrack');
     const autoEnabled = (state.auto_track || {}).enabled !== false;
@@ -3616,6 +3697,20 @@ async function smRestart() {
     smRefreshState();
     smRefreshPreview();
   } catch (e) { console.warn('restart failed', e); }
+}
+
+async function smStandby() {
+  // Reset all clocks to the pre-service waiting page. Clears the current
+  // runsheet cue but keeps the clock IPs / config — the next parsed runsheet
+  // will pick up where it left off.
+  if (!confirm('Send all clocks to standby?\n\nThis clears the current cue. Loading a new runsheet will resume normally.')) {
+    return;
+  }
+  try {
+    await fetch('/api/clocks/standby', {method:'POST'});
+    smRefreshState();
+    smRefreshPreview();
+  } catch (e) { console.warn('standby failed', e); }
 }
 
 async function smSaveAutoTrack() {

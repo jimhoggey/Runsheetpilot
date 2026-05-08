@@ -97,3 +97,19 @@ def test_render_test_card_returns_jpeg(app_module):
 def test_render_test_card_no_ip(app_module):
     out = app_module._render_test_card("lights", "")
     assert out.startswith(JPEG_MAGIC)
+
+
+@pytest.mark.parametrize("role", ["screen", "sound", "lights"])
+def test_render_standby_returns_jpeg_for_each_role(app_module, role):
+    """Standby page is the pre-service waiting screen — rendered for each
+    role so the role-coloured top strip stays consistent across the cue
+    and standby modes."""
+    out = app_module._render_standby(role)
+    assert isinstance(out, bytes)
+    assert out.startswith(JPEG_MAGIC)
+    assert 500 < len(out) < 32_000
+
+
+def test_render_standby_unknown_role_falls_back(app_module):
+    out = app_module._render_standby("ghost")
+    assert out.startswith(JPEG_MAGIC)
