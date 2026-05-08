@@ -10,6 +10,12 @@ For now, propresenter_app.py still hosts most of the app and re-exports the
 package's symbols so tests and external callers don't need to know about
 the new layout."""
 
-from . import propresenter  # noqa: F401  — load submodule for re-export
-from . import service_mate  # noqa: F401  — load submodule for re-export
+# Order matters: config + logging_setup populate DATA_DIR / log first so
+# downstream submodules can import from them without further setup.
+from . import config  # noqa: F401
+from . import logging_setup  # noqa: F401
+from . import parsing  # noqa: F401
+from . import propresenter  # noqa: F401
+from . import service_mate  # noqa: F401
+from . import settings  # noqa: F401
 from .routes import register_blueprints  # noqa: F401

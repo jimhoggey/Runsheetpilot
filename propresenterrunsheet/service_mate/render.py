@@ -29,8 +29,7 @@ def _format_mmss(seconds) -> str:
 def _compute_remaining_seconds(state: dict):
     """Best-effort countdown: prefer pp_timer remaining if known, else compute
     from current_started_at + duration_min."""
-    # Lazy import to avoid a hard dep on the parsing region during package load.
-    from propresenter_app import _extract_duration_min
+    from ..parsing.duration import _extract_duration_min
     pp_remaining = state.get("pp_remaining_seconds")
     if isinstance(pp_remaining, (int, float)):
         return int(pp_remaining)

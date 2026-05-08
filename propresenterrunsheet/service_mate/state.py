@@ -15,7 +15,7 @@ attributes so tests can monkeypatch them onto an isolated tmpdir
 import json
 import logging
 
-from propresenter_app import DATA_DIR
+from ..config import DATA_DIR
 
 from .constants import ROLE_CUE_TABLES, SM_VERBOSITY_DEFAULT
 
