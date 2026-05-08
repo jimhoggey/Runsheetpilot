@@ -52,6 +52,19 @@ Common feature touch-points:
   - clock layout tweak  → service_mate/render.py
 """
 
+import sys
+
+# When invoked as a script (`python3 propresenter_app.py`), Python registers
+# this file as `__main__` instead of `propresenter_app`. Submodules in the
+# propresenterrunsheet/ package then do `from propresenter_app import log`
+# (and similar) and Python — finding no `propresenter_app` in sys.modules —
+# loads this file a SECOND time, which immediately re-enters the package
+# load and trips a circular-import error. Aliasing the running `__main__` to
+# `propresenter_app` makes those submodule imports resolve to the same
+# partially-loaded module instead of starting over.
+if __name__ == "__main__" and "propresenter_app" not in sys.modules:
+    sys.modules["propresenter_app"] = sys.modules["__main__"]
+
 import datetime as _dt
 import json
 import logging
@@ -59,7 +72,6 @@ import os
 import re
 import shutil
 import socket
-import sys
 import difflib
 import threading
 import time
