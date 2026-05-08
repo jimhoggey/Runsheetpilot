@@ -27,17 +27,21 @@ Top-level regions, in order:
   6. Fuzzy matching (song title → library)
   7. AI prompt template + per-type colour map
   8. Time/duration parsing + PP timer creation
+  8b. Service Mate — GeekMagic clock rendering, push, auto-track loop
   9. Settings load/save
- 10. API routes (one block per /api/* endpoint)
+ 10. API routes (one block per /api/* endpoint, incl. /api/runsheet/*
+     and /api/clocks/* for the Service Mate)
  11. HTML / CSS / JS — the entire UI, inlined (~half the file)
- 12. Server bootstrap (port, browser, waitress)
+ 12. Server bootstrap (port, browser, waitress, clocks loop)
 
 Common feature touch-points:
   - new API endpoint    → region 10  + JS caller in region 11
   - new UI panel        → HTML in region 11 + JS handler in region 11
   - new settings field  → _default_settings() in region 9 + UI in region 11
   - new runsheet type   → DEFAULT_PROMPT (region 7), TYPE_COLORS (region 7),
-                          tagClass() and CSS .tag-* (region 11)
+                          tagClass() and CSS .tag-* (region 11),
+                          *_CUES rule tables (region 8b)
+  - clock layout tweak  → _render_cue() in region 8b
 """
 
 import datetime as _dt
@@ -451,6 +455,9 @@ def _create_pp_timers(base: str, playlist_name: str, matched: list) -> dict:
     deleted = _delete_existing_rb_timers(base)
 
     created, no_duration, total_items, errors = 0, 0, 0, []
+    # Map runsheet-item index (0-based) → exact timer name we created for it.
+    # Used by the Service Mate auto-track to identify the running [RB] timer.
+    timer_names: dict = {}
     for idx, mi in enumerate(matched, start=1):
         p = mi.get("parsed") or {}
         # Section dividers / songs / items the operator never times → skip.
@@ -483,6 +490,8 @@ def _create_pp_timers(base: str, playlist_name: str, matched: list) -> dict:
             r = req.post(f"{base}/v1/timers", json=payload, timeout=6)
             if r.ok:
                 created += 1
+                # idx is 1-based above; record under 0-based item index.
+                timer_names[idx - 1] = timer_name
                 log.info(f"Created timer: {timer_name}")
             else:
                 errors.append(f"{timer_name} → HTTP {r.status_code}")
@@ -492,12 +501,745 @@ def _create_pp_timers(base: str, playlist_name: str, matched: list) -> dict:
             errors.append(f"{timer_name} → {type(e).__name__}")
             log.exception(f"Timer create exception for {timer_name}")
     return {
-        "created":     created,
-        "deleted":     deleted,
-        "no_duration": no_duration,
-        "total_items": total_items,
-        "errors":      errors,
+        "created":      created,
+        "deleted":      deleted,
+        "no_duration":  no_duration,
+        "total_items":  total_items,
+        "errors":       errors,
+        "timer_names":  timer_names,
     }
+
+
+# ── Service Mate (GeekMagic SmallTV-Ultra clocks) ────────────────────────────
+#
+# Each "Service Mate" is a GeekMagic SmallTV-Ultra running stock firmware on the
+# LAN. It has no app-level "show this text" endpoint — only image upload + a
+# "display this image" toggle. So we render a 240×240 PNG with the current
+# runsheet item, countdown, and a role-aware cue, then push it.
+#
+# Validated against adrienbrault/geekmagic-hacs (the Home Assistant integration).
+# Stock firmware HTTP surface used here:
+#   POST /doUpload?dir=/image/  multipart, field "file"  → save image
+#   GET  /set?theme=3                                    → custom-image mode
+#   GET  /set?img=/image/<filename>                      → display
+#   GET  /set?brt=<1-100>                                → brightness
+#   GET  /app.json                                       → health
+#
+# Quirk: the Ultra firmware returns malformed HTTP on POST (duplicate
+# Content-Length header). `requests` will raise ChunkedEncodingError /
+# ProtocolError even though the upload succeeded — _push_to_clock catches it.
+
+RUNSHEET_STATE_FILE = DATA_DIR / "runsheet_state.json"
+CLOCKS_CONFIG_FILE  = DATA_DIR / "clocks.json"
+
+# Display constants — Ultra is 240×240 RGB.
+# Firmware (v9.0.39 confirmed) only renders JPG/GIF in Photo Album mode — PNG
+# uploads succeed but the device won't display them. So we encode as JPEG.
+SM_W, SM_H = 240, 240
+SM_FILENAME = "rb_cue.jpg"           # uploaded under /image/ on the device
+SM_TESTCARD_FILENAME = "rb_test.jpg"
+SM_JPEG_QUALITY = 90
+SM_ULTRA_IMAGE_THEME = 3   # Theme 3 = "Photo Album" (custom image full-screen)
+
+# Role accent colours used in the rendered cue images. Hex tuples (RGB).
+ROLE_ACCENT = {
+    "screen": (59, 130, 246),   # blue
+    "sound":  (34, 197, 94),    # green
+    "lights": (245, 158, 11),   # amber
+}
+
+# Fallback rule table for per-role cue text when the LLM doesn't supply one.
+# Key = item type (matches the runsheet "type" field). Value = short imperative.
+SCREEN_CUES = {
+    "song":         "Cue song slides",
+    "mc_on_stage":  "MC slide / lower-thirds",
+    "sermon":       "Sermon slides",
+    "scripture":    "Scripture slides",
+    "announcement": "Announcement loop",
+    "prayer":       "Prayer slide",
+    "offering":     "Offering slide",
+    "video":        "Video — full screen",
+    "other":        "Stand by",
+}
+SOUND_CUES = {
+    "song":         "Band mics live · MC mute",
+    "mc_on_stage":  "MC mic ON · band mute",
+    "sermon":       "Speaker mic ON",
+    "scripture":    "Reader mic ON",
+    "announcement": "MC mic ON",
+    "prayer":       "Prayer mic ON",
+    "offering":     "MC mic ON",
+    "video":        "Video audio ON",
+    "other":        "Stand by",
+}
+LIGHTS_CUES = {
+    "song":         "Stage wash — band",
+    "mc_on_stage":  "Spot — MC",
+    "sermon":       "Spot — preacher",
+    "scripture":    "Soft warm wash",
+    "announcement": "House lights up",
+    "prayer":       "Soft warm wash",
+    "offering":     "House lights up",
+    "video":        "Stage dim · screen up",
+    "other":        "Stand by",
+}
+ROLE_CUE_TABLES = {
+    "screen": SCREEN_CUES, "sound": SOUND_CUES, "lights": LIGHTS_CUES,
+}
+
+
+def _default_clocks_config() -> dict:
+    return {
+        "clocks": [
+            {"id": "screen", "ip": "", "role": "screen", "name": "Screen station"},
+            {"id": "sound",  "ip": "", "role": "sound",  "name": "Sound station"},
+            {"id": "lights", "ip": "", "role": "lights", "name": "Lights station"},
+        ],
+        "brightness": 70,
+        "enabled":    True,
+    }
+
+
+def _read_runsheet_state() -> dict:
+    if not RUNSHEET_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(RUNSHEET_STATE_FILE.read_text())
+    except Exception:
+        log.exception("Failed to read runsheet_state.json — ignoring")
+        return {}
+
+
+def _write_runsheet_state(state: dict) -> None:
+    tmp = RUNSHEET_STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(RUNSHEET_STATE_FILE)
+
+
+def _read_clocks_config() -> dict:
+    if not CLOCKS_CONFIG_FILE.exists():
+        return _default_clocks_config()
+    try:
+        cfg = json.loads(CLOCKS_CONFIG_FILE.read_text())
+        merged = _default_clocks_config()
+        merged.update({k: v for k, v in cfg.items() if v is not None})
+        return merged
+    except Exception:
+        log.exception("Failed to read clocks.json — using defaults")
+        return _default_clocks_config()
+
+
+def _write_clocks_config(cfg: dict) -> None:
+    tmp = CLOCKS_CONFIG_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.replace(CLOCKS_CONFIG_FILE)
+
+
+def _cue_for(role: str, item: dict) -> str:
+    """Return the short cue line to show for an item, for a given role.
+    Prefers LLM-generated cues stored on the item under `cues.{role}`; else
+    falls through to the rule table by item type."""
+    if not item:
+        return ""
+    cues = item.get("cues") or {}
+    text = (cues.get(role) or "").strip()
+    if text:
+        return text[:60]
+    table = ROLE_CUE_TABLES.get(role, {})
+    t = (item.get("type") or "other").lower()
+    return table.get(t, "Get ready")
+
+
+def _ensure_item_cues(item: dict) -> dict:
+    """Ensure the item has cues for all three roles (LLM-fed or fallback)."""
+    cues = dict(item.get("cues") or {})
+    for role in ("screen", "sound", "lights"):
+        if not (cues.get(role) or "").strip():
+            cues[role] = _cue_for(role, item)
+    item["cues"] = cues
+    return item
+
+
+def _next_visible_item(items, idx):
+    """The next runsheet item after idx, or None at the end."""
+    if 0 <= idx < len(items) - 1:
+        return items[idx + 1]
+    return None
+
+
+def _format_mmss(seconds) -> str:
+    if seconds is None:
+        return "--:--"
+    sign = "-" if seconds < 0 else ""
+    s = abs(int(seconds))
+    return f"{sign}{s // 60:02d}:{s % 60:02d}"
+
+
+def _compute_remaining_seconds(state: dict):
+    """Best-effort countdown: prefer pp_timer remaining if known, else compute
+    from current_started_at + duration_min."""
+    pp_remaining = state.get("pp_remaining_seconds")
+    if isinstance(pp_remaining, (int, float)):
+        return int(pp_remaining)
+    items = state.get("items") or []
+    idx = int(state.get("current_index") or 0)
+    if not (0 <= idx < len(items)):
+        return None
+    item = items[idx]
+    dur_min = _extract_duration_min(item)
+    if dur_min <= 0:
+        return None
+    started_at = state.get("current_started_at")
+    if not started_at:
+        return None
+    try:
+        started = _dt.datetime.fromisoformat(started_at)
+    except Exception:
+        return None
+    elapsed = (_dt.datetime.now() - started).total_seconds()
+    return int(dur_min * 60 - elapsed)
+
+
+def _render_cue(role: str, state: dict) -> bytes:
+    """Render a 240×240 JPEG for a given role and the current runsheet state.
+    Returns JPEG bytes (always — no exceptions to caller; on failure returns
+    a plain placeholder image). JPEG (not PNG) because v9.0.39 firmware only
+    displays JPG/GIF in Photo Album mode."""
+    from PIL import Image, ImageDraw, ImageFont
+    from io import BytesIO
+    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    items = state.get("items") or []
+    idx = int(state.get("current_index") or 0)
+    if not items:
+        cur, nxt = None, None
+    else:
+        idx = max(0, min(idx, len(items) - 1))
+        cur = items[idx]
+        nxt = _next_visible_item(items, idx)
+    remaining = _compute_remaining_seconds(state)
+    img = Image.new("RGB", (SM_W, SM_H), (16, 16, 28))
+    draw = ImageDraw.Draw(img)
+
+    def font(size: int):
+        # Try common system fonts so we get something proportional, else default.
+        for path in (
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    f_label  = font(14)
+    f_title  = font(20)
+    f_small  = font(13)
+    f_clock  = font(56)
+    f_next   = font(13)
+    f_cue    = font(15)
+
+    # Top strip — role accent + "NOW · TYPE"
+    draw.rectangle([(0, 0), (SM_W, 28)], fill=accent)
+    role_label = role.upper()
+    type_label = (cur.get("type") if cur else "").upper().replace("_", " ") or "—"
+    draw.text((8, 6), f"{role_label}", fill=(255, 255, 255), font=f_label)
+    draw.text((SM_W - 8 - draw.textlength(type_label, font=f_label), 6),
+              type_label, fill=(255, 255, 255), font=f_label)
+
+    # Current title — wrap to 2 lines if needed
+    cur_title = (cur.get("title") if cur else "(no runsheet)") or "(empty)"
+    _draw_wrapped(draw, cur_title, (12, 36), SM_W - 24, f_title,
+                  (236, 236, 243), max_lines=2)
+
+    # Big countdown
+    mmss = _format_mmss(remaining) if remaining is not None else "--:--"
+    tw = draw.textlength(mmss, font=f_clock)
+    cd_color = (239, 68, 68) if (remaining is not None and remaining < 30) \
+        else (255, 255, 255)
+    draw.text(((SM_W - tw) / 2, 92), mmss, fill=cd_color, font=f_clock)
+
+    # Divider
+    draw.line([(12, 168), (SM_W - 12, 168)], fill=(60, 60, 80), width=1)
+
+    # NEXT block
+    if nxt:
+        nxt_type = (nxt.get("type") or "").upper().replace("_", " ")
+        draw.text((12, 174), f"NEXT — {nxt_type}", fill=(140, 140, 170),
+                  font=f_next)
+        nxt_title = nxt.get("title") or ""
+        _draw_wrapped(draw, nxt_title, (12, 190), SM_W - 24, f_small,
+                      (220, 220, 235), max_lines=1)
+    else:
+        draw.text((12, 174), "END OF SERVICE", fill=(140, 140, 170), font=f_next)
+
+    # Cue line for this role — prefer item.cues[role], else rule table
+    cue_text = _cue_for(role, cur) if cur else ""
+    if cue_text:
+        # Bottom band, accent-tinted
+        band_color = tuple(min(255, int(c * 0.35)) for c in accent)
+        draw.rectangle([(0, SM_H - 26), (SM_W, SM_H)], fill=band_color)
+        # Truncate visually
+        ct = cue_text
+        while draw.textlength(ct, font=f_cue) > SM_W - 16 and len(ct) > 4:
+            ct = ct[:-2]
+        if ct != cue_text:
+            ct = ct[:-1] + "…"
+        draw.text((8, SM_H - 22), ct, fill=(255, 255, 255), font=f_cue)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
+
+
+def _draw_wrapped(draw, text, xy, max_w, font, fill, max_lines: int = 2):
+    """Greedy word-wrap to fit max_w; truncates with … past max_lines."""
+    if not text:
+        return
+    words = str(text).split()
+    lines: list = []
+    cur = ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if draw.textlength(test, font=font) <= max_w:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            if len(lines) >= max_lines:
+                break
+            cur = w
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+    if lines:
+        # If the last line still overflows after truncation, ellipsize.
+        last = lines[-1]
+        while draw.textlength(last + ("…" if last and last[-1] != "…" else ""),
+                              font=font) > max_w and len(last) > 2:
+            last = last[:-1]
+        if len(words) > sum(len(line.split()) for line in lines):
+            last = (last.rstrip() + "…")[:max(2, len(last) + 1)]
+        lines[-1] = last
+    y = xy[1]
+    line_h = font.size + 4
+    for line in lines:
+        draw.text((xy[0], y), line, fill=fill, font=font)
+        y += line_h
+
+
+def _render_test_card(role: str, ip: str = "") -> bytes:
+    """A simple coloured card with the role label — used by the Test button."""
+    from PIL import Image, ImageDraw, ImageFont
+    from io import BytesIO
+    accent = ROLE_ACCENT.get(role, (120, 120, 140))
+    img = Image.new("RGB", (SM_W, SM_H), accent)
+    draw = ImageDraw.Draw(img)
+    try:
+        f_big = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 36)
+        f_sm  = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+    except OSError:
+        f_big = ImageFont.load_default()
+        f_sm  = ImageFont.load_default()
+    label = role.upper()
+    tw = draw.textlength(label, font=f_big)
+    draw.text(((SM_W - tw) / 2, 60), label, fill=(255, 255, 255), font=f_big)
+    sub = "Service Mate test"
+    tw2 = draw.textlength(sub, font=f_sm)
+    draw.text(((SM_W - tw2) / 2, 130), sub, fill=(240, 240, 255), font=f_sm)
+    if ip:
+        tw3 = draw.textlength(ip, font=f_sm)
+        draw.text(((SM_W - tw3) / 2, 156), ip, fill=(220, 220, 235), font=f_sm)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=SM_JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
+
+
+# Track which IPs we've already set theme=3 on this process — saves an HTTP
+# call per push. Cleared on restart.
+_CLOCK_THEME_SET: set = set()
+
+
+def _push_to_clock(ip: str, image_bytes: bytes,
+                   filename: str = SM_FILENAME) -> bool:
+    """Upload an image to a GeekMagic Ultra and switch its display to it.
+    Returns True on success. Treats the firmware's malformed-HTTP-after-POST
+    quirk as success (HACS does the same).
+
+    `image_bytes` should be JPEG or GIF — v9.0.39 firmware does not display
+    PNG in Photo Album mode (uploads succeed silently but never render)."""
+    import requests as req
+    if not ip:
+        return False
+    base = f"http://{ip}"
+    fl = (filename or SM_FILENAME).lower()
+    if fl.endswith(".gif"):
+        ctype = "image/gif"
+    elif fl.endswith(".png"):
+        ctype = "image/png"
+    else:
+        ctype = "image/jpeg"
+    files = {"file": (filename, image_bytes, ctype)}
+    try:
+        try:
+            r = req.post(f"{base}/doUpload", params={"dir": "/image/"},
+                         files=files, timeout=8)
+            if not r.ok:
+                log.warning(f"Clock {ip} upload returned {r.status_code}")
+        except (req.exceptions.ChunkedEncodingError,
+                req.exceptions.InvalidHeader,
+                req.exceptions.ContentDecodingError,
+                req.exceptions.ConnectionError) as e:
+            # Ultra firmware (v9.0.39) sends malformed HTTP on POST —
+            # specifically, it returns a response with two unmatching
+            # Content-Length headers (e.g. "3888, 11"). urllib3 / requests
+            # raise InvalidHeader (newer) or ChunkedEncodingError (older)
+            # even though the upload itself succeeded. Verified by checking
+            # that GET /image/<filename> returns 200 after such errors.
+            log.debug(f"Clock {ip} POST raised {type(e).__name__} (ignored — "
+                      "Ultra firmware quirk)")
+        # Switch to custom-image mode (only first time per process)
+        if ip not in _CLOCK_THEME_SET:
+            try:
+                r2 = req.get(f"{base}/set", params={"theme": SM_ULTRA_IMAGE_THEME},
+                             timeout=4)
+                r2.raise_for_status()
+                _CLOCK_THEME_SET.add(ip)
+            except Exception:
+                log.exception(f"Clock {ip} theme set failed")
+                return False
+        # Display the image
+        r3 = req.get(f"{base}/set", params={"img": f"/image/{filename}"}, timeout=4)
+        r3.raise_for_status()
+        return True
+    except Exception:
+        log.exception(f"Clock {ip} push failed")
+        return False
+
+
+def _set_clock_brightness(ip: str, brt: int) -> bool:
+    import requests as req
+    try:
+        r = req.get(f"http://{ip}/set", params={"brt": int(brt)}, timeout=4)
+        r.raise_for_status()
+        return True
+    except Exception:
+        log.exception(f"Clock {ip} brightness failed")
+        return False
+
+
+def _probe_clock(ip: str) -> dict:
+    import requests as req
+    try:
+        r = req.get(f"http://{ip}/app.json", timeout=4)
+        r.raise_for_status()
+        # Some firmware returns text/plain — accept any.
+        try:
+            data = r.json()
+        except Exception:
+            data = {"raw": r.text[:200]}
+        return {"ok": True, "data": data}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+# Cached playlist contents — refreshed when the active playlist UUID changes
+# or when the cache is older than this many seconds.
+_PP_PLAYLIST_CACHE = {"uuid": None, "items": [], "fetched_at": 0.0}
+_PP_PLAYLIST_CACHE_TTL_S = 60
+
+# Strip header decorations the create-playlist code adds, so we can match the
+# header name back to the original runsheet item title.
+_HDR_ACTION_RE   = re.compile(r"^\s*⚠\s*ACTION NEEDED\s*—\s*", re.IGNORECASE)
+_HDR_TIME_TAIL_RE = re.compile(
+    r"\s+—\s+\d{1,2}:\d{2}\s*[AaPp][Mm]\s*$"
+)
+_HDR_PAREN_TIME_RE = re.compile(
+    r"\s*\(\s*\d{1,2}:\d{2}\s*[AaPp][Mm]\s*\)\s*$"
+)
+_HDR_BOOK_RE = re.compile(r"^📖\s*")
+
+
+def _clean_header_name(name: str) -> str:
+    """Reverse the decorations create_playlist adds to a header so the result
+    matches the original runsheet title."""
+    if not name:
+        return ""
+    s = name
+    s = _HDR_ACTION_RE.sub("", s)
+    s = _HDR_BOOK_RE.sub("", s)
+    s = _HDR_TIME_TAIL_RE.sub("", s)
+    s = _HDR_PAREN_TIME_RE.sub("", s)
+    return s.strip()
+
+
+def _pp_get_playlist_items(base: str, playlist_uuid: str) -> list:
+    """Cached fetch of /v1/playlist/{uuid} items. Refreshes when the active
+    playlist UUID changes or every _PP_PLAYLIST_CACHE_TTL_S seconds."""
+    import requests as req
+    now = time.time()
+    cache = _PP_PLAYLIST_CACHE
+    if (cache["uuid"] == playlist_uuid
+            and (now - cache["fetched_at"]) < _PP_PLAYLIST_CACHE_TTL_S
+            and cache["items"]):
+        return cache["items"]
+    try:
+        r = req.get(f"{base}/v1/playlist/{playlist_uuid}", timeout=3)
+        if r.ok:
+            data = r.json() or {}
+            cache["uuid"] = playlist_uuid
+            cache["items"] = data.get("items") or []
+            cache["fetched_at"] = now
+            return cache["items"]
+    except Exception:
+        log.debug("playlist fetch failed", exc_info=True)
+    return cache["items"] if cache["uuid"] == playlist_uuid else []
+
+
+def _pp_active_section_index(state: dict, base: str):
+    """Map the currently-active PP playlist item back to a runsheet item index.
+
+    Operators commonly insert media items between our header rows; clicking
+    one of those should still advance the Service Mate to the section that
+    media belongs to. So we walk backward through the playlist from the
+    active item to find the most recent header, strip its decorations, and
+    fuzzy-match against the runsheet titles.
+
+    Returns a runsheet index, or None if no confident match."""
+    import requests as req
+    try:
+        r = req.get(f"{base}/v1/playlist/active", timeout=2)
+        if not r.ok:
+            return None
+        data = r.json() or {}
+        pres = data.get("presentation")
+        if not isinstance(pres, dict):
+            return None
+        playlist = pres.get("playlist") or {}
+        playlist_item = pres.get("playlist_item") or {}
+        playlist_uuid = playlist.get("uuid")
+        active_index = (playlist_item.get("id") or {}).get("index")
+        if not playlist_uuid or active_index is None:
+            return None
+        plist = _pp_get_playlist_items(base, playlist_uuid)
+        if active_index >= len(plist):
+            # Cache might be stale — force refresh and retry once.
+            _PP_PLAYLIST_CACHE["uuid"] = None
+            plist = _pp_get_playlist_items(base, playlist_uuid)
+            if active_index >= len(plist):
+                return None
+        # Find the section header for the active item: itself if it's a
+        # header, else walk backward.
+        header_name = ""
+        if plist[active_index].get("type") == "header":
+            header_name = (plist[active_index].get("id") or {}).get("name", "")
+        else:
+            for i in range(active_index - 1, -1, -1):
+                if plist[i].get("type") == "header":
+                    header_name = (plist[i].get("id") or {}).get("name", "")
+                    break
+        clean = _clean_header_name(header_name)
+        if not clean:
+            return None
+        items = state.get("items") or []
+        best_i, best_score = -1, 0.0
+        nn = _norm(clean)
+        for i, it in enumerate(items):
+            score = difflib.SequenceMatcher(
+                None, nn, _norm(it.get("title", ""))
+            ).ratio()
+            if score > best_score:
+                best_score, best_i = score, i
+        if best_i >= 0 and best_score >= 0.6:
+            return best_i
+    except Exception:
+        log.debug("PP /v1/playlist/active fetch failed", exc_info=True)
+    return None
+
+
+def _maybe_advance_from_pp(state: dict) -> dict:
+    """Auto-track ProPresenter so the Service Mate follows whatever the
+    operator is doing. Three sources, used in order:
+      1. Active playlist section — primary. Reads /v1/playlist/active and
+         walks back to the parent header. Detects clicks on media inserted
+         between our headers.
+      2. Running [RB] timer — secondary. Provides accurate countdown time
+         when a timer is actually running.
+      3. Active presentation name match — fallback for non-playlist usage.
+    Manual cue clicks set a 10-second override window during which all three
+    are suppressed so the operator's input isn't fought."""
+    import requests as req
+    auto = (state.get("auto_track") or {})
+    if not auto.get("enabled", True):
+        return state
+    until = state.get("manual_override_until")
+    if until:
+        try:
+            if _dt.datetime.fromisoformat(until) > _dt.datetime.now():
+                return state
+        except Exception:
+            state.pop("manual_override_until", None)
+    settings = load_settings()
+    host = settings.get("pp_host") or "localhost"
+    port = settings.get("pp_port") or "50001"
+    base = f"http://{host}:{port}"
+    items = state.get("items") or []
+    if not items:
+        return state
+
+    # 1) Active playlist section (primary signal)
+    section_idx = _pp_active_section_index(state, base)
+    if section_idx is not None and section_idx != state.get("current_index"):
+        state["current_index"] = section_idx
+        state["current_started_at"] = _dt.datetime.now().isoformat()
+        state["pp_source"] = "section"
+
+    # 2) Running [RB] timer — overlays accurate remaining time on top of (1).
+    timer_running = False
+    try:
+        r = req.get(f"{base}/v1/timers/current", timeout=2)
+        if r.ok:
+            running = r.json() or []
+            for t in running if isinstance(running, list) else []:
+                tname = ((t.get("id") or {}).get("name") or "")
+                tstate = (t.get("state") or "").lower()
+                if not tname.startswith(_RB_TIMER_PREFIX):
+                    continue
+                if tstate not in ("running", "started", "active"):
+                    continue
+                for i, it in enumerate(items):
+                    if (it.get("pp_timer_name") or "") == tname:
+                        if state.get("current_index") != i:
+                            state["current_index"] = i
+                            state["current_started_at"] = _dt.datetime.now().isoformat()
+                            state["pp_source"] = "timer"
+                        rem = _parse_pp_time(t.get("time"))
+                        if rem is not None:
+                            state["pp_remaining_seconds"] = rem
+                        timer_running = True
+                        break
+                if timer_running:
+                    break
+            if not timer_running:
+                state.pop("pp_remaining_seconds", None)
+    except Exception:
+        log.debug("PP /v1/timers/current poll failed", exc_info=True)
+
+    if section_idx is not None or timer_running:
+        return state
+
+    # 3) Active presentation name match (fallback for non-playlist mode)
+    try:
+        r = req.get(f"{base}/v1/presentation/active", timeout=2)
+        if r.ok:
+            data = r.json() or {}
+            pres = (data.get("presentation") or data) if isinstance(data, dict) else {}
+            active_name = ""
+            if isinstance(pres, dict):
+                active_name = ((pres.get("id") or {}).get("name")
+                               or pres.get("name") or "")
+            if active_name:
+                cur_idx = int(state.get("current_index") or 0)
+                best_i, best_score = -1, 0.0
+                for i, it in enumerate(items):
+                    if i < cur_idx:
+                        continue
+                    score = difflib.SequenceMatcher(
+                        None, _norm(active_name), _norm(it.get("title", ""))
+                    ).ratio()
+                    if score > best_score:
+                        best_score, best_i = score, i
+                if best_i >= 0 and best_score >= 0.78 and best_i != cur_idx:
+                    state["current_index"] = best_i
+                    state["current_started_at"] = _dt.datetime.now().isoformat()
+                    state["pp_source"] = "presentation"
+                    state.pop("pp_remaining_seconds", None)
+    except Exception:
+        log.debug("PP /v1/presentation/active poll failed", exc_info=True)
+
+    return state
+
+
+def _parse_pp_time(s):
+    """ProPresenter's timer endpoint returns time as 'HH:MM:SS' string.
+    Returns total seconds, or None."""
+    if isinstance(s, (int, float)):
+        return int(s)
+    if not isinstance(s, str):
+        return None
+    parts = s.strip().split(":")
+    try:
+        if len(parts) == 3:
+            h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+            return h * 3600 + m * 60 + sec
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 1:
+            return int(parts[0])
+    except Exception:
+        pass
+    return None
+
+
+def _clocks_loop_tick(last_pushed: dict) -> None:
+    """One pass of the background loop. Called by start_clocks_loop."""
+    state = _read_runsheet_state()
+    cfg = _read_clocks_config()
+    if not state or not cfg.get("enabled") or not cfg.get("clocks"):
+        return
+    state = _maybe_advance_from_pp(state)
+    # Persist any auto-track changes back so the UI sees them.
+    try:
+        _write_runsheet_state(state)
+    except Exception:
+        log.exception("Failed to persist runsheet state mid-loop")
+    for clock in cfg["clocks"]:
+        ip = (clock.get("ip") or "").strip()
+        role = clock.get("role") or clock.get("id") or "screen"
+        cid = clock.get("id") or role
+        if not ip:
+            continue
+        try:
+            png = _render_cue(role, state)
+        except Exception:
+            log.exception(f"render failed for role={role}")
+            continue
+        import hashlib
+        h = hashlib.sha1(png).hexdigest()
+        # Re-push at least every 20 ticks (~40s) even if unchanged so the
+        # countdown stays roughly fresh on screen if the device reset itself.
+        prev = last_pushed.get(cid) or ("", 0)
+        if prev[0] == h and (time.time() - prev[1]) < 20:
+            continue
+        if _push_to_clock(ip, png):
+            last_pushed[cid] = (h, time.time())
+
+
+def _clocks_loop() -> None:
+    last_pushed: dict = {}
+    log.info("Service Mate loop started")
+    while True:
+        try:
+            _clocks_loop_tick(last_pushed)
+        except Exception:
+            log.exception("clocks_loop tick failed")
+        time.sleep(2)
+
+
+def start_clocks_loop() -> None:
+    """Start the background daemon thread that pushes images to the Service
+    Mates. Idempotent — only starts once per process."""
+    if getattr(start_clocks_loop, "_started", False):
+        return
+    start_clocks_loop._started = True   # type: ignore[attr-defined]
+    threading.Thread(target=_clocks_loop, daemon=True,
+                     name="service-mate").start()
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -695,6 +1437,26 @@ def api_upload_and_parse():
             prompt = (f"{prompt_template}\n\nRUNSHEET:\n---\n"
                       f"{runsheet_text}\n---")
 
+        # 5b. Service Mate cue addendum — ask the model to also emit a per-role
+        # one-liner per item so the GeekMagic clocks at Screen/Sound/Lights
+        # have something specific to display. If the model ignores this, the
+        # rule table fills in a generic fallback.
+        prompt += (
+            "\n\nADDITIONAL FIELD — `cues`:\n"
+            "For EACH item, also include a `cues` object with three short "
+            "imperative phrases (≤ 40 chars each) telling the operator at "
+            "that station what to do when this item is current:\n"
+            "  - cues.screen  — what the SCREEN/lyric op should cue next\n"
+            "  - cues.sound   — what the SOUND op should do (which mics on/off)\n"
+            "  - cues.lights  — what the LIGHTS op should do\n"
+            "Use the title, speaker names, and notes for specificity. "
+            "Examples:\n"
+            "  cues.screen = \"Slide — Build My Life\"\n"
+            "  cues.sound  = \"Mic on for Ps Nick\"\n"
+            "  cues.lights = \"Spot — preacher\"\n"
+            "If you can't tell, leave the field as an empty string."
+        )
+
         # 6. Call OpenRouter
         # Specific 4xx responses become friendly JSON errors (HTTP 200 so the
         # JS reads the message); everything else falls through to raise_for_status
@@ -755,6 +1517,29 @@ def api_upload_and_parse():
         if not service_name and pdf_file.filename:
             stem = re.sub(r"\.pdf$", "", pdf_file.filename, flags=re.IGNORECASE)
             service_name = re.sub(r"[_]+", " ", stem).strip()
+
+        # Fill any per-role cue gaps from the rule table so every item has
+        # cues for the Service Mate clocks.
+        for it in items:
+            if isinstance(it, dict):
+                _ensure_item_cues(it)
+
+        # Also seed the Service Mate runsheet state on parse — so the user can
+        # test the clock cue flow without going through Create Playlist (which
+        # requires ProPresenter to be running). Create Playlist later overwrites
+        # this with the timer-name-stamped version for auto-track.
+        try:
+            sm_state = {
+                "service_name":       service_name or pdf_file.filename or "Runsheet",
+                "items":              items,
+                "current_index":      0,
+                "current_started_at": _dt.datetime.now().isoformat(),
+                "auto_track":         {"enabled": True},
+            }
+            _write_runsheet_state(sm_state)
+            log.info(f"Service Mate state seeded from parse: {len(items)} items")
+        except Exception:
+            log.exception("Service Mate parse-time state write failed")
 
         log.info(f"AI parsed {len(items)} runsheet items, "
                  f"suggested name: {service_name!r}")
@@ -910,9 +1695,34 @@ def api_create_playlist():
 
         # 5. Optional: create duration-based countdown timers
         timer_result = {"created": 0, "deleted": 0, "no_duration": 0,
-                        "total_items": 0, "errors": []}
+                        "total_items": 0, "errors": [], "timer_names": {}}
         if body.get("create_timers"):
             timer_result = _create_pp_timers(base, name, matched)
+
+        # 6. Persist Service Mate runsheet state — what the GeekMagic clocks
+        # display on the LAN. We strip the "match" wrappers and keep only the
+        # parsed items, plus stamp each item with the exact PP timer name we
+        # created for it (so auto-track can match by name later).
+        try:
+            timer_names = (timer_result or {}).get("timer_names") or {}
+            sm_items = []
+            for i, mi in enumerate(matched):
+                p = dict((mi.get("parsed") or {}))
+                if i in timer_names:
+                    p["pp_timer_name"] = timer_names[i]
+                _ensure_item_cues(p)
+                sm_items.append(p)
+            sm_state = {
+                "service_name":       name,
+                "items":              sm_items,
+                "current_index":      0,
+                "current_started_at": _dt.datetime.now().isoformat(),
+                "auto_track":         {"enabled": True},
+            }
+            _write_runsheet_state(sm_state)
+            log.info(f"Service Mate state written: {len(sm_items)} items")
+        except Exception:
+            log.exception("Service Mate state write failed (non-fatal)")
 
         log.info(f"Playlist created: '{name}' → {songs} songs, {headers} headers, "
                  f"{needs_action} action-needed, {timer_result['created']} timers "
@@ -958,6 +1768,165 @@ def api_test_connection():
                         "count": len(libs) if hasattr(libs, "__len__") else 0})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
+
+
+# ── Service Mate routes ──────────────────────────────────────────────────────
+#
+# All endpoints under /api/runsheet/* and /api/clocks/* are for the GeekMagic
+# clock integration (Service Mate). They never call OpenRouter — they only
+# move the cue index, persist state, render PNGs, and push to clocks.
+
+@app.route("/api/runsheet/state", methods=["GET"])
+def api_runsheet_state_get():
+    state = _read_runsheet_state()
+    return jsonify(state or {})
+
+
+@app.route("/api/runsheet/state", methods=["POST"])
+def api_runsheet_state_post():
+    """Replace the runsheet state on disk. Body shape:
+       { service_name, items, current_index?, auto_track?: {enabled} }
+       items is a list of dicts with type/title/notes/duration_min and
+       optional `cues: {screen,sound,lights}` and `pp_timer_name`."""
+    body = request.get_json(silent=True) or {}
+    items = body.get("items") or []
+    if not isinstance(items, list):
+        return jsonify({"error": "items must be a list"}), 400
+    # Fill any missing per-role cues from the rule table.
+    for it in items:
+        if isinstance(it, dict):
+            _ensure_item_cues(it)
+    state = {
+        "service_name":      (body.get("service_name") or "").strip(),
+        "items":             items,
+        "current_index":     int(body.get("current_index") or 0),
+        "current_started_at": _dt.datetime.now().isoformat(),
+        "auto_track":        body.get("auto_track")
+                             or {"enabled": True},
+    }
+    _write_runsheet_state(state)
+    return jsonify({"ok": True, "state": state})
+
+
+@app.route("/api/runsheet/cue", methods=["POST"])
+def api_runsheet_cue():
+    """Move the current-item index. Body: {"delta": +1|-1} or {"index": N}.
+    Sets a 10-second manual override window during which auto-track is paused
+    so the operator's click isn't immediately overridden."""
+    body = request.get_json(silent=True) or {}
+    state = _read_runsheet_state()
+    if not state or not state.get("items"):
+        return jsonify({"error": "no runsheet loaded"}), 400
+    items = state["items"]
+    cur = int(state.get("current_index") or 0)
+    if "index" in body and body.get("index") is not None:
+        new = int(body["index"])
+    elif "delta" in body:
+        new = cur + int(body["delta"])
+    else:
+        return jsonify({"error": "delta or index required"}), 400
+    new = max(0, min(new, len(items) - 1))
+    state["current_index"] = new
+    state["current_started_at"] = _dt.datetime.now().isoformat()
+    state["manual_override_until"] = (
+        _dt.datetime.now() + _dt.timedelta(seconds=10)).isoformat()
+    state.pop("pp_remaining_seconds", None)
+    _write_runsheet_state(state)
+    return jsonify({"ok": True, "current_index": new})
+
+
+@app.route("/api/runsheet/state", methods=["DELETE"])
+def api_runsheet_state_delete():
+    try:
+        if RUNSHEET_STATE_FILE.exists():
+            RUNSHEET_STATE_FILE.unlink()
+    except Exception:
+        log.exception("Failed to delete runsheet_state.json")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/clocks", methods=["GET"])
+def api_clocks_get():
+    return jsonify(_read_clocks_config())
+
+
+@app.route("/api/clocks", methods=["POST"])
+def api_clocks_post():
+    body = request.get_json(silent=True) or {}
+    cfg = _read_clocks_config()
+    if "clocks" in body and isinstance(body["clocks"], list):
+        cleaned = []
+        for c in body["clocks"]:
+            if not isinstance(c, dict):
+                continue
+            cleaned.append({
+                "id":   (c.get("id") or c.get("role") or "").strip().lower(),
+                "ip":   (c.get("ip") or "").strip(),
+                "role": (c.get("role") or c.get("id") or "screen").strip().lower(),
+                "name": (c.get("name") or "").strip(),
+            })
+        cfg["clocks"] = cleaned
+    if "brightness" in body:
+        try:
+            cfg["brightness"] = max(1, min(100, int(body["brightness"])))
+        except Exception:
+            pass
+    if "enabled" in body:
+        cfg["enabled"] = bool(body["enabled"])
+    _write_clocks_config(cfg)
+    return jsonify({"ok": True, "config": cfg})
+
+
+@app.route("/api/clocks/<clock_id>/probe", methods=["POST"])
+def api_clock_probe(clock_id: str):
+    cfg = _read_clocks_config()
+    clock = next((c for c in cfg.get("clocks", [])
+                  if c.get("id") == clock_id), None)
+    if not clock:
+        return jsonify({"error": "unknown clock"}), 404
+    ip = (clock.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "no IP set"}), 200
+    return jsonify(_probe_clock(ip))
+
+
+@app.route("/api/clocks/<clock_id>/test", methods=["POST"])
+def api_clock_test(clock_id: str):
+    cfg = _read_clocks_config()
+    clock = next((c for c in cfg.get("clocks", [])
+                  if c.get("id") == clock_id), None)
+    if not clock:
+        return jsonify({"error": "unknown clock"}), 404
+    ip = (clock.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "no IP set"}), 200
+    role = clock.get("role") or "screen"
+    jpg = _render_test_card(role, ip)
+    if cfg.get("brightness"):
+        _set_clock_brightness(ip, int(cfg["brightness"]))
+    ok = _push_to_clock(ip, jpg, filename=SM_TESTCARD_FILENAME)
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/clocks/preview", methods=["GET"])
+def api_clocks_preview():
+    """Return the rendered PNG for a given role — used by the UI for an
+    inline preview without the device, and for development."""
+    role = (request.args.get("role") or "screen").lower()
+    if role not in ROLE_ACCENT:
+        role = "screen"
+    state = _read_runsheet_state() or {
+        "items": [
+            {"type": "song", "title": "Build My Life", "duration_min": 5,
+             "notes": "9:30 AM"},
+            {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30}
+        ],
+        "current_index": 0,
+        "current_started_at": _dt.datetime.now().isoformat(),
+    }
+    jpg = _render_cue(role, state)
+    return Response(jpg, mimetype="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.route("/api/quit", methods=["POST"])
@@ -1702,6 +2671,77 @@ button:focus-visible, .quit-btn:focus-visible {
 
   <div id="result-notice"></div>
 
+  <!-- ═══════════ Service Mate (GeekMagic clocks) ═══════════ -->
+  <div class="card" id="sm-card">
+    <div class="card-title">📺 Service Mate · GeekMagic clocks</div>
+    <p style="color:var(--muted);margin:0 0 12px 0;font-size:0.84rem">
+      Each Service Mate is a GeekMagic SmallTV-Ultra on your LAN. The app
+      pushes a 240×240 cue every couple of seconds: current item, countdown,
+      and a role-aware hint of what's next.
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+      <thead>
+        <tr style="color:var(--muted);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase">
+          <th style="text-align:left;padding:6px 4px;width:80px">Role</th>
+          <th style="text-align:left;padding:6px 4px">IP address</th>
+          <th style="text-align:left;padding:6px 4px;width:200px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sm-clocks-body">
+        <!-- filled by JS -->
+      </tbody>
+    </table>
+
+    <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="sm-enabled" onchange="smSaveSettings()">
+        <span style="font-size:0.85rem">Pushing to clocks</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="sm-autotrack" onchange="smSaveAutoTrack()">
+        <span style="font-size:0.85rem">Auto-track ProPresenter</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin:0">
+        <span style="font-size:0.85rem">Brightness</span>
+        <input type="range" id="sm-brightness" min="1" max="100" value="70"
+               style="width:120px" onchange="smSaveSettings()">
+        <span id="sm-brightness-val" style="font-size:0.78rem;color:var(--muted);min-width:30px">70</span>
+      </label>
+    </div>
+
+    <div class="row" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
+      <div style="flex:1 1 220px">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">
+          Cue control
+        </div>
+        <div id="sm-current" style="font-size:0.92rem;font-weight:600;margin-bottom:4px;min-height:1.3em">
+          —
+        </div>
+        <div id="sm-next" style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;min-height:1.2em">
+          —
+        </div>
+        <div class="row" style="gap:6px">
+          <button class="btn btn-dim btn-sm" onclick="smCue(-1)">◀ Prev</button>
+          <button class="btn btn-acc btn-sm" onclick="smCue(+1)">Next ▶</button>
+          <button class="btn btn-dim btn-sm" onclick="smRestart()" title="Restart current item's countdown">↺</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">
+          Live preview
+        </div>
+        <select id="sm-preview-role" onchange="smRefreshPreview()" style="font-size:0.78rem;padding:3px 6px">
+          <option value="screen">Screen</option>
+          <option value="sound">Sound</option>
+          <option value="lights">Lights</option>
+        </select>
+        <img id="sm-preview" alt="preview" width="160" height="160"
+             style="border-radius:8px;border:1px solid var(--border);background:#0a0a14">
+      </div>
+    </div>
+  </div>
+
 </main>
 </div>
 
@@ -2231,6 +3271,173 @@ async function quitApp() {
 
 loadSettings();
 
+// ─── 10. Service Mate (GeekMagic clocks) ─────────────────────────────────
+// Renders the clocks table, current/next preview, and the inline image
+// preview that shows what each role's clock is showing right now.
+
+let smClocksConfig = {clocks: [], brightness: 70, enabled: true};
+
+async function smInit() {
+  try {
+    const cfg = await fetch('/api/clocks').then(r => r.json());
+    smClocksConfig = cfg;
+    smRenderClocksTable();
+    document.getElementById('sm-enabled').checked = !!cfg.enabled;
+    document.getElementById('sm-brightness').value = cfg.brightness || 70;
+    document.getElementById('sm-brightness-val').textContent = cfg.brightness || 70;
+  } catch (e) { console.warn('sm load clocks failed', e); }
+  await smRefreshState();
+  smRefreshPreview();
+  // Refresh state + preview every 2 seconds
+  setInterval(smRefreshState, 2000);
+  setInterval(smRefreshPreview, 2000);
+}
+
+function smRenderClocksTable() {
+  const body = document.getElementById('sm-clocks-body');
+  body.innerHTML = '';
+  for (const c of smClocksConfig.clocks) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:6px 4px;font-weight:600;text-transform:capitalize">${c.role}</td>
+      <td style="padding:6px 4px">
+        <input type="text" placeholder="192.168.x.x" value="${(c.ip||'').replace(/"/g,'&quot;')}"
+               data-id="${c.id}" class="sm-ip-input"
+               style="width:100%;padding:6px 8px;font-family:var(--font-mono);font-size:0.82rem">
+      </td>
+      <td style="padding:6px 4px">
+        <button class="btn btn-dim btn-sm" onclick="smProbe('${c.id}')">Probe</button>
+        <button class="btn btn-dim btn-sm" onclick="smTest('${c.id}')">Test</button>
+        <span class="sm-status" data-id="${c.id}" style="margin-left:6px;font-size:0.72rem;color:var(--muted)"></span>
+      </td>`;
+    body.appendChild(tr);
+  }
+  // Wire IP inputs to save on blur
+  body.querySelectorAll('.sm-ip-input').forEach(inp => {
+    inp.addEventListener('blur', smSaveSettings);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') inp.blur();
+    });
+  });
+}
+
+async function smSaveSettings() {
+  const inputs = document.querySelectorAll('.sm-ip-input');
+  const updated = smClocksConfig.clocks.map(c => {
+    const inp = Array.from(inputs).find(i => i.dataset.id === c.id);
+    return {...c, ip: inp ? inp.value.trim() : c.ip};
+  });
+  const brightness = parseInt(document.getElementById('sm-brightness').value, 10);
+  document.getElementById('sm-brightness-val').textContent = brightness;
+  const enabled = document.getElementById('sm-enabled').checked;
+  smClocksConfig = {clocks: updated, brightness, enabled};
+  try {
+    await fetch('/api/clocks', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(smClocksConfig)
+    });
+  } catch (e) { console.warn('sm save failed', e); }
+}
+
+async function smProbe(id) {
+  await smSaveSettings();
+  const status = document.querySelector(`.sm-status[data-id="${id}"]`);
+  status.textContent = '…';
+  try {
+    const res = await fetch(`/api/clocks/${id}/probe`, {method:'POST'}).then(r => r.json());
+    if (res.ok) {
+      status.textContent = '✓ online';
+      status.style.color = 'var(--grn)';
+    } else {
+      status.textContent = '✗ ' + (res.error || 'failed');
+      status.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    status.textContent = '✗ ' + e;
+    status.style.color = 'var(--red)';
+  }
+}
+
+async function smTest(id) {
+  await smSaveSettings();
+  const status = document.querySelector(`.sm-status[data-id="${id}"]`);
+  status.textContent = 'pushing…';
+  status.style.color = 'var(--muted)';
+  try {
+    const res = await fetch(`/api/clocks/${id}/test`, {method:'POST'}).then(r => r.json());
+    status.textContent = res.ok ? '✓ pushed' : '✗ failed';
+    status.style.color = res.ok ? 'var(--grn)' : 'var(--red)';
+  } catch (e) {
+    status.textContent = '✗ ' + e;
+    status.style.color = 'var(--red)';
+  }
+}
+
+async function smRefreshState() {
+  try {
+    const state = await fetch('/api/runsheet/state').then(r => r.json());
+    const items = state.items || [];
+    const idx = state.current_index || 0;
+    const cur = items[idx];
+    const nxt = items[idx + 1];
+    document.getElementById('sm-current').textContent =
+      cur ? `Now · ${cur.title || cur.type || '—'}` : '— (no runsheet loaded)';
+    document.getElementById('sm-next').textContent =
+      nxt ? `Next · ${nxt.title || nxt.type || ''}` :
+      (cur ? 'Last item — end of service' : 'Create a playlist to seed the runsheet');
+    // Sync auto-track checkbox without firing a save
+    const autoBox = document.getElementById('sm-autotrack');
+    const autoEnabled = (state.auto_track || {}).enabled !== false;
+    if (autoBox && autoBox.checked !== autoEnabled) autoBox.checked = autoEnabled;
+  } catch (e) { /* ignore */ }
+}
+
+async function smCue(delta) {
+  try {
+    await fetch('/api/runsheet/cue', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({delta})
+    });
+    smRefreshState();
+    smRefreshPreview();
+  } catch (e) { console.warn('cue failed', e); }
+}
+
+async function smRestart() {
+  // Restart the current item's timer by re-cueing to the same index
+  try {
+    const state = await fetch('/api/runsheet/state').then(r => r.json());
+    const idx = state.current_index || 0;
+    await fetch('/api/runsheet/cue', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({index: idx})
+    });
+    smRefreshState();
+    smRefreshPreview();
+  } catch (e) { console.warn('restart failed', e); }
+}
+
+async function smSaveAutoTrack() {
+  const enabled = document.getElementById('sm-autotrack').checked;
+  try {
+    const state = await fetch('/api/runsheet/state').then(r => r.json());
+    if (!state || !state.items) return;
+    state.auto_track = {enabled};
+    await fetch('/api/runsheet/state', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(state)
+    });
+  } catch (e) { console.warn('auto-track save failed', e); }
+}
+
+function smRefreshPreview() {
+  const role = document.getElementById('sm-preview-role').value;
+  const img = document.getElementById('sm-preview');
+  img.src = `/api/clocks/preview?role=${encodeURIComponent(role)}&t=${Date.now()}`;
+}
+
+smInit();
+
 // Wire up the prompt-modal textarea + ESC-to-close (script runs after DOM
 // is parsed, so the elements exist).
 document.getElementById('prompt-textarea')
@@ -2326,6 +3533,9 @@ def main() -> None:
         print(banner)
 
         threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
+        # Service Mate daemon — pushes 240×240 PNGs to GeekMagic clocks on the
+        # LAN. No-op if no clock IPs are configured.
+        start_clocks_loop()
         _serve(port)
     except KeyboardInterrupt:
         log.info("Interrupted — shutting down")
