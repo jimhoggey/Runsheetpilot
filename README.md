@@ -142,6 +142,19 @@ parsed, with a built-in rule-table fallback if the LLM doesn't supply one.
 
 ---
 
+## Running the tests
+
+Pure-function and Flask-route tests live under `tests/`. They don't talk to ProPresenter, OpenRouter, or any GeekMagic device — safe to run anywhere:
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+The same suite runs on every PR and every push to `main` via GitHub Actions (`.github/workflows/test.yml`).
+
+---
+
 ## Where settings and logs live
 
 The app stores its config and logs **outside** the source tree so they survive across reinstalls and work inside frozen bundles:
