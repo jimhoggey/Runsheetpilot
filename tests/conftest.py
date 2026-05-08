@@ -29,11 +29,17 @@ def isolated_state(tmp_path, monkeypatch):
     """Redirect the module-level state-file paths into a tmpdir for tests
     that hit routes which read or write `runsheet_state.json` / `clocks.json`.
     Returns the tmpdir path so tests can poke files directly if they need to.
+
+    Patches on `propresenterrunsheet.service_mate.state` (where the path
+    constants actually live) — patching on `propresenter_app` would only
+    rebind the re-exported alias, not the value the SM code reads.
     """
+    from propresenterrunsheet.service_mate import state as sm_state
+
     rs = tmp_path / "runsheet_state.json"
     cl = tmp_path / "clocks.json"
-    monkeypatch.setattr(ppa, "RUNSHEET_STATE_FILE", rs)
-    monkeypatch.setattr(ppa, "CLOCKS_CONFIG_FILE", cl)
+    monkeypatch.setattr(sm_state, "RUNSHEET_STATE_FILE", rs)
+    monkeypatch.setattr(sm_state, "CLOCKS_CONFIG_FILE", cl)
     # The clock theme cache is process-global and would be polluted by other
     # tests if we don't reset it.
     ppa._CLOCK_THEME_SET.clear()

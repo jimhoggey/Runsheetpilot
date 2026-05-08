@@ -233,7 +233,11 @@ def test_pp_active_section_index_walks_back_to_header(app_module, monkeypatch):
             return _StubResponse(full_playlist_response)
         return _StubResponse({}, status=404)
 
-    monkeypatch.setattr(app_module, "_PP_PLAYLIST_CACHE",
+    # Patch the playlist cache on the underlying module — propresenter_app
+    # only re-exports the binding, so patching the alias there wouldn't change
+    # what pp_track.py reads.
+    from propresenterrunsheet.service_mate import pp_track
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
                         {"uuid": None, "items": [], "fetched_at": 0.0})
     import requests as req
     monkeypatch.setattr(req, "get", fake_get)
@@ -254,7 +258,8 @@ def test_pp_active_section_index_returns_none_when_pp_unreachable(app_module, mo
         raise req.exceptions.ConnectionError("nope")
 
     monkeypatch.setattr(req, "get", boom)
-    monkeypatch.setattr(app_module, "_PP_PLAYLIST_CACHE",
+    from propresenterrunsheet.service_mate import pp_track
+    monkeypatch.setattr(pp_track, "_PP_PLAYLIST_CACHE",
                         {"uuid": None, "items": [], "fetched_at": 0.0})
     assert app_module._pp_active_section_index(
         {"items": [{"title": "a"}]}, "http://localhost:55416"
