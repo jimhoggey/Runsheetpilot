@@ -14,9 +14,12 @@ all worked around here:
    image display works. We track which IPs have been switched in
    `_CLOCK_THEME_SET` so we don't pay for the round trip every push."""
 
-from propresenter_app import log
+import logging
 
 from .constants import SM_FILENAME, SM_ULTRA_IMAGE_THEME
+
+
+log = logging.getLogger("pp_runsheet")
 
 
 # Track which IPs we've already set theme=3 on this process — saves an HTTP

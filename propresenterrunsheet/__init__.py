@@ -10,5 +10,6 @@ For now, propresenter_app.py still hosts most of the app and re-exports the
 package's symbols so tests and external callers don't need to know about
 the new layout."""
 
+from . import propresenter  # noqa: F401  — load submodule for re-export
 from . import service_mate  # noqa: F401  — load submodule for re-export
 from .routes import register_blueprints  # noqa: F401

@@ -30,23 +30,23 @@ regions in order:
   1. Constants, user data dir, logging
   2. Flask app + global error handlers
   3. PDF extraction
-  4. ProPresenter paths (cross-platform)
-  5. Library scan from disk
-  6. Fuzzy matching (song title → library)
-  7. AI prompt template + per-type colour map
-  8. Time/duration parsing + PP timer creation
-  8b. Service Mate re-export shim (actual code is in
-      propresenterrunsheet/service_mate/ + propresenterrunsheet/routes/)
-  9. Settings load/save
- 10. API routes (one block per /api/* endpoint, except /api/runsheet/*
+  4. ProPresenter integration re-export shim (actual code is in
+     propresenterrunsheet/propresenter/)
+  5. AI prompt template
+  6. Time/duration parsing (regex + helpers)
+  7. Service Mate re-export shim (actual code is in
+     propresenterrunsheet/service_mate/ + propresenterrunsheet/routes/)
+  8. Settings load/save
+  9. API routes (one block per /api/* endpoint, except /api/runsheet/*
      and /api/clocks/* which are blueprints in propresenterrunsheet/routes)
- 11. Server bootstrap (port, browser, waitress, clocks loop)
+ 10. Server bootstrap (port, browser, waitress, clocks loop)
 
 Common feature touch-points:
-  - new API endpoint    → region 10  + JS caller in static/app.js
+  - new API endpoint    → region 9 + JS caller in static/app.js
   - new UI panel        → templates/index.html + JS handler in static/app.js
-  - new settings field  → _default_settings() in region 9 + UI in templates
-  - new runsheet type   → DEFAULT_PROMPT (region 7), TYPE_COLORS (region 7),
+  - new settings field  → _default_settings() in region 8 + UI in templates
+  - new runsheet type   → DEFAULT_PROMPT (region 5),
+                          TYPE_COLORS in propresenter/playlist.py,
                           tagClass() in static/app.js, .tag-* in static/app.css,
                           *_CUES rule tables in service_mate/constants.py
   - clock layout tweak  → service_mate/render.py
@@ -169,79 +169,30 @@ def extract_pdf_text(path: str) -> str:
         return "\n".join(p.extract_text() or "" for p in pdf.pages)
 
 
-# ── Cross-platform ProPresenter paths ─────────────────────────────────────────
+# ── ProPresenter integration ──────────────────────────────────────────────────
+#
+# Phase 3 of the refactor extracted the PP filesystem paths, library scan,
+# fuzzy matching, RB timer creation, and playlist payload assembly into the
+# propresenterrunsheet.propresenter sub-package. Re-exported here so tests
+# (and the route handlers below) can keep using `propresenter_app.<name>`.
+#
+# When you need to edit ProPresenter-specific behaviour, work in:
+#   propresenterrunsheet/propresenter/paths.py     — find_pp_root et al.
+#   propresenterrunsheet/propresenter/library.py   — scan_library, fuzzy_match
+#   propresenterrunsheet/propresenter/timers.py    — _create_pp_timers
+#   propresenterrunsheet/propresenter/playlist.py  — build_playlist_payload
 
-def _pp_candidates():
-    if sys.platform == "darwin":
-        return [
-            Path.home() / "Documents" / "ProPresenter",
-            Path.home() / "ProPresenter",
-            Path("/Users/Shared/ProPresenter"),
-        ]
-    return [
-        Path.home() / "Documents" / "ProPresenter",
-        Path("C:/Users/Public/Documents/ProPresenter"),
-        Path.home() / "Documents" / "RenewedVision" / "ProPresenter",
-    ]
-
-
-def find_pp_root() -> str:
-    for p in _pp_candidates():
-        if p.exists():
-            return str(p)
-    return str(Path.home() / "Documents" / "ProPresenter")
-
-
-def find_library_dirs(pp_root: str) -> list:
-    lib = Path(pp_root) / "Libraries"
-    if not lib.exists():
-        return []
-    return [str(d) for d in sorted(lib.iterdir()) if d.is_dir()]
-
-
-def find_playlist_dir(pp_root: str):
-    p = Path(pp_root) / "Playlists"
-    return str(p) if p.exists() else None
-
-
-# ── Library scan from disk ────────────────────────────────────────────────────
-
-_UUID_RE = re.compile(
-    rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+from propresenterrunsheet.propresenter import (
+    # Filesystem paths
+    _pp_candidates, find_library_dirs, find_playlist_dir, find_pp_root,
+    # Library scan + fuzzy matching
+    _UUID_RE, _norm, _uuid_from_binary, fuzzy_match, scan_library,
+    # Playlist payload + colour helpers
+    ACTION_NEEDED_COLOR, TYPE_COLORS, _color_dict, _color_for_type,
+    build_playlist_payload,
+    # RB timer creation
+    _RB_TIMER_PREFIX, _create_pp_timers, _delete_existing_rb_timers,
 )
-
-
-def _uuid_from_binary(path: Path) -> str:
-    try:
-        with open(path, "rb") as f:
-            data = f.read(64 * 1024)  # UUID is in the header; no need to read whole file
-        m = _UUID_RE.search(data)
-        return m.group().decode() if m else ""
-    except Exception:
-        return ""
-
-
-def scan_library(directory: str) -> list:
-    items = []
-    for i, pro in enumerate(sorted(Path(directory).rglob("*.pro"))):
-        items.append({"name": pro.stem, "uuid": _uuid_from_binary(pro), "index": i})
-    return items
-
-
-# ── Fuzzy matching ────────────────────────────────────────────────────────────
-
-def _norm(s: str) -> str:
-    return re.sub(r"[^\w\s]", "", (s or "").lower().strip())
-
-
-def fuzzy_match(name: str, items: list, threshold: float = 0.55):
-    best_score, best = 0.0, None
-    nn = _norm(name)
-    for item in items:
-        s = difflib.SequenceMatcher(None, nn, _norm(item.get("name", ""))).ratio()
-        if s > best_score:
-            best_score, best = s, item
-    return (best, best_score) if best_score >= threshold else (None, best_score)
 
 
 # ── AI prompt + per-type colour map ───────────────────────────────────────────
@@ -353,32 +304,6 @@ RUNSHEET:
 ---
 """
 
-# RGBA (0-1 floats) for ProPresenter playlist header items, by type.
-# Mirrors the tag colours in the UI table so volunteers see the same colour
-# in the builder and in PP.
-TYPE_COLORS = {
-    "song":         (0.06, 0.24, 0.55, 1.0),  # blue
-    "mc_on_stage":  (0.05, 0.45, 0.50, 1.0),  # teal
-    "announcement": (0.85, 0.50, 0.05, 1.0),  # amber
-    "sermon":       (0.45, 0.20, 0.65, 1.0),  # purple
-    "prayer":       (0.55, 0.35, 0.75, 1.0),  # lavender
-    "scripture":    (0.15, 0.50, 0.30, 1.0),  # green
-    "offering":     (0.70, 0.55, 0.10, 1.0),  # gold
-    "video":        (0.55, 0.20, 0.20, 1.0),  # rust
-    "other":        (0.30, 0.30, 0.40, 1.0),  # gray
-}
-ACTION_NEEDED_COLOR = (0.86, 0.15, 0.15, 1.0)  # bright red
-
-
-def _color_for_type(t: str) -> dict:
-    r, g, b, a = TYPE_COLORS.get(t or "other", TYPE_COLORS["other"])
-    return {"red": r, "green": g, "blue": b, "alpha": a}
-
-
-def _color_dict(rgba: tuple) -> dict:
-    r, g, b, a = rgba
-    return {"red": r, "green": g, "blue": b, "alpha": a}
-
 
 # ── Time + duration parsing for runsheet → PP timers ─────────────────────────
 
@@ -428,106 +353,6 @@ def _extract_duration_min(parsed_item: dict) -> int:
     return 0
 
 
-# All timers we create are prefixed with this marker so we can safely delete
-# them on the next run without touching the user's own timers.
-_RB_TIMER_PREFIX = "[RB] "
-
-
-def _delete_existing_rb_timers(base: str) -> int:
-    """Delete every timer in PP whose name starts with [RB] (i.e. created by
-    a previous run of this app). Never touches user-created timers."""
-    import requests as req
-    deleted = 0
-    try:
-        r = req.get(f"{base}/v1/timers", timeout=6)
-        if not r.ok:
-            return 0
-        for t in r.json():
-            name = (t.get("id") or {}).get("name", "")
-            uuid = (t.get("id") or {}).get("uuid")
-            if not uuid or not name.startswith(_RB_TIMER_PREFIX):
-                continue
-            try:
-                d = req.delete(f"{base}/v1/timer/{uuid}", timeout=4)
-                if d.ok:
-                    deleted += 1
-                    log.info(f"Deleted old timer: {name}")
-            except Exception:
-                log.exception(f"Failed to delete timer {uuid}")
-    except Exception:
-        log.exception("Failed to list timers for cleanup")
-    return deleted
-
-
-def _create_pp_timers(base: str, playlist_name: str, matched: list) -> dict:
-    """Cleanup previous [RB] timers, then create one *duration-based* countdown
-    timer in PP for every matched item that has a duration.
-
-    Duration-based (not count-down-to-time) because runsheets are typically
-    uploaded days before the service — the time-of-day in the runsheet is the
-    *planned* slot, not when the operator will actually start the timer.
-
-    The runsheet's time-of-day is included in the timer name as a hint so the
-    operator can quickly find the right timer at the right moment.
-
-    Returns {created, deleted, no_duration, total_items, errors}."""
-    import requests as req
-    deleted = _delete_existing_rb_timers(base)
-
-    created, no_duration, total_items, errors = 0, 0, 0, []
-    # Map runsheet-item index (0-based) → exact timer name we created for it.
-    # Used by the Service Mate auto-track to identify the running [RB] timer.
-    timer_names: dict = {}
-    for idx, mi in enumerate(matched, start=1):
-        p = mi.get("parsed") or {}
-        # Section dividers / songs / items the operator never times → skip.
-        # Only items the worship/host actually needs to track time on.
-        ptype = (p.get("type") or "").lower()
-        if ptype in ("song", "scripture"):
-            # Songs are presentations (PP shows song length naturally);
-            # scripture is brief; skip both for timer creation.
-            continue
-        total_items += 1
-        dur_min = _extract_duration_min(p)
-        if dur_min <= 0:
-            no_duration += 1
-            continue
-        time_hint = _extract_time_str(p.get("notes", "")) or \
-                    _extract_time_str(p.get("title", ""))
-        title = (p.get("title") or "").strip()
-        # Order-preserving 2-digit sequence so PP's timer panel shows them
-        # in runsheet order (PP sorts alphabetically within the panel).
-        seq = f"{idx:02d}"
-        time_part = f"{time_hint} — " if time_hint else ""
-        timer_name = (f"{_RB_TIMER_PREFIX}{seq}. {time_part}{title} "
-                      f"({dur_min} min)")[:120]
-        payload = {
-            "name":           timer_name,
-            "allows_overrun": True,
-            "countdown":      {"duration": dur_min * 60},
-        }
-        try:
-            r = req.post(f"{base}/v1/timers", json=payload, timeout=6)
-            if r.ok:
-                created += 1
-                # idx is 1-based above; record under 0-based item index.
-                timer_names[idx - 1] = timer_name
-                log.info(f"Created timer: {timer_name}")
-            else:
-                errors.append(f"{timer_name} → HTTP {r.status_code}")
-                log.warning(f"Timer create failed: {timer_name} → "
-                            f"{r.status_code} {r.text[:120]}")
-        except Exception as e:
-            errors.append(f"{timer_name} → {type(e).__name__}")
-            log.exception(f"Timer create exception for {timer_name}")
-    return {
-        "created":      created,
-        "deleted":      deleted,
-        "no_duration":  no_duration,
-        "total_items":  total_items,
-        "errors":       errors,
-        "timer_names":  timer_names,
-    }
 
 
 # ── Service Mate (GeekMagic clocks) ───────────────────────────────────────────
@@ -939,55 +764,8 @@ def api_create_playlist():
         else:
             playlist_id = str(pid) or name
 
-        # 2. Build items list
-        items = []
-        for mi in matched:
-            p = mi.get("parsed") or {}
-            m = mi.get("match")
-            if p.get("type") == "song" and m:
-                pres_uuid = m.get("uuid", "")
-                # is_hidden / is_pco are required by the PP API. We never
-                # produce hidden items and don't integrate with Planning
-                # Center Online — both stay False on every item we send.
-                items.append({
-                    "id":          {"uuid":  pres_uuid,
-                                    "name":  m.get("name", ""),
-                                    "index": m.get("index", 0)},
-                    "type":        "presentation",
-                    "target_uuid": pres_uuid,
-                    "is_hidden":   False, "is_pco": False,
-                })
-            elif p.get("type") == "song":
-                # Unmatched song → red ACTION NEEDED placeholder so the
-                # volunteer notices and can manually add the song in PP.
-                label = f"⚠ ACTION NEEDED — {p.get('title', '')}"
-                if p.get("notes"):
-                    label += f"  ({p['notes']})"
-                items.append({
-                    "id":           {"uuid": "", "name": label, "index": 0},
-                    "type":         "header",
-                    "target_uuid":  "",
-                    "is_hidden":    False, "is_pco": False,
-                    "header_color": _color_dict(ACTION_NEEDED_COLOR),
-                })
-            else:
-                title = p.get("title", "") or ""
-                # Make scripture items visually distinctive in PP — operator
-                # uses the green colour + book emoji to spot them, then opens
-                # PP's built-in Bible feature manually for the actual verses
-                # (PP's REST API has no scripture endpoints in v7.21).
-                if p.get("type") == "scripture":
-                    title = f"📖 {title}"
-                label = title
-                if p.get("notes"):
-                    label += f"  —  {p['notes']}"
-                items.append({
-                    "id":           {"uuid": "", "name": label, "index": 0},
-                    "type":         "header",
-                    "target_uuid":  "",
-                    "is_hidden":    False, "is_pco": False,
-                    "header_color": _color_for_type(p.get("type")),
-                })
+        # 2. Build items list — pure function in propresenter/playlist.py
+        items = build_playlist_payload(matched)
 
         # 3. Push items to playlist
         r2 = req.put(f"{base}/v1/playlist/{playlist_id}",
