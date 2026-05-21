@@ -101,11 +101,36 @@ header {
     0 6px 20px -4px rgba(0,0,0,0.45);
 }
 header h1 {
-  font-size: 0.9rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 400;             /* base — children override */
+  font-size: 0.85rem;
+  margin: 0;
+}
+/* The primary brand: small-caps style wordmark, tight letter-spacing.
+   Reads as a designed logo rather than a sentence. */
+.brand-mark {
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
   color: var(--text);
-  display: flex; align-items: center; gap: 9px;
+  text-transform: uppercase;
+  font-feature-settings: 'ss01' on;
+}
+/* Thin vertical divider between the wordmark and the subtitle —
+   gives the title bar a typeset feel instead of a run-on phrase. */
+.brand-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255,255,255,0.16);
+  display: inline-block;
+}
+.brand-sub {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.005em;
 }
 /* Tiny pulsing accent dot before the brand name — gives the header a
    "this app is alive" cue without being shouty. */

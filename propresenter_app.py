@@ -62,6 +62,11 @@ from propresenterrunsheet.routes import register_blueprints
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB cap on PDF upload
+# Auto-reload templates when their files change on disk. Flask defaults
+# this to app.debug (False here), so without this any markup edit would
+# only show up after restarting the whole app. The mtime check per
+# render adds microseconds — meaningless for a local app.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 
 @app.errorhandler(413)
