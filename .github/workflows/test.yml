@@ -52,3 +52,15 @@ jobs:
 
       - name: Run pytest
         run: pytest tests/ -v
+
+      - name: Audit dependencies for known CVEs
+        # Belt-and-braces with Dependabot — different vulnerability DB
+        # (PyPI Advisory DB + OSV), catches some things Dependabot misses
+        # and vice versa. Fails the build on any unfixed vuln in our
+        # actual dependency tree. Only runs on Python 3.11 to save time
+        # (the audit result is identical across versions).
+        if: matrix.python-version == '3.11'
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --strict
+          pip-audit -r requirements-dev.txt --strict
