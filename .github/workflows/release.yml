@@ -22,7 +22,7 @@ jobs:
     name: Build Windows .exe
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -100,7 +100,7 @@ jobs:
     name: Build macOS .dmg
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -190,7 +190,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4   # for the generated-release-notes ref
+      - uses: actions/checkout@v6   # for the generated-release-notes ref
 
       - uses: actions/download-artifact@v8
         with:
