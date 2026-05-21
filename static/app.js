@@ -21,7 +21,7 @@ let suppressAutoSave = true; // suppress during initial loadSettings()
 const AUTOSAVE_FIELDS = [
   'or-key', 'or-model', 'lib-dir', 'export-dir',
   'pp-host', 'pp-port', 'pp-host2', 'pp-port2', 'threshold',
-  'create-timers'
+  'create-timers', 'template-playlist'
 ];
 
 function setSaveDot(state) {
@@ -62,6 +62,11 @@ async function loadSettings() {
   document.getElementById('threshold').value  = Math.round((s.threshold || .55) * 100);
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
+
+  // Template playlist selection — fetch the live list of playlists from
+  // PP, populate the dropdown, then select the saved UUID (if any).
+  // Best-effort: if PP is unreachable the dropdown stays at "— None —".
+  await loadTemplatePlaylists(s.template_playlist_uuid || '');
 
   const today = new Date().toLocaleDateString('en-AU',
       {day:'2-digit', month:'short', year:'numeric'});
@@ -109,14 +114,15 @@ function autoSaveDebounced() {
 
 async function saveSettings() {
   const data = {
-    pp_host:       document.getElementById('pp-host2').value,
-    pp_port:       document.getElementById('pp-port2').value,
-    or_key:        document.getElementById('or-key').value,
-    or_model:      document.getElementById('or-model').value,
-    library_dir:   document.getElementById('lib-dir').value,
-    export_dir:    document.getElementById('export-dir').value,
-    threshold:     parseInt(document.getElementById('threshold').value) / 100,
-    create_timers: document.getElementById('create-timers').checked,
+    pp_host:                 document.getElementById('pp-host2').value,
+    pp_port:                 document.getElementById('pp-port2').value,
+    or_key:                  document.getElementById('or-key').value,
+    or_model:                document.getElementById('or-model').value,
+    library_dir:             document.getElementById('lib-dir').value,
+    export_dir:              document.getElementById('export-dir').value,
+    threshold:               parseInt(document.getElementById('threshold').value) / 100,
+    create_timers:           document.getElementById('create-timers').checked,
+    template_playlist_uuid:  document.getElementById('template-playlist').value,
   };
   try {
     await fetch('/api/settings', {method:'POST',
@@ -152,6 +158,65 @@ function handleFileSelect(file) {
     <div class="hint">${(file.size/1024).toFixed(0)} KB — click to change</div>`;
   dz.onclick = () => document.getElementById('pdf-input').click();
   setStatus(`PDF loaded: ${file.name} — click Parse to send to AI.`);
+}
+
+// ─── Template playlist dropdown ───────────────────────────────────────────
+// The template playlist is a PP playlist whose section headers (Culture,
+// Welcome, …) and the media items under them get reused at parse time —
+// when a runsheet item matches a section name, the new playlist gets that
+// section's media items expanded in place. See routes/parse.py for the
+// resolution + propresenter/templates.py for the section grouping.
+async function loadTemplatePlaylists(selectUuid) {
+  const sel = document.getElementById('template-playlist');
+  const status = document.getElementById('template-status');
+  const host = document.getElementById('pp-host2').value || 'localhost';
+  const port = document.getElementById('pp-port2').value || '50001';
+  status.textContent = 'Loading playlists from PP…';
+  try {
+    const qs = new URLSearchParams({host, port}).toString();
+    const res = await fetch('/api/pp/playlists?' + qs).then(r => r.json());
+    const playlists = res.playlists || [];
+    // Rebuild dropdown: keep the "Auto" option first, then all playlists.
+    // Auto = empty value; backend reads it as "pick best for this runsheet"
+    // (route by runsheet content — youth/sunday/etc.).
+    sel.innerHTML = '<option value="">⚡ Auto — pick best for this runsheet</option>';
+    playlists.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.uuid;
+      const meta = p.section_count
+        ? ` — ${p.section_count} section${p.section_count!==1?'s':''}, ${p.media_count} slide${p.media_count!==1?'s':''}`
+        : ' — (no sections)';
+      opt.textContent = p.name + meta;
+      sel.appendChild(opt);
+    });
+    // Selection priority: explicit saved UUID > Auto (empty).
+    // When the operator hasn't picked anything (selectUuid == '' or unset),
+    // keep the dropdown on Auto rather than silently picking the auto-
+    // detected playlist — that way the operator SEES "Auto" is in effect
+    // and the routing happens fresh on every parse.
+    const want = selectUuid || '';
+    if (want && [...sel.options].some(o => o.value === want)) {
+      sel.value = want;
+    } else {
+      sel.value = '';
+    }
+    if (!playlists.length) {
+      status.innerHTML = '<span style="color:var(--org)">No playlists found — is ProPresenter running with Network mode on?</span>';
+    } else if (sel.value) {
+      const picked = playlists.find(p => p.uuid === sel.value);
+      status.innerHTML = `Locked to <strong>${escapeHtml(picked?.name || 'selected playlist')}</strong> as template (${picked?.section_count || 0} section${(picked?.section_count||0)!==1?'s':''}). Switch to <em>⚡ Auto</em> to route by runsheet content.`;
+    } else if (res.auto_detected) {
+      // Show which playlist Auto would pick RIGHT NOW (no runsheet yet, so
+      // it falls back to the first library-named playlist; on parse the
+      // actual pick uses the runsheet content too).
+      const guess = playlists.find(p => p.uuid === res.auto_detected);
+      status.innerHTML = `<strong>⚡ Auto</strong> — currently would pick <strong>${escapeHtml(guess?.name || '?')}</strong>. On parse, routes by runsheet content (youth/sunday/etc.). Override above to lock a specific template.`;
+    } else {
+      status.innerHTML = `${playlists.length} playlist${playlists.length!==1?'s':''} loaded — name one with "library" or "template" to enable Auto routing, or pick one above.`;
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--red)">Could not load playlists: ${escapeHtml(String(e))}</span>`;
+  }
 }
 
 // ─── 4. Library load (disk + API) ─────────────────────────────────────────
@@ -294,6 +359,11 @@ function renderResults() {
   const tbody = document.getElementById('results-body');
   tbody.innerHTML = '';
   let matched = 0, total = 0;
+  // Non-song items the LLM (or fuzzy fallback) linked to an existing
+  // reusable presentation in the library — surfaced separately so the
+  // operator knows the "Culture / Welcome / Offering" slides got wired up
+  // automatically and they don't need to drag them in by hand.
+  let reused = 0;
 
   matchedItems.forEach((mi, i) => {
     const p = mi.parsed, m = mi.match, conf = mi.confidence;
@@ -311,6 +381,21 @@ function renderResults() {
                   onclick="pickManual(${i})">Pick</button>`;
         scoreCell = `<span class="score match-bad">${Math.round(conf*100)}%</span>`;
       }
+    } else if (m && m.header && Array.isArray(m.items)) {
+      // Non-song that the parse step linked to a template-playlist
+      // SECTION (e.g. runsheet "Culture Moment" → template section
+      // "Culture" with 3 media items). Operator sees the section name
+      // and how many slides will be interpolated into the playlist.
+      const n = m.items.length;
+      matchCell = `<span class="match-ok">♻ ${escapeHtml(m.header.name || '')} <span style="color:var(--muted);font-weight:400">(${n} slide${n!==1?'s':''})</span></span>`;
+      scoreCell = `<span class="score">${Math.round((conf || 1) * 100)}%</span>`;
+      reused++;
+    } else if (m && m.uuid) {
+      // Single-presentation reuse (older shape, still supported) —
+      // one library presentation linked at parse time.
+      matchCell = `<span class="match-ok">♻ ${escapeHtml(m.name)}</span>`;
+      scoreCell = `<span class="score">${Math.round((conf || 1) * 100)}%</span>`;
+      reused++;
     } else {
       matchCell = `<span class="match-hdr">→ section header</span>`;
       scoreCell = '';
@@ -329,18 +414,20 @@ function renderResults() {
   });
 
   const unmatched = total - matched;
+  const reusedFrag = reused
+    ? ` &nbsp;·&nbsp; ♻ ${reused} reused from library` : '';
   let msg, color;
   if (total === 0) {
-    msg = `${matchedItems.length} items parsed &nbsp;·&nbsp; no songs in this runsheet &nbsp;·&nbsp; Click <strong>Create Playlist</strong> when ready.`;
+    msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; no songs in this runsheet &nbsp;·&nbsp; Click <strong>Create Playlist</strong> when ready.`;
     color = 'var(--grn)';
   } else if (libraryItems.length === 0) {
     msg = `${matchedItems.length} items parsed &nbsp;·&nbsp; <span style="color:var(--org)"><strong>No ProPresenter songs loaded yet</strong> — all ${total} song${total!==1?'s':''} will become red <strong>ACTION NEEDED</strong> placeholders. To match automatically, click <strong>↓ Scan Library from Disk</strong> (or <strong>↓ Fetch Library</strong>) at the top of the sidebar, then re-parse.</span>`;
     color = 'var(--org)';
   } else if (unmatched) {
-    msg = `${matchedItems.length} items parsed &nbsp;·&nbsp; ${matched}/${total} songs matched &nbsp;·&nbsp; <span style="color:var(--org)">${unmatched} unmatched — click <strong>Pick</strong> to choose manually, or leave for an <strong>ACTION NEEDED</strong> placeholder in the playlist.</span>`;
+    msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; ${matched}/${total} songs matched &nbsp;·&nbsp; <span style="color:var(--org)">${unmatched} unmatched — click <strong>Pick</strong> to choose manually, or leave for an <strong>ACTION NEEDED</strong> placeholder in the playlist.</span>`;
     color = 'var(--org)';
   } else {
-    msg = `${matchedItems.length} items parsed &nbsp;·&nbsp; ✓ all ${total} song${total!==1?'s':''} matched &nbsp;·&nbsp; Click <strong>Create Playlist</strong> when ready.`;
+    msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; ✓ all ${total} song${total!==1?'s':''} matched &nbsp;·&nbsp; Click <strong>Create Playlist</strong> when ready.`;
     color = 'var(--grn)';
   }
   setStatus(msg, color);

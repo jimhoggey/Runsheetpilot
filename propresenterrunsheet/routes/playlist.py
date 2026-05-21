@@ -18,6 +18,10 @@ from flask import Blueprint, jsonify, request
 
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
+from ..propresenter.templates import (
+    auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
+    playlist_to_sections,
+)
 from ..propresenter.timers import _create_pp_timers
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 
@@ -170,3 +174,39 @@ def api_test_connection():
                         "count": len(libs) if hasattr(libs, "__len__") else 0})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
+
+
+@bp.route("/api/pp/playlists", methods=["GET"])
+def api_pp_playlists():
+    """List the operator's PP playlists, plus a peek at each as a "template"
+    (how many sections + items it would contribute if chosen). Used by the
+    sidebar dropdown so the operator can pick the right "<Service> - Library"
+    playlist. Pulls host/port from the query string (the UI already knows
+    them) and falls back to the standard PP defaults."""
+    host = (request.args.get("host") or "localhost").strip()
+    port = (request.args.get("port") or "50001").strip()
+    base = f"http://{host}:{port}"
+    playlists = fetch_pp_playlists(base)
+    if not playlists:
+        # Common failure: PP not running, Network off, or wrong port.
+        # We return ok=True with empty list so the UI can show "0
+        # playlists — is PP running?" instead of an error banner.
+        return jsonify({"ok": True, "playlists": [], "auto_detected": ""})
+    # For every playlist, count how many sections it would give us if
+    # used as a template. Operators glance at this to spot their actual
+    # template playlist vs. a one-shot service playlist.
+    enriched = []
+    for p in playlists:
+        try:
+            sections = playlist_to_sections(
+                fetch_pp_playlist_items(base, p["uuid"]))
+        except Exception:
+            log.exception(f"sections peek failed for {p.get('name')!r}")
+            sections = []
+        enriched.append({
+            **p,
+            "section_count": len(sections),
+            "media_count":   sum(len(s.get("items", [])) for s in sections),
+        })
+    auto = auto_detect_template_uuid(playlists) or ""
+    return jsonify({"ok": True, "playlists": enriched, "auto_detected": auto})

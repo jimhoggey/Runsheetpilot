@@ -29,6 +29,328 @@ def test_fuzzy_match_returns_none_below_threshold(app_module):
     assert match is None
 
 
+# ── resolve_library_name: post-process the LLM's library_match string ────────
+
+def test_resolve_library_name_exact_match(app_module):
+    """LLM emits the exact name from the prompt — we should bind without
+    fuzz, even when casing/spacing differs (normalised compare)."""
+    lib = [
+        {"name": "Culture", "uuid": "u-culture", "index": 5},
+        {"name": "Welcome / Connection Cards", "uuid": "u-welcome", "index": 9},
+    ]
+    hit = app_module.resolve_library_name("Culture", lib)
+    assert hit is not None and hit["uuid"] == "u-culture"
+    # Normalised: punctuation + case stripped, so this still binds exact.
+    hit2 = app_module.resolve_library_name("welcome  connection cards", lib)
+    assert hit2 is not None and hit2["uuid"] == "u-welcome"
+
+
+def test_resolve_library_name_tight_fuzzy_catches_minor_drift(app_module):
+    """LLM occasionally drops a word ('Welcome / Connection Cards' →
+    'Welcome Connection Cards') — tight fuzz should still bind it."""
+    lib = [
+        {"name": "Welcome and Connection Cards", "uuid": "u-w", "index": 0},
+        {"name": "Culture", "uuid": "u-c", "index": 1},
+    ]
+    hit = app_module.resolve_library_name("Welcome & Connection Cards", lib)
+    assert hit is not None and hit["uuid"] == "u-w"
+
+
+def test_resolve_library_name_drops_hallucinations(app_module):
+    """LLM made up a name that isn't in the library at all — we MUST
+    return None instead of binding to the nearest random presentation."""
+    lib = [
+        {"name": "Build My Life", "uuid": "u-bml", "index": 0},
+        {"name": "King of Kings", "uuid": "u-kok", "index": 1},
+    ]
+    assert app_module.resolve_library_name("Totally Made Up Slide", lib) is None
+    assert app_module.resolve_library_name("", lib) is None
+    assert app_module.resolve_library_name("Culture", lib) is None
+
+
+def test_resolve_library_name_empty_library_returns_none(app_module):
+    assert app_module.resolve_library_name("anything", []) is None
+
+
+# ── assemble_prompt: when the operator has a library, the prompt grows a
+# library-context block so the model can mark reusable items. ──────────────
+
+def test_assemble_prompt_without_library_unchanged():
+    """Backward-compat: no library_names arg, the prompt has only the
+    runsheet text + the Service Mate cue addendum (no library block)."""
+    from propresenterrunsheet.parsing.ai import (
+        SERVICE_MATE_CUE_ADDENDUM, assemble_prompt,
+    )
+    out = assemble_prompt("TEMPLATE {RUNSHEET}", "the runsheet")
+    assert "the runsheet" in out
+    assert out.endswith(SERVICE_MATE_CUE_ADDENDUM)
+    # Library markers must NOT be present
+    assert "LIBRARY:" not in out
+    assert "library_match" not in out
+
+
+def test_assemble_prompt_with_library_appends_block():
+    """With a library, the prompt gets the SECTIONS block + the cue addendum
+    at the end. Names are sorted (deterministic cache key) and de-duplicated."""
+    from propresenterrunsheet.parsing.ai import (
+        SERVICE_MATE_CUE_ADDENDUM, assemble_prompt,
+    )
+    out = assemble_prompt("T {RUNSHEET}", "rs",
+                          library_names=["Culture", "Build My Life", "Culture"])
+    # Cue addendum is still last so per-role cues are still requested
+    assert out.endswith(SERVICE_MATE_CUE_ADDENDUM)
+    assert "SECTIONS:" in out
+    # Both unique names appear; duplicates deduped
+    assert out.count("- Culture") == 1
+    assert "- Build My Life" in out
+    # library_match field is requested in the addendum text
+    assert "library_match" in out
+
+
+def test_assemble_prompt_caps_library_names():
+    """A template playlist with 1000s of sections shouldn't blow the
+    model's context window — we cap at LIBRARY_NAMES_MAX."""
+    from propresenterrunsheet.parsing.ai import (
+        LIBRARY_NAMES_MAX, assemble_prompt,
+    )
+    huge = [f"Section {n:04d}" for n in range(LIBRARY_NAMES_MAX + 50)]
+    out = assemble_prompt("T", "rs", library_names=huge)
+    # Bullet lines beginning with "- " in the SECTIONS block
+    lib_section = out.split("SECTIONS:", 1)[1]
+    bullets = [ln for ln in lib_section.splitlines() if ln.startswith("- ")]
+    assert len(bullets) == LIBRARY_NAMES_MAX
+
+
+def test_assemble_prompt_empty_library_skips_block():
+    """Empty list / list of empties → no library section (looks the same
+    as not passing the arg at all)."""
+    from propresenterrunsheet.parsing.ai import assemble_prompt
+    out_a = assemble_prompt("T {RUNSHEET}", "rs", library_names=[])
+    out_b = assemble_prompt("T {RUNSHEET}", "rs",
+                            library_names=["", "  ", None])
+    out_c = assemble_prompt("T {RUNSHEET}", "rs")
+    assert "SECTIONS:" not in out_a
+    assert "SECTIONS:" not in out_b
+    assert out_a == out_b == out_c
+
+
+# ── Template playlist: read a PP playlist, group into sections, resolve
+# a header name back to the matching section. The reading side has no
+# unit tests for the HTTP calls (those need PP), only for the pure
+# grouping + resolution helpers. ───────────────────────────────────────
+
+
+def _raw_playlist_items(header_name, media_names):
+    """Build a raw PP playlist items list the way the REST API returns it
+    — header item followed by media items. Used in playlist_to_sections
+    tests below."""
+    out = [{"id": {"name": header_name, "uuid": f"hdr-{header_name}",
+                   "index": 0},
+            "type": "header",
+            "header_color": {"red": 0.5, "green": 0.5, "blue": 0.5,
+                             "alpha": 1.0}}]
+    for i, n in enumerate(media_names, start=1):
+        out.append({"id": {"name": n, "uuid": f"item-{n}", "index": i},
+                    "type": "media",
+                    "target_uuid": f"pres-{n}"})
+    return out
+
+
+def test_playlist_to_sections_groups_header_with_following_media(app_module):
+    """Single-section template: one header, three media items below it →
+    one section with three items."""
+    items = _raw_playlist_items("Culture",
+                                ["Heat the house", "NO ONE STANDS ALONE",
+                                 "Take Ownership"])
+    sections = app_module.playlist_to_sections(items)
+    assert len(sections) == 1
+    s = sections[0]
+    assert s["header"]["name"] == "Culture"
+    assert s["header"]["uuid"] == "hdr-Culture"
+    assert [it["name"] for it in s["items"]] == [
+        "Heat the house", "NO ONE STANDS ALONE", "Take Ownership"]
+    assert s["items"][0]["target_uuid"] == "pres-Heat the house"
+
+
+def test_playlist_to_sections_handles_multiple_sections(app_module):
+    """Two consecutive headers in the playlist → two sections; media
+    items go to whichever header opened them most recently."""
+    items = (_raw_playlist_items("Culture", ["Slide A"])
+             + _raw_playlist_items("Worship", ["Song 1", "Song 2"]))
+    sections = app_module.playlist_to_sections(items)
+    assert [s["header"]["name"] for s in sections] == ["Culture", "Worship"]
+    assert len(sections[0]["items"]) == 1
+    assert len(sections[1]["items"]) == 2
+
+
+def test_playlist_to_sections_drops_headerless_leading_media(app_module):
+    """Media items before the first header are orphans — the LLM can't
+    reference them by section name, so we drop them. (Real templates
+    almost never have this shape, but be defensive.)"""
+    items = [
+        {"id": {"name": "Orphan", "uuid": "u-o", "index": 0},
+         "type": "media", "target_uuid": "pres-o"},
+    ] + _raw_playlist_items("Culture", ["Slide"])
+    sections = app_module.playlist_to_sections(items)
+    # Only the Culture section survives; the orphan is dropped.
+    assert len(sections) == 1
+    assert sections[0]["header"]["name"] == "Culture"
+
+
+def test_playlist_to_sections_strips_whitespace_from_names(app_module):
+    """Real PP playlists sometimes have trailing whitespace in header
+    names (the API returned 'Youth Service - Library ' with a trailing
+    space during dev). We strip so name comparisons work."""
+    items = [{"id": {"name": "Culture  ", "uuid": "u", "index": 0},
+              "type": "header"}]
+    sections = app_module.playlist_to_sections(items)
+    assert sections[0]["header"]["name"] == "Culture"
+
+
+def test_playlist_to_sections_captures_loop_pinfo_duration_and_destination(app_module):
+    """Loops in PP show up as type='presentation' items with `duration`
+    set and the .pro UUID nested in `presentation_info`. We need to
+    capture both so the section expander can faithfully reproduce the
+    loop in the new playlist."""
+    items = [
+        {"id": {"name": "MC Welcome", "uuid": "h-mcw", "index": 0},
+         "type": "header"},
+        {"id": {"name": "loop", "uuid": "tpl-loop", "index": 1},
+         "type": "presentation",
+         "duration": 15,
+         "presentation_info": {"presentation_uuid": "pres-loop-uuid",
+                               "arrangement_name": "", "arrangement_uuid": ""},
+         "destination": "presentation"},
+    ]
+    sections = app_module.playlist_to_sections(items)
+    assert len(sections) == 1
+    loop = sections[0]["items"][0]
+    assert loop["type"] == "presentation"
+    assert loop["duration"] == 15
+    assert loop["presentation_info"]["presentation_uuid"] == "pres-loop-uuid"
+    assert loop["destination"] == "presentation"
+    # Media-style target_uuid is empty for loops — pinfo is the asset source.
+    assert loop["target_uuid"] == ""
+
+
+def test_resolve_section_exact_then_fuzzy(app_module):
+    """LLM emits a section header name; we resolve to the section dict.
+    Exact normalised match works (case/punctuation ignored); tight
+    fuzzy catches minor LLM drift."""
+    items = _raw_playlist_items("Culture", ["a"])
+    sections = app_module.playlist_to_sections(items)
+    # Exact (with funky casing) — works.
+    hit = app_module.resolve_section("CULTURE", sections)
+    assert hit is not None and hit["header"]["uuid"] == "hdr-Culture"
+    # Tight fuzz — also works.
+    hit2 = app_module.resolve_section("Culutre", sections)  # typo: u/t swap
+    assert hit2 is not None and hit2["header"]["uuid"] == "hdr-Culture"
+
+
+def test_resolve_section_returns_none_for_hallucinations(app_module):
+    """The LLM made up a section name that isn't in the template at
+    all → None (don't bind to a random section)."""
+    items = _raw_playlist_items("Culture", ["a"])
+    sections = app_module.playlist_to_sections(items)
+    assert app_module.resolve_section("Welcome", sections) is None
+    assert app_module.resolve_section("", sections) is None
+    assert app_module.resolve_section("anything", []) is None
+
+
+def test_auto_detect_template_picks_library_named_playlist(app_module):
+    """Without an explicit template_playlist_uuid setting, we pick the
+    first playlist whose name contains 'library' / 'template' (case-
+    insensitive) — matches the operator's naming convention."""
+    playlists = [
+        {"uuid": "u1", "name": "Sunday Service — 22 May 2026"},
+        {"uuid": "u2", "name": "Youth Service - Library"},
+        {"uuid": "u3", "name": "Sunday Morning Library"},
+    ]
+    assert app_module.auto_detect_template_uuid(playlists) == "u2"
+
+
+def test_auto_detect_template_returns_none_when_no_candidate(app_module):
+    """No playlists named with library/template → None (the caller falls
+    back to parse-without-template)."""
+    playlists = [
+        {"uuid": "u1", "name": "Sunday Service — 22 May 2026"},
+        {"uuid": "u2", "name": "Wednesday Prayer Meeting"},
+    ]
+    assert app_module.auto_detect_template_uuid(playlists) is None
+    assert app_module.auto_detect_template_uuid([]) is None
+
+
+# ── Hint-driven template auto-pick: route a youth runsheet to the youth
+# template, sunday runsheet to the sunday template, etc. ─────────────────
+
+
+def _multi_library_setup():
+    return [
+        {"uuid": "u-youth",  "name": "Youth Service - Library"},
+        {"uuid": "u-sunday", "name": "Sunday Morning Library"},
+        {"uuid": "u-wed",    "name": "Wednesday Prayer Library"},
+        {"uuid": "u-other",  "name": "Some random service"},  # not a template
+    ]
+
+
+def test_auto_detect_template_uses_hint_to_route_youth_runsheet(app_module):
+    """Hint contains "Youth Service" — picks the Youth library over Sunday
+    even though Sunday is listed earlier on a different ordering."""
+    pls = _multi_library_setup()
+    hint = "Youth Service runsheet 22 May 2026  9:24 AM Go live …"
+    assert app_module.auto_detect_template_uuid(pls, hint=hint) == "u-youth"
+
+
+def test_auto_detect_template_uses_hint_to_route_sunday_runsheet(app_module):
+    pls = _multi_library_setup()
+    hint = "Sunday morning service 5 Jul 2026  9:30 AM Worship Time"
+    assert app_module.auto_detect_template_uuid(pls, hint=hint) == "u-sunday"
+
+
+def test_auto_detect_template_uses_hint_to_route_wednesday_runsheet(app_module):
+    """Wednesday library has two distinctive tokens ("wednesday" + "prayer")
+    — a runsheet mentioning either should pick it."""
+    pls = _multi_library_setup()
+    assert app_module.auto_detect_template_uuid(
+        pls, hint="Wednesday night meeting") == "u-wed"
+    assert app_module.auto_detect_template_uuid(
+        pls, hint="Prayer night agenda") == "u-wed"
+
+
+def test_auto_detect_template_filename_alone_can_route(app_module):
+    """Sometimes the runsheet text is generic but the PDF filename
+    encodes the service type (operators often name PDFs by service)."""
+    pls = _multi_library_setup()
+    assert app_module.auto_detect_template_uuid(
+        pls, hint="youth_runsheet_may22.pdf") == "u-youth"
+
+
+def test_auto_detect_template_no_hint_falls_back_to_first(app_module):
+    """No hint — preserves the old "first template-named playlist"
+    behaviour. Required so callers that don't supply a hint (e.g. the
+    UI dropdown's initial render) keep working."""
+    pls = _multi_library_setup()
+    assert app_module.auto_detect_template_uuid(pls) == "u-youth"
+
+
+def test_auto_detect_template_unrecognised_hint_falls_back_to_first(app_module):
+    """Hint mentions nothing distinctive — falls back to first template-named
+    playlist rather than picking arbitrarily."""
+    pls = _multi_library_setup()
+    hint = "Generic service Order of meeting 5 May 2026"
+    assert app_module.auto_detect_template_uuid(pls, hint=hint) == "u-youth"
+
+
+def test_auto_detect_template_strips_common_words_from_scoring(app_module):
+    """A runsheet that says "Service Library" all over shouldn't tilt the
+    score — those words appear in every template name and aren't useful
+    signal. Only DISTINCTIVE tokens count."""
+    pls = _multi_library_setup()
+    # Lots of common words, no distinctive ones — fallback applies.
+    assert app_module.auto_detect_template_uuid(
+        pls, hint="Service Library template service the service") == "u-youth"
+
+
 # ── Time / duration parsing ──────────────────────────────────────────────────
 
 def test_extract_time_str_canonicalises_known_formats(app_module):

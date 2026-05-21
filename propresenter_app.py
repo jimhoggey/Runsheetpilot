@@ -97,8 +97,10 @@ from propresenterrunsheet.propresenter import (  # noqa: E402, F401
     _RB_TIMER_PREFIX, _UUID_RE,
     _color_dict, _color_for_type, _create_pp_timers,
     _delete_existing_rb_timers, _norm, _pp_candidates, _uuid_from_binary,
-    build_playlist_payload, find_library_dirs, find_playlist_dir,
-    find_pp_root, fuzzy_match, scan_library,
+    auto_detect_template_uuid, build_playlist_payload, fetch_pp_playlist_items,
+    fetch_pp_playlists, find_library_dirs, find_playlist_dir, find_pp_root,
+    fuzzy_match, playlist_to_sections, resolve_library_name, resolve_section,
+    scan_library,
 )
 from propresenterrunsheet.service_mate import (  # noqa: E402, F401
     CLOCKS_CONFIG_FILE, LIGHTS_CUES, ROLE_ACCENT, ROLE_CUE_TABLES,
