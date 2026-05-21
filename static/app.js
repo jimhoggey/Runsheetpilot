@@ -705,6 +705,7 @@ function bumpVersionTaps() {
   }
 }
 function _showEasterEggToast() {
+  _burstConfetti();
   const toast = document.createElement('div');
   toast.className = 'ee-toast';
   toast.textContent = '✨ Built with care — Fynn';
@@ -714,6 +715,36 @@ function _showEasterEggToast() {
     toast.classList.remove('ee-toast-show');
     setTimeout(() => toast.remove(), 400);
   }, 4000);
+}
+
+// Confetti — ~60 small coloured shapes burst from the top-centre of the
+// viewport, fan out, fall with gravity, fade as they go. Pure CSS keyframes
+// driven by per-particle CSS custom properties; no JS frame loop.
+function _burstConfetti() {
+  const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444',
+                  '#a78bfa', '#5eead4', '#fbbf24', '#fca5a5', '#60a5fa'];
+  const shapes = ['ee-confetti-square', 'ee-confetti-circle', 'ee-confetti-strip'];
+  const container = document.createElement('div');
+  container.className = 'ee-confetti';
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement('span');
+    p.className = 'ee-confetti-piece ' + shapes[i % shapes.length];
+    // burst origin: roughly the centre of the visible viewport
+    p.style.left = (45 + Math.random() * 10) + '%';
+    p.style.top  = (38 + Math.random() * 8)  + '%';
+    p.style.background = colors[i % colors.length];
+    // travel: ±420 px horizontally, +280..+820 px vertically (down + a bit)
+    p.style.setProperty('--tx',    ((Math.random() - 0.5) * 840).toFixed(0) + 'px');
+    p.style.setProperty('--ty',    (260 + Math.random() * 560).toFixed(0) + 'px');
+    p.style.setProperty('--rot',   ((Math.random() - 0.5) * 1080).toFixed(0) + 'deg');
+    p.style.setProperty('--dur',   (1.8 + Math.random() * 1.4).toFixed(2) + 's');
+    p.style.setProperty('--delay', (Math.random() * 0.25).toFixed(2) + 's');
+    container.appendChild(p);
+  }
+  document.body.appendChild(container);
+  // Clean up after the longest particle finishes (max dur 3.2 + delay 0.25
+  // = 3.45 s, plus a buffer).
+  setTimeout(() => container.remove(), 3800);
 }
 
 // ─── 9. Quit + boot ───────────────────────────────────────────────────────

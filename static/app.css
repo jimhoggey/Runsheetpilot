@@ -1027,3 +1027,43 @@ button:focus-visible, .quit-btn:focus-visible {
   opacity: 1;
   transform: translateY(0);
 }
+
+/* Easter-egg confetti — pure CSS keyframe animation, one node per
+   particle, no JS animation loop. Each piece reads its trajectory from
+   inline CSS custom properties (--tx / --ty / --rot / --dur / --delay)
+   set in app.js's _burstConfetti(). Container is a full-screen overlay
+   that captures no input. */
+.ee-confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 99;
+}
+.ee-confetti-piece {
+  position: absolute;
+  width: 9px; height: 9px;
+  opacity: 0;
+  animation: ee-confetti-fall var(--dur) cubic-bezier(.22,.7,.42,1) var(--delay) forwards;
+  transform-origin: 50% 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+/* Three shapes for visual interest — square w/ tiny radius, perfect
+   circle, narrow strip. */
+.ee-confetti-square { border-radius: 2px; }
+.ee-confetti-circle { border-radius: 50%; }
+.ee-confetti-strip  { width: 4px; height: 14px; border-radius: 2px; }
+
+/* Burst out fast for the first 25 % of the animation, then gravity:
+   the y component grows non-linearly via the intermediate keyframe.
+   Opacity holds until ~80 % so colours stay vivid before fading. */
+@keyframes ee-confetti-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  8%   { opacity: 1; }
+  30%  { transform: translate(calc(var(--tx) * 0.55), calc(var(--ty) * 0.18))
+                    rotate(calc(var(--rot) * 0.55));
+         opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) rotate(var(--rot));
+         opacity: 0; }
+}
