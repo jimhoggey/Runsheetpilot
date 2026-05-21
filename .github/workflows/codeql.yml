@@ -1,0 +1,49 @@
+name: CodeQL
+
+# GitHub's free static-analysis scanner. Surfaces common vulnerability
+# patterns in Python (SQL injection, path traversal, command injection,
+# hardcoded secrets, broken auth) and JavaScript (XSS, prototype
+# pollution, open redirect). Findings appear in the repo's Security tab.
+#
+# Heads up: CodeQL Python is conservative — expect 20-40% false positives
+# on common patterns. Triage by dismissing the false ones with a reason;
+# Github remembers and won't re-raise the same finding.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 06:00 UTC — catches new query packs even when the
+    # codebase hasn't changed. CodeQL ships new queries roughly monthly.
+    - cron: '0 6 * * 1'
+
+permissions:
+  security-events: write   # to upload findings to the Security tab
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyse (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # JavaScript covers static/app.js. Python covers the backend.
+        language: [python, javascript]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality includes both the security pack AND
+          # general code-quality queries — slightly noisier than the
+          # default `security-extended` but catches more.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

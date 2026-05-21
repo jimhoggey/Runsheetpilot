@@ -1,0 +1,36 @@
+# Dependabot — opens PRs when a dependency has a known security update or
+# a new version. Free, GitHub-native, runs on a schedule. To configure:
+# Repo → Settings → Code security and analysis → make sure "Dependabot
+# version updates" is on (this file enables it).
+#
+# When a PR opens, read the linked CVE, check whether it actually affects
+# the way we use the library, merge if yes / close with a reason if no.
+
+version: 2
+updates:
+  # Python deps (requirements.txt + requirements-dev.txt).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    # Group non-security updates into one PR per week so the inbox stays
+    # quiet. Security alerts still get their own PR — those are urgent.
+    groups:
+      python-minor:
+        update-types: [minor, patch]
+        applies-to: version-updates
+
+  # The GitHub Actions in .github/workflows/ themselves — actions/checkout,
+  # actions/setup-python, etc. These also get CVEs occasionally.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci

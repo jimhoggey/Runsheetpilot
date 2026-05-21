@@ -1,0 +1,211 @@
+name: Release
+
+# Triggers on a semver tag push (e.g. `git tag v2.1.0 && git push --tags`).
+# Builds the Windows .exe and Mac .dmg on the respective runners, smoke-tests
+# each one (launch → /api/health → quit), then attaches both to a GitHub
+# Release. End users download from the Releases page — no Python required
+# on their machine and no build machine required on yours.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write   # for softprops/action-gh-release to create the Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── Windows .exe ──────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests (gate)
+        # Same suite that test.yml runs — re-run here as a final safety net
+        # before producing a binary the public will download.
+        run: pytest tests/ -v
+
+      - name: Build .exe with PyInstaller
+        # Inline command instead of calling build_win.bat — that script does
+        # venv creation + cleanup we don't need on a fresh runner. Flags must
+        # stay in sync with build_win.bat if you change one, change both.
+        run: |
+          pyinstaller `
+            --name "ProPresenter Runsheet Builder" `
+            --windowed --onefile --noconfirm --clean `
+            --collect-submodules pdfplumber `
+            --collect-submodules waitress `
+            --hidden-import waitress `
+            --hidden-import flask `
+            --hidden-import pdfplumber `
+            --hidden-import tkinter `
+            --add-data "templates;templates" `
+            --add-data "static;static" `
+            propresenter_app.py
+
+      - name: Smoke-test the .exe
+        # Launches the built .exe, polls /api/health for up to 30 s, then
+        # POSTs /api/quit. Fails the workflow if the binary can't even
+        # answer "ok": catches missing PyInstaller imports, broken template
+        # paths, syntax errors, and other "the binary doesn't actually run"
+        # regressions that pytest cannot see.
+        shell: pwsh
+        run: |
+          $exe = "dist\ProPresenter Runsheet Builder.exe"
+          if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
+          Start-Process -FilePath $exe -PassThru | Out-Null
+          $deadline = (Get-Date).AddSeconds(30)
+          $ok = $false
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri http://localhost:5757/api/health `
+                                     -TimeoutSec 2 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ok) { throw "Smoke test: /api/health did not respond in 30 s" }
+          Write-Host "Smoke test passed."
+          try {
+            Invoke-WebRequest -Uri http://localhost:5757/api/quit `
+                              -Method POST -TimeoutSec 5 -UseBasicParsing | Out-Null
+          } catch {}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/ProPresenter Runsheet Builder.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─── Mac .dmg ──────────────────────────────────────────────────────────
+  build-mac:
+    name: Build macOS .dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests (gate)
+        run: pytest tests/ -v
+
+      - name: Build .app + .dmg
+        # build_mac.sh creates its own venv + does git-state checks we don't
+        # need on a fresh runner. Inline the PyInstaller + hdiutil calls
+        # instead — flags must stay in sync with build_mac.sh.
+        run: |
+          VERSION=$(grep -E '^VERSION\s*=' propresenterrunsheet/config.py \
+                    | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          APP_NAME="ProPresenter Runsheet Builder"
+          APP_BUNDLE="${APP_NAME}.app"
+          DMG_NAME="ProPresenter-Runsheet-Builder-${VERSION}.dmg"
+
+          pyinstaller \
+            --name "${APP_NAME}" \
+            --windowed --onefile --noconfirm --clean \
+            --osx-bundle-identifier "org.church.proPresenterRunsheetBuilder" \
+            --collect-submodules pdfplumber \
+            --collect-submodules waitress \
+            --hidden-import waitress \
+            --hidden-import flask \
+            --hidden-import pdfplumber \
+            --hidden-import tkinter \
+            --add-data "templates:templates" \
+            --add-data "static:static" \
+            propresenter_app.py
+
+          test -d "dist/${APP_BUNDLE}" || { echo "Build missing"; exit 1; }
+
+          DMG_STAGE="dist/dmg_stage"
+          mkdir -p "$DMG_STAGE"
+          cp -R "dist/${APP_BUNDLE}" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_STAGE" \
+                         -ov -format UDZO "dist/${DMG_NAME}" >/dev/null
+          rm -rf "$DMG_STAGE"
+
+      - name: Smoke-test the .app
+        # `open` the .app, poll /api/health, quit. Same shape as the Windows
+        # smoke test. Mac PyInstaller bundles have historically had issues
+        # resolving the shipped --add-data paths (the _MEIPASS resolution);
+        # this catches those before users do.
+        run: |
+          open "dist/ProPresenter Runsheet Builder.app"
+          ok=false
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:5757/api/health >/dev/null 2>&1; then
+              ok=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" != "true" ]; then
+            echo "Smoke test: /api/health did not respond in 30 s"
+            exit 1
+          fi
+          echo "Smoke test passed."
+          curl -s -X POST http://localhost:5757/api/quit >/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: dist/ProPresenter-Runsheet-Builder-*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─── Publish GitHub Release ────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4   # for the generated-release-notes ref
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: ls -laR artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/windows-exe/ProPresenter Runsheet Builder.exe
+            artifacts/mac-dmg/*.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # Pre-release on any tag with -alpha / -beta / -rc; clean
+          # semver tags become full releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
