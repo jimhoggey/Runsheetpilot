@@ -95,10 +95,30 @@ def test_runsheet_state_delete(client):
 # ── Clocks config ────────────────────────────────────────────────────────────
 
 def test_clocks_get_returns_default(client, app_module):
+    """Fresh installs default to enabled=False so Service Mate is opt-in
+    for users who don't own a GeekMagic clock — they get a quiet card +
+    no background polling until they flip the master switch."""
     r = client.get("/api/clocks").get_json()
-    assert r["enabled"] is True
+    assert r["enabled"] is False
     assert r["brightness"] == 70
     assert {c["role"] for c in r["clocks"]} == {"screen", "sound", "lights"}
+
+
+def test_clocks_existing_file_without_enabled_key_treated_as_enabled(
+        client, isolated_state, app_module):
+    """Back-compat: operators who already had a clocks.json from before the
+    master-switch existed get enabled=True so Service Mate keeps working
+    after the upgrade. Only fresh installs (no clocks.json) inherit the
+    new enabled=False default."""
+    import json
+    from propresenterrunsheet.service_mate import state as sm_state
+    legacy = {"clocks": [{"id": "screen", "role": "screen", "ip": "",
+                          "name": "S", "verbosity": "compact"}],
+              "brightness": 50}  # NO "enabled" key — pre-switch file
+    sm_state.CLOCKS_CONFIG_FILE.write_text(json.dumps(legacy))
+    r = client.get("/api/clocks").get_json()
+    assert r["enabled"] is True
+    assert r["brightness"] == 50
 
 
 def test_clocks_post_persists_verbosity(client):
@@ -137,27 +157,48 @@ def test_clocks_post_rejects_unknown_verbosity_with_default(client):
     assert g["clocks"][0]["verbosity"] == "compact"
 
 
-def test_clock_probe_with_no_ip_returns_helpful_error(client):
-    r = client.post("/api/clocks/sound/probe")
+def test_clock_probe_with_no_ip_returns_helpful_error(sm_enabled):
+    r = sm_enabled.post("/api/clocks/sound/probe")
     body = r.get_json()
     assert body["ok"] is False
     assert "no IP" in body["error"]
 
 
-def test_clock_test_with_no_ip_returns_helpful_error(client):
-    r = client.post("/api/clocks/lights/test")
+def test_clock_test_with_no_ip_returns_helpful_error(sm_enabled):
+    r = sm_enabled.post("/api/clocks/lights/test")
     body = r.get_json()
     assert body["ok"] is False
 
 
-def test_clock_probe_unknown_id_404s(client):
-    r = client.post("/api/clocks/no_such_role/probe")
+def test_clock_probe_unknown_id_404s(sm_enabled):
+    r = sm_enabled.post("/api/clocks/no_such_role/probe")
     assert r.status_code == 404
+
+
+def test_clock_action_routes_409_when_master_switch_off(client):
+    """Master switch off → standby / preview / probe / test all return
+    409 with a clear "Flip the master switch" hint. Keeps off meaning off
+    even for callers hitting the API directly (curl, scripts)."""
+    # client (no sm_enabled) starts disabled by default.
+    for path, method in [
+        ("/api/clocks/standby",       "POST"),
+        ("/api/clocks/preview",       "GET"),
+        ("/api/clocks/screen/probe",  "POST"),
+        ("/api/clocks/screen/test",   "POST"),
+    ]:
+        fn = client.post if method == "POST" else client.get
+        r = fn(path)
+        assert r.status_code == 409, f"{method} {path} should 409 when SM off"
+        body = r.get_json()
+        assert body["ok"] is False
+        assert "master switch" in body["error"].lower() \
+            or "disabled" in body["error"].lower()
 
 
 # ── Standby (pre-service waiting page) ───────────────────────────────────────
 
-def test_standby_sets_flag_and_clears_items(client):
+def test_standby_sets_flag_and_clears_items(sm_enabled):
+    client = sm_enabled  # rest of test body uses `client`
     # Seed a real runsheet first…
     client.post("/api/runsheet/state", json={
         "items": [{"type": "song", "title": "a"},
@@ -173,16 +214,18 @@ def test_standby_sets_flag_and_clears_items(client):
     assert state["items"] == []
 
 
-def test_standby_invalidates_push_cache(client, app_module):
+def test_standby_invalidates_push_cache(sm_enabled, app_module):
     """The endpoint must clear `_CLOCKS_LOOP_LAST_PUSHED` so the daemon
     re-pushes on the next tick instead of waiting for the 40 s anti-bitrot
     refresh."""
+    client = sm_enabled
     app_module._CLOCKS_LOOP_LAST_PUSHED["screen"] = ("deadbeef", 12345.0)
     client.post("/api/clocks/standby")
     assert "screen" not in app_module._CLOCKS_LOOP_LAST_PUSHED
 
 
-def test_loading_runsheet_clears_standby(client):
+def test_loading_runsheet_clears_standby(sm_enabled):
+    client = sm_enabled
     client.post("/api/clocks/standby")
     assert client.get("/api/runsheet/state").get_json()["standby"] is True
     # Posting a real runsheet replaces state — standby key falls out.
@@ -193,9 +236,10 @@ def test_loading_runsheet_clears_standby(client):
     assert "standby" not in state or state["standby"] is False
 
 
-def test_preview_shows_standby_when_flag_set(client):
+def test_preview_shows_standby_when_flag_set(sm_enabled):
     """When the operator has hit Standby, the inline preview should mirror
     the device — so all three roles return a JPEG (the standby page)."""
+    client = sm_enabled
     client.post("/api/clocks/standby")
     for role in ("screen", "sound", "lights"):
         r = client.get(f"/api/clocks/preview?role={role}")
@@ -205,32 +249,65 @@ def test_preview_shows_standby_when_flag_set(client):
 
 # ── Inline clock preview ─────────────────────────────────────────────────────
 
-def test_preview_returns_jpeg_for_each_role(client):
+def test_preview_returns_jpeg_for_each_role(sm_enabled):
     for role in ("screen", "sound", "lights"):
-        r = client.get(f"/api/clocks/preview?role={role}")
+        r = sm_enabled.get(f"/api/clocks/preview?role={role}")
         assert r.status_code == 200
         assert r.mimetype == "image/jpeg"
         assert r.data.startswith(JPEG_MAGIC)
 
 
-def test_preview_compact_and_detailed_differ(client):
-    a = client.get("/api/clocks/preview?role=screen&verbosity=compact").data
-    b = client.get("/api/clocks/preview?role=screen&verbosity=detailed").data
+def test_preview_compact_and_detailed_differ(sm_enabled):
+    a = sm_enabled.get("/api/clocks/preview?role=screen&verbosity=compact").data
+    b = sm_enabled.get("/api/clocks/preview?role=screen&verbosity=detailed").data
     assert a.startswith(JPEG_MAGIC)
     assert b.startswith(JPEG_MAGIC)
     assert a != b  # different layouts → different bytes
 
 
-def test_preview_unknown_verbosity_falls_back_to_default(client):
-    r = client.get("/api/clocks/preview?role=screen&verbosity=invalid")
+def test_preview_unknown_verbosity_falls_back_to_default(sm_enabled):
+    r = sm_enabled.get("/api/clocks/preview?role=screen&verbosity=invalid")
     assert r.status_code == 200
     assert r.data.startswith(JPEG_MAGIC)
 
 
-def test_preview_unknown_role_falls_back_to_screen(client):
-    r = client.get("/api/clocks/preview?role=ghost")
+def test_preview_unknown_role_falls_back_to_screen(sm_enabled):
+    r = sm_enabled.get("/api/clocks/preview?role=ghost")
     assert r.status_code == 200
     assert r.data.startswith(JPEG_MAGIC)
+
+
+# ── /api/library/auto: silent library load on launch + before parse ─────────
+
+def test_library_auto_falls_back_to_disk_when_pp_unreachable(
+        client, tmp_path, monkeypatch):
+    """No PP running + an existing local .pro folder → returns the disk
+    items with source='disk'. The UI calls this on launch + before each
+    parse so the operator doesn't have to manually fetch/scan."""
+    # Create a fake "library" folder with two .pro files (empty contents
+    # is fine — scan_library reads UUIDs but tolerates missing UUIDs).
+    lib = tmp_path / "Default"
+    lib.mkdir()
+    (lib / "Build My Life.pro").write_bytes(b"")
+    (lib / "King of Kings.pro").write_bytes(b"")
+    r = client.get(f"/api/library/auto?host=127.0.0.1&port=1&dir={lib}")
+    body = r.get_json()
+    assert r.status_code == 200
+    assert body["source"] == "disk"
+    assert body["count"] == 2
+    names = sorted(it["name"] for it in body["items"])
+    assert names == ["Build My Life", "King of Kings"]
+
+
+def test_library_auto_returns_none_when_pp_unreachable_and_no_disk(client):
+    """No PP + no local folder → source='none', empty items. UI surfaces
+    'No library — open Settings' in the sidebar footer."""
+    r = client.get("/api/library/auto?host=127.0.0.1&port=1&dir=")
+    body = r.get_json()
+    assert r.status_code == 200
+    assert body["source"] == "none"
+    assert body["count"] == 0
+    assert body["items"] == []
 
 
 # ── Index page sanity ────────────────────────────────────────────────────────

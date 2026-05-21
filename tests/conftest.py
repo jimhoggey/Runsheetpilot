@@ -53,3 +53,15 @@ def client(isolated_state):
     ppa.app.config["TESTING"] = True
     with ppa.app.test_client() as c:
         yield c
+
+
+@pytest.fixture
+def sm_enabled(client):
+    """Pre-flips the Service Mate master switch ON for tests that exercise
+    the clock action routes (standby / preview / probe / test). Fresh
+    installs default to enabled=False (UI redesign — opt-in for users who
+    don't own a GeekMagic clock), so those routes 409 unless the master
+    switch is on. Tests that explicitly check the disabled path should
+    use the plain `client` fixture instead."""
+    client.post("/api/clocks", json={"enabled": True})
+    return client

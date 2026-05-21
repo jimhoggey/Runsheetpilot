@@ -28,6 +28,13 @@ CLOCKS_CONFIG_FILE  = DATA_DIR / "clocks.json"
 
 
 def _default_clocks_config() -> dict:
+    """Defaults applied on a FRESH install (no clocks.json on disk yet).
+    `enabled` is False so the Service Mate / GeekMagic clock subsystem is
+    silently off until the operator explicitly flips the master switch in
+    the UI — most users don't own a GeekMagic clock and shouldn't be
+    paying the daemon's polling cost. Existing users who already had a
+    clocks.json without an `enabled` key are preserved as enabled in
+    _read_clocks_config (back-compat — they were already using it)."""
     return {
         "clocks": [
             {"id": "screen", "ip": "", "role": "screen",
@@ -38,7 +45,7 @@ def _default_clocks_config() -> dict:
              "name": "Lights station", "verbosity": SM_VERBOSITY_DEFAULT},
         ],
         "brightness": 70,
-        "enabled":    True,
+        "enabled":    False,
     }
 
 
@@ -64,6 +71,13 @@ def _read_clocks_config() -> dict:
     try:
         cfg = json.loads(CLOCKS_CONFIG_FILE.read_text())
         merged = _default_clocks_config()
+        # Back-compat for the master-switch added in the UI redesign:
+        # a clocks.json saved before the switch existed has no `enabled`
+        # key. Those operators were ALREADY using Service Mate, so we
+        # preserve enabled=True for them. Fresh installs that have no
+        # clocks.json yet take the default False from _default_clocks_config.
+        if "enabled" not in cfg:
+            merged["enabled"] = True
         merged.update({k: v for k, v in cfg.items() if v is not None})
         return merged
     except Exception:

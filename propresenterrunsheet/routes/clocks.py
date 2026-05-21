@@ -24,6 +24,27 @@ from ..service_mate.state import (
 bp = Blueprint("clocks", __name__)
 
 
+# Standard response when the operator has the Service Mate master switch
+# OFF. GET/POST /api/clocks (read + update config) stay open so the UI
+# can read state + flip the switch back on; everything that actually
+# touches hardware or renders a cue returns 409 so the off-state is
+# obvious to anyone hitting the API directly (curl, scripts, …).
+_DISABLED_RESPONSE = ({"ok": False,
+                       "error": "Service Mate is disabled in settings. "
+                                "Flip the master switch on the Clocks card "
+                                "to enable."},
+                      409)
+
+
+def _check_sm_enabled(cfg: dict):
+    """Return (json_body, status_code) when Service Mate is disabled, else
+    None to indicate the caller should proceed. Tiny helper so each
+    hardware-touching route can early-return with one line."""
+    if not cfg.get("enabled"):
+        return _DISABLED_RESPONSE
+    return None
+
+
 @bp.route("/api/clocks", methods=["GET"])
 def api_clocks_get():
     return jsonify(_read_clocks_config())
@@ -63,6 +84,9 @@ def api_clocks_post():
 @bp.route("/api/clocks/<clock_id>/probe", methods=["POST"])
 def api_clock_probe(clock_id: str):
     cfg = _read_clocks_config()
+    disabled = _check_sm_enabled(cfg)
+    if disabled:
+        return jsonify(disabled[0]), disabled[1]
     clock = next((c for c in cfg.get("clocks", [])
                   if c.get("id") == clock_id), None)
     if not clock:
@@ -76,6 +100,9 @@ def api_clock_probe(clock_id: str):
 @bp.route("/api/clocks/<clock_id>/test", methods=["POST"])
 def api_clock_test(clock_id: str):
     cfg = _read_clocks_config()
+    disabled = _check_sm_enabled(cfg)
+    if disabled:
+        return jsonify(disabled[0]), disabled[1]
     clock = next((c for c in cfg.get("clocks", [])
                   if c.get("id") == clock_id), None)
     if not clock:
@@ -102,6 +129,9 @@ def api_clocks_standby():
     in the runsheet state so the daemon keeps pushing the standby image; the
     flag is cleared automatically on the next runsheet load (parse / create
     playlist / explicit POST /api/runsheet/state with items)."""
+    disabled = _check_sm_enabled(_read_clocks_config())
+    if disabled:
+        return jsonify(disabled[0]), disabled[1]
     state = {
         "standby": True,
         "items": [],
@@ -121,6 +151,9 @@ def api_clocks_standby():
 def api_clocks_preview():
     """Return the rendered JPEG for a given role + verbosity — used by the UI
     for an inline preview without the device, and for development."""
+    disabled = _check_sm_enabled(_read_clocks_config())
+    if disabled:
+        return jsonify(disabled[0]), disabled[1]
     role = (request.args.get("role") or "screen").lower()
     if role not in ROLE_ACCENT:
         role = "screen"

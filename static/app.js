@@ -24,6 +24,11 @@ const AUTOSAVE_FIELDS = [
   'create-timers', 'template-playlist'
 ];
 
+// Cached library source mode ('auto'|'api'|'disk') from settings. Updated
+// by the radio buttons in the Settings modal; read by loadLibraryAuto so
+// each refresh respects the operator's preference.
+let libSourceMode = 'auto';
+
 function setSaveDot(state) {
   const dot = document.getElementById('save-dot');
   dot.className = 'save-dot ' + (state || '');
@@ -48,6 +53,19 @@ function setLoading(msg) {
   setStatus(`<div class="spinner"></div>${msg}`);
 }
 
+// Toggle the visual state of a numbered step card (1, 2, 3).
+//   'locked'   → grey badge, body hidden, "complete step X first" hint
+//   'active'   → glowing blue badge, body fully interactive
+//   'complete' → green check badge, body still interactive
+//   'busy'     → spinner-on-badge, body locked
+function setStepState(n, state) {
+  const card = document.getElementById(`step-card-${n}`);
+  if (!card) return;
+  card.classList.remove('state-locked', 'state-active',
+                        'state-complete', 'state-busy');
+  card.classList.add('state-' + state);
+}
+
 // ─── 2. Settings: load + auto-save ────────────────────────────────────────
 async function loadSettings() {
   const s = await fetch('/api/settings').then(r => r.json());
@@ -63,10 +81,24 @@ async function loadSettings() {
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
 
+  // Library source preference (auto / api / disk). Used by loadLibraryAuto
+  // to constrain which source(s) it tries. Default "auto" matches the
+  // old behaviour (try API, fall back to disk).
+  libSourceMode = (s.lib_source || 'auto').toLowerCase();
+  if (!['auto', 'api', 'disk'].includes(libSourceMode)) libSourceMode = 'auto';
+  const rb = document.querySelector(`input[name="lib-source"][value="${libSourceMode}"]`);
+  if (rb) rb.checked = true;
+
   // Template playlist selection — fetch the live list of playlists from
   // PP, populate the dropdown, then select the saved UUID (if any).
   // Best-effort: if PP is unreachable the dropdown stays at "— None —".
   await loadTemplatePlaylists(s.template_playlist_uuid || '');
+
+  // Auto-load the library in the background — operator never has to
+  // click "Scan Library" or "Fetch Library" themselves. Refreshes on
+  // every PDF upload too so a freshly-added song shows up without a
+  // manual rescan.
+  loadLibraryAuto();
 
   const today = new Date().toLocaleDateString('en-AU',
       {day:'2-digit', month:'short', year:'numeric'});
@@ -90,6 +122,15 @@ async function loadSettings() {
     if (!el) return;
     el.addEventListener('input', autoSaveDebounced);
     el.addEventListener('change', autoSaveDebounced);
+  });
+  // Library source radio set — each click updates libSourceMode + autosaves +
+  // triggers a re-load so the operator sees the new source's items immediately.
+  document.querySelectorAll('input[name="lib-source"]').forEach(rb => {
+    rb.addEventListener('change', () => {
+      libSourceMode = rb.value;
+      autoSaveDebounced();
+      reloadLibraryAuto();
+    });
   });
   // Mirror host/port between the two sections
   document.getElementById('pp-host').addEventListener('input', e =>
@@ -119,6 +160,7 @@ async function saveSettings() {
     or_key:                  document.getElementById('or-key').value,
     or_model:                document.getElementById('or-model').value,
     library_dir:             document.getElementById('lib-dir').value,
+    lib_source:              libSourceMode,
     export_dir:              document.getElementById('export-dir').value,
     threshold:               parseInt(document.getElementById('threshold').value) / 100,
     create_timers:           document.getElementById('create-timers').checked,
@@ -157,7 +199,16 @@ function handleFileSelect(file) {
     <div style="font-weight:700;color:var(--grn)">${file.name}</div>
     <div class="hint">${(file.size/1024).toFixed(0)} KB — click to change</div>`;
   dz.onclick = () => document.getElementById('pdf-input').click();
-  setStatus(`PDF loaded: ${file.name} — click Parse to send to AI.`);
+  // Show the filename + size beside the step 1 title for at-a-glance state.
+  document.getElementById('step-1-meta').textContent =
+    `${file.name} · ${(file.size/1024).toFixed(0)} KB`;
+  setStatus(`PDF loaded — click <strong>🔍 Parse Runsheet</strong> on Step 2.`);
+  // Advance the step flow: step 1 done, step 2 unlocked, step 3 still locked.
+  setStepState(1, 'complete');
+  setStepState(2, 'active');
+  // Silent library refresh — picks up any songs the operator added in PP
+  // since the app launched, so the upcoming match table is current.
+  loadLibraryAuto();
 }
 
 // ─── Template playlist dropdown ───────────────────────────────────────────
@@ -219,48 +270,78 @@ async function loadTemplatePlaylists(selectUuid) {
   }
 }
 
-// ─── 4. Library load (disk + API) ─────────────────────────────────────────
+// ─── 4. Library load (silent auto + manual rescan) ────────────────────────
+// Library loading is now mostly invisible — auto-fires on launch and on
+// every PDF upload via /api/library/auto. The Settings modal has a manual
+// "Re-scan now" button for when the operator added songs in PP and wants
+// the match table to reflect them without re-uploading the PDF.
+
 function setLibStatus(msg, cls) {
   const el = document.getElementById('lib-status');
+  if (!el) return;
   el.textContent = msg;
   el.className = cls || '';
 }
 
-async function scanLibrary() {
-  const dir = document.getElementById('lib-dir').value.trim();
-  if (!dir) { setStatus('Enter the library folder path first.', 'var(--red)'); return; }
-  setLoading('Scanning library from disk…');
-  try {
-    const res = await fetch('/api/library/scan', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({directory: dir})
-    }).then(r => r.json());
-    if (res.error) { setStatus('Error: ' + res.error, 'var(--red)'); setLibStatus('Scan failed', 'stat-err'); return; }
-    libraryItems = res.items;
-    setLibStatus(`✓  ${res.count} items loaded from disk`, 'stat-ok');
-    setStatus(`Library scanned — ${res.count} presentations ready for matching.`, 'var(--grn)');
-  } catch (e) {
-    setStatus('Scan failed: ' + e, 'var(--red)');
+// Update the always-visible sidebar footer pill with the current library
+// status. Orange warning when no library is loaded — beginners need to
+// know why songs aren't matching.
+function setLibraryFooter(count, source) {
+  const el = document.getElementById('library-footer-status');
+  if (!el) return;
+  if (!count) {
+    el.textContent = '⚠ No library loaded — open Settings to set one.';
+    el.classList.add('stat-warn');
+  } else {
+    const where = source === 'api'  ? 'from PP'
+                : source === 'disk' ? 'from disk'
+                : '';
+    el.textContent = `♪ ${count} song${count!==1?'s':''} loaded${where ? ' ' + where : ''}`;
+    el.classList.remove('stat-warn');
   }
 }
 
-async function fetchLibraryApi() {
-  setLoading('Fetching library from ProPresenter…');
+async function loadLibraryAuto() {
+  // Silent — no status-bar spinner, just the sidebar footer + the in-modal
+  // lib-status line if Settings happens to be open. mode reflects the
+  // operator's current radio preference.
   try {
-    const res = await fetch('/api/library/fetch', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        host: document.getElementById('pp-host').value,
-        port: document.getElementById('pp-port').value,
-      })
-    }).then(r => r.json());
-    if (res.error) { setStatus('Error: ' + res.error, 'var(--red)'); setLibStatus('Fetch failed', 'stat-err'); return; }
-    libraryItems = res.items;
-    setLibStatus(`✓  ${res.count} items via API`, 'stat-ok');
-    setStatus(`Library loaded — ${res.count} presentations.`, 'var(--grn)');
+    const qs = new URLSearchParams({
+      host: document.getElementById('pp-host2').value || 'localhost',
+      port: document.getElementById('pp-port2').value || '50001',
+      dir:  document.getElementById('lib-dir').value || '',
+      mode: libSourceMode || 'auto',
+    }).toString();
+    const res = await fetch('/api/library/auto?' + qs).then(r => r.json());
+    libraryItems = res.items || [];
+    setLibraryFooter(res.count || 0, res.source);
+    if (res.source === 'api')  setLibStatus(`${res.count} items loaded from ProPresenter`, 'stat-ok');
+    else if (res.source === 'disk') setLibStatus(`${res.count} items loaded from disk`, 'stat-ok');
+    else                            setLibStatus('No library found — check the path or start ProPresenter.', 'stat-err');
   } catch (e) {
-    setStatus('Fetch failed: ' + e, 'var(--red)');
+    setLibraryFooter(0, 'none');
+    setLibStatus('Auto-load failed: ' + e, 'stat-err');
   }
+}
+
+// Manual "Re-scan now" button in Settings — same call as loadLibraryAuto
+// but surfaces a status-bar message so the operator sees the action.
+async function reloadLibraryAuto() {
+  setLoading('Re-scanning library…');
+  await loadLibraryAuto();
+  const n = libraryItems.length;
+  setStatus(n
+    ? `✓ Library re-scanned — ${n} song${n!==1?'s':''} loaded.`
+    : '⚠ No library found — check the source / path in Settings.',
+    n ? 'var(--grn)' : 'var(--org)');
+}
+
+// ─── Settings modal (Library / OpenRouter / Playlist options / Export) ───
+function openSettingsModal() {
+  document.getElementById('settings-modal').classList.add('active');
+}
+function closeSettingsModal() {
+  document.getElementById('settings-modal').classList.remove('active');
 }
 
 // ─── 5. Connection test ───────────────────────────────────────────────────
@@ -296,10 +377,15 @@ async function testConnection2() {
 async function parseRunsheet() {
   if (!uploadedFile) { setStatus('Upload a PDF first.', 'var(--red)'); return; }
   if (!document.getElementById('or-key').value.trim()) {
-    setStatus('Enter your OpenRouter API key in the sidebar.', 'var(--red)'); return; }
+    setStatus('Enter your OpenRouter API key in <strong>⚙ Settings</strong>.',
+              'var(--red)');
+    openSettingsModal();
+    return;
+  }
 
   const btn = document.getElementById('parse-btn');
   btn.disabled = true;
+  setStepState(2, 'busy');
   setLoading('Uploading PDF and sending to AI…');
 
   const form = new FormData();
@@ -310,7 +396,11 @@ async function parseRunsheet() {
   try {
     const res = await fetch('/api/upload_and_parse', {method:'POST', body: form})
       .then(r => r.json());
-    if (res.error) { setStatus('❌ ' + res.error, 'var(--red)'); return; }
+    if (res.error) {
+      setStatus('❌ ' + res.error, 'var(--red)');
+      setStepState(2, 'active');     // back to active so they can retry
+      return;
+    }
 
     // Auto-populate the playlist name from the AI-extracted service name
     // (or filename fallback). User can still edit it before creating.
@@ -328,8 +418,17 @@ async function parseRunsheet() {
 
     matchedItems = matchRes.items;
     renderResults();
+    // Reveal the results table (it's hidden by default before parse).
+    document.getElementById('results-wrap').hidden = false;
+    // Mark step 2 complete + unlock step 3 so the operator's eye goes to
+    // the Create button.
+    setStepState(2, 'complete');
+    setStepState(3, 'active');
+    document.getElementById('step-2-meta').textContent =
+      `${matchedItems.length} items`;
   } catch (e) {
     setStatus('❌ ' + e, 'var(--red)');
+    setStepState(2, 'active');
   } finally {
     btn.disabled = false;
   }
@@ -421,7 +520,7 @@ function renderResults() {
     msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; no songs in this runsheet &nbsp;·&nbsp; Click <strong>Create Playlist</strong> when ready.`;
     color = 'var(--grn)';
   } else if (libraryItems.length === 0) {
-    msg = `${matchedItems.length} items parsed &nbsp;·&nbsp; <span style="color:var(--org)"><strong>No ProPresenter songs loaded yet</strong> — all ${total} song${total!==1?'s':''} will become red <strong>ACTION NEEDED</strong> placeholders. To match automatically, click <strong>↓ Scan Library from Disk</strong> (or <strong>↓ Fetch Library</strong>) at the top of the sidebar, then re-parse.</span>`;
+    msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; <span style="color:var(--org)">⚠ No library loaded — all ${total} song${total!==1?'s':''} will be <strong>ACTION NEEDED</strong> placeholders. Open <strong>⚙ Settings</strong> to set a library, then click Parse again.</span>`;
     color = 'var(--org)';
   } else if (unmatched) {
     msg = `${matchedItems.length} items parsed${reusedFrag} &nbsp;·&nbsp; ${matched}/${total} songs matched &nbsp;·&nbsp; <span style="color:var(--org)">${unmatched} unmatched — click <strong>Pick</strong> to choose manually, or leave for an <strong>ACTION NEEDED</strong> placeholder in the playlist.</span>`;
@@ -450,10 +549,11 @@ function pickManual(idx) {
 async function createPlaylist() {
   if (!matchedItems.length) { setStatus('Parse a runsheet first.', 'var(--red)'); return; }
   const name = document.getElementById('playlist-name').value.trim();
-  if (!name) { setStatus('Enter a playlist name.', 'var(--red)'); return; }
+  if (!name) { setStatus('Enter a service name on Step 3.', 'var(--red)'); return; }
 
   const btn = document.getElementById('create-btn');
   btn.disabled = true;
+  setStepState(3, 'busy');
   setLoading('Creating playlist in ProPresenter…');
 
   try {
@@ -473,8 +573,12 @@ async function createPlaylist() {
     if (res.error) {
       notice.innerHTML = `<div class="notice notice-err">❌ ${escapeHtml(res.error)}</div>`;
       setStatus('Error creating playlist.', 'var(--red)');
+      setStepState(3, 'active');
       return;
     }
+    // Step 3 done — show the green check on the badge.
+    setStepState(3, 'complete');
+    document.getElementById('step-3-meta').textContent = `✓ "${name}"`;
 
     let html = `<div class="notice notice-ok">
       ✅ <strong>Playlist "${escapeHtml(name)}" created in ProPresenter!</strong><br>
@@ -508,6 +612,7 @@ async function createPlaylist() {
               res.needs_action ? 'var(--org)' : 'var(--grn)');
   } catch (e) {
     setStatus('❌ ' + e, 'var(--red)');
+    setStepState(3, 'active');
   } finally {
     btn.disabled = false;
   }
@@ -603,12 +708,75 @@ async function smInit() {
     document.getElementById('sm-enabled').checked = !!cfg.enabled;
     document.getElementById('sm-brightness').value = cfg.brightness || 70;
     document.getElementById('sm-brightness-val').textContent = cfg.brightness || 70;
-  } catch (e) { console.warn('sm load clocks failed', e); }
-  await smRefreshState();
-  smRefreshPreview();
-  // Refresh state + preview every 2 seconds
-  setInterval(smRefreshState, 2000);
-  setInterval(smRefreshPreview, 2000);
+    // Sync the master-switch visual state + body visibility with the saved
+    // enabled flag. Card starts COLLAPSED for a clean default look — the
+    // operator clicks the chevron to expand once they enable it.
+    smApplyMasterState(!!cfg.enabled);
+    smApplyCollapsed(true);
+  } catch (e) {
+    console.warn('sm load clocks failed', e);
+    smApplyMasterState(false);
+    smApplyCollapsed(true);
+  }
+  // Polling intervals always run; the gate is inside each callback so
+  // flipping the master switch ON mid-session starts polling without a
+  // page reload, and OFF stops it without leaving zombie timers behind.
+  if (smClocksConfig.enabled) {
+    await smRefreshState();
+    smRefreshPreview();
+  }
+  setInterval(() => { if (smClocksConfig.enabled) smRefreshState(); }, 2000);
+  setInterval(() => { if (smClocksConfig.enabled) smRefreshPreview(); }, 2000);
+}
+
+// Master switch — coarsest on/off. Flipping it drives `enabled` on
+// clocks.json, which the daemon checks every tick. Off → no PP polling,
+// no clock pushes, and the action endpoints (standby/preview/probe/test)
+// return 409 to anyone hitting them directly.
+async function smMasterToggle() {
+  const enabled = document.getElementById('sm-enabled').checked;
+  smApplyMasterState(enabled);
+  // When turning on, auto-expand so the operator can configure clocks
+  // immediately. When turning off, collapse so the card disappears from
+  // view.
+  smApplyCollapsed(!enabled);
+  await smSaveSettings();
+  // If we just turned ON, fire one refresh so cue/preview populate now
+  // instead of after the 2-second poll tick.
+  if (enabled) {
+    smRefreshState();
+    smRefreshPreview();
+  }
+}
+
+function smApplyMasterState(enabled) {
+  const card = document.getElementById('sm-card');
+  const label = document.getElementById('sm-master-label');
+  card.classList.toggle('sm-disabled', !enabled);
+  if (label) label.textContent = enabled ? 'ON' : 'OFF';
+}
+
+function smToggleCollapse() {
+  const card = document.getElementById('sm-card');
+  smApplyCollapsed(!card.hasAttribute('data-collapsed'));
+}
+
+function smApplyCollapsed(collapsed) {
+  const card = document.getElementById('sm-card');
+  const body = document.getElementById('sm-body');
+  const off  = document.getElementById('sm-off-hint');
+  const enabled = document.getElementById('sm-enabled').checked;
+  if (collapsed) {
+    card.setAttribute('data-collapsed', '');
+    body.hidden = true;
+    if (off) off.style.display = 'none';
+  } else {
+    card.removeAttribute('data-collapsed');
+    // Expanded view: show the body if SM is enabled, show the off-hint
+    // if it's disabled. They never appear at the same time.
+    body.hidden = !enabled;
+    if (off) off.style.display = enabled ? 'none' : 'block';
+  }
 }
 
 function smRenderClocksTable() {

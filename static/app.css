@@ -539,3 +539,326 @@ button:focus-visible, .quit-btn:focus-visible {
   box-shadow: var(--ring);
   outline: none;
 }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   UI REDESIGN — step cards, master switch, settings modal, sidebar polish.
+   New components only; existing tokens / cards / forms above are unchanged.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ─── sidebar action buttons (Settings / Edit AI Prompt) ────────────────── */
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Library status line in the sidebar footer. Two-state colour. */
+#library-footer-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+#library-footer-status.stat-warn { color: var(--org); font-weight: 500; }
+
+/* ─── step cards — 1·2·3 main-panel flow ───────────────────────────────── */
+.step-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  padding: var(--s-4);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.025) inset, var(--sh-1);
+  transition: border-color .2s, box-shadow .2s, opacity .2s;
+  position: relative;
+}
+.step-header {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: var(--s-3);
+}
+.step-badge {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  background: var(--card);
+  color: var(--dim);
+  border: 1px solid var(--border-2);
+  transition: background .2s, color .2s, box-shadow .2s, border-color .2s;
+}
+.step-title {
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+.step-meta {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.step-desc {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin: 0 0 var(--s-3) 0;
+  line-height: 1.5;
+}
+.step-body { display: block; }
+.step-locked-msg {
+  display: none;
+  color: var(--dim);
+  font-size: 0.82rem;
+  font-style: italic;
+  padding: 6px 0;
+}
+
+/* Locked: grey badge, body hidden, lock message shown. */
+.step-card.state-locked {
+  opacity: 0.65;
+  background: var(--card);
+}
+.step-card.state-locked .step-body { display: none; }
+.step-card.state-locked .step-locked-msg { display: block; }
+
+/* Active: blue glowing badge, full body. */
+.step-card.state-active {
+  border-color: var(--acc-soft);
+  box-shadow: 0 0 0 1px var(--acc-soft) inset, var(--sh-1);
+}
+.step-card.state-active .step-badge {
+  background: var(--acc);
+  color: #fff;
+  border-color: var(--acc);
+  box-shadow: 0 0 0 5px var(--acc-soft);
+}
+
+/* Complete: green check badge, body still interactive. */
+.step-card.state-complete .step-badge {
+  background: var(--grn);
+  color: #fff;
+  border-color: var(--grn);
+  position: relative;
+}
+.step-card.state-complete .step-badge .step-num { display: none; }
+.step-card.state-complete .step-badge::before {
+  content: '✓';
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Busy: badge spinner. */
+.step-card.state-busy .step-badge {
+  background: var(--acc);
+  border-color: var(--acc);
+  position: relative;
+}
+.step-card.state-busy .step-badge .step-num { visibility: hidden; }
+.step-card.state-busy .step-badge::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  margin: -8px 0 0 -8px;
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* The primary button in each step gets a touch more weight. */
+.btn-step {
+  padding: 12px 18px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+/* ─── master switch (Service Mate enable / disable) ────────────────────── */
+.sm-card { padding: 0; }
+.sm-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-3) var(--s-4);
+  gap: 12px;
+}
+.sm-card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sm-card-subtitle {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.sm-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Pill toggle. The native checkbox is hidden visually but stays in the
+   DOM (id="sm-enabled") so existing JS reads it. */
+.master-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.master-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  pointer-events: none;
+}
+.master-switch-track {
+  width: 44px;
+  height: 24px;
+  background: var(--card-2);
+  border: 1px solid var(--border-3);
+  border-radius: 999px;
+  position: relative;
+  transition: background .18s, border-color .18s;
+}
+.master-switch-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: transform .18s;
+}
+.master-switch input:checked ~ .master-switch-track {
+  background: var(--acc);
+  border-color: var(--acc);
+}
+.master-switch input:checked ~ .master-switch-track .master-switch-thumb {
+  transform: translateX(20px);
+}
+.master-switch-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  min-width: 28px;
+  transition: color .18s;
+}
+.master-switch input:checked ~ .master-switch-label {
+  color: var(--acc-2);
+}
+
+/* Chevron button beside the master switch. */
+.btn-chevron {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-2);
+  color: var(--muted);
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  display: grid;
+  place-items: center;
+  transition: background .15s, color .15s, border-color .15s, transform .15s;
+}
+.btn-chevron:hover { background: var(--card-2); color: var(--text); border-color: var(--border-3); }
+.sm-card[data-collapsed] .btn-chevron { transform: rotate(0deg); }
+.sm-card:not([data-collapsed]) .btn-chevron { transform: rotate(180deg); }
+
+/* SM body: padded section under the header. Hidden while collapsed. */
+.sm-body { padding: 0 var(--s-4) var(--s-4); }
+.sm-intro {
+  color: var(--muted);
+  margin: 0 0 12px 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+/* Off-state hint shown ONLY when master switch is off AND card is
+   expanded. JS hides it when the switch is on. */
+.sm-off-hint {
+  padding: 0 var(--s-4) var(--s-4);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  display: none;
+}
+.sm-card[data-collapsed] .sm-off-hint { display: none; }
+.sm-card.sm-disabled:not([data-collapsed]) .sm-off-hint { display: block; }
+
+/* ─── settings modal — wider than prompt modal, sections instead of
+   a single textarea. ───────────────────────────────────────────────── */
+.modal-settings {
+  max-width: 720px;
+  height: auto;
+  max-height: 85vh;
+  gap: 0;
+}
+.modal-settings .modal-head { margin-bottom: var(--s-3); }
+.modal-settings .modal-head h2 { flex: 1; }
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--s-4);
+}
+.settings-section:first-child { border-top: none; padding-top: 0; }
+.settings-section h3 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--acc-2);
+  margin-bottom: var(--s-2);
+}
+.settings-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 var(--s-3) 0;
+}
+.settings-section .field { margin-bottom: var(--s-3); }
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+.radio-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  margin: 0;
+}
+.radio-row input[type="radio"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--acc);
+  cursor: pointer;
+}
