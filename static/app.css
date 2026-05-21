@@ -80,18 +80,16 @@ body {
 /* ─── header ───────────────────────────────────────────────────────────── */
 header {
   background:
-    linear-gradient(135deg, rgba(29,78,216,0.95), rgba(59,130,246,0.85) 60%, rgba(96,165,250,0.85));
-  padding: 13px 22px;
+    linear-gradient(135deg, #1e3a8a 0%, #2563eb 70%, #3b82f6 100%);
+  padding: 14px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   position: sticky;
   top: 0;
   z-index: 20;
-  backdrop-filter: saturate(140%) blur(10px);
-  -webkit-backdrop-filter: saturate(140%) blur(10px);
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  box-shadow: 0 1px 0 rgba(0,0,0,0.2);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.30);
 }
 header h1 {
   font-size: 0.95rem;
@@ -147,16 +145,25 @@ aside {
 main {
   display: flex;
   flex-direction: column;
-  padding: var(--s-5);
-  gap: var(--s-4);
+  padding: 26px 28px;
+  gap: 16px;
   min-width: 0;
+  max-width: 1100px;        /* keep the line length comfortable on big screens */
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* ─── sidebar sections ─────────────────────────────────────────────────── */
-.sidebar-section {
-  padding: var(--s-4) var(--s-4) var(--s-2);
-  border-bottom: 1px solid var(--border);
+aside {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.012), transparent 200px),
+    var(--panel);
 }
+.sidebar-section {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.sidebar-section:last-of-type { border-bottom: none; }
 .sec-title {
   font-size: 0.66rem;
   font-weight: 700;
@@ -314,10 +321,12 @@ input[type="checkbox"] {
 
 /* ─── cards ────────────────────────────────────────────────────────────── */
 .card {
-  background: var(--panel);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 40%),
+    var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  padding: var(--s-4);
+  border-radius: 14px;
+  padding: 20px;
   box-shadow: 0 1px 0 rgba(255,255,255,0.025) inset, var(--sh-1);
 }
 .card-title {
@@ -563,37 +572,45 @@ button:focus-visible, .quit-btn:focus-visible {
 
 /* ─── step cards — 1·2·3 main-panel flow ───────────────────────────────── */
 .step-card {
-  background: var(--panel);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.022), transparent 35%),
+    var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  padding: var(--s-4);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.025) inset, var(--sh-1);
-  transition: border-color .2s, box-shadow .2s, opacity .2s;
+  border-radius: 14px;
+  padding: 22px 24px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, var(--sh-1);
+  transition: border-color .25s, box-shadow .25s, opacity .25s,
+              transform .15s, background .25s;
   position: relative;
+}
+.step-card:not(.state-locked):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, var(--sh-2);
 }
 .step-header {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
-  gap: 12px;
+  grid-template-columns: 40px 1fr auto;
+  gap: 14px;
   align-items: center;
-  margin-bottom: var(--s-3);
+  margin-bottom: 14px;
 }
 .step-badge {
-  width: 32px; height: 32px;
+  width: 36px; height: 36px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   font-weight: 800;
-  font-size: 0.95rem;
+  font-size: 1rem;
   background: var(--card);
   color: var(--dim);
   border: 1px solid var(--border-2);
-  transition: background .2s, color .2s, box-shadow .2s, border-color .2s;
+  transition: background .25s, color .25s, box-shadow .35s, border-color .25s;
+  position: relative;
 }
 .step-title {
   font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: -0.01em;
+  font-size: 1.08rem;
+  letter-spacing: -0.015em;
 }
 .step-meta {
   font-size: 0.74rem;
@@ -601,51 +618,64 @@ button:focus-visible, .quit-btn:focus-visible {
 }
 .step-desc {
   color: var(--muted);
-  font-size: 0.84rem;
-  margin: 0 0 var(--s-3) 0;
-  line-height: 1.5;
+  font-size: 0.86rem;
+  margin: 0 0 14px 0;
+  line-height: 1.55;
 }
 .step-body { display: block; }
 .step-locked-msg {
   display: none;
   color: var(--dim);
-  font-size: 0.82rem;
-  font-style: italic;
-  padding: 6px 0;
+  font-size: 0.84rem;
+  padding: 4px 0 0 0;
 }
 
 /* Locked: grey badge, body hidden, lock message shown. */
 .step-card.state-locked {
-  opacity: 0.65;
+  opacity: 0.55;
   background: var(--card);
+  box-shadow: none;
 }
 .step-card.state-locked .step-body { display: none; }
 .step-card.state-locked .step-locked-msg { display: block; }
 
-/* Active: blue glowing badge, full body. */
+/* Active: blue glowing badge with a subtle pulse, full body, glowing card. */
 .step-card.state-active {
-  border-color: var(--acc-soft);
-  box-shadow: 0 0 0 1px var(--acc-soft) inset, var(--sh-1);
+  border-color: rgba(59,130,246,0.32);
+  box-shadow:
+    0 0 0 1px var(--acc-soft) inset,
+    0 8px 30px -10px rgba(59,130,246,0.35),
+    var(--sh-1);
 }
 .step-card.state-active .step-badge {
-  background: var(--acc);
+  background: linear-gradient(180deg, var(--acc-2), var(--acc));
   color: #fff;
   border-color: var(--acc);
   box-shadow: 0 0 0 5px var(--acc-soft);
+  animation: badge-pulse 2.4s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(59,130,246,0.18); }
+  50%      { box-shadow: 0 0 0 9px rgba(59,130,246,0.08); }
 }
 
 /* Complete: green check badge, body still interactive. */
+.step-card.state-complete {
+  border-color: rgba(34,197,94,0.20);
+}
 .step-card.state-complete .step-badge {
-  background: var(--grn);
+  background: linear-gradient(180deg, #34d399, var(--grn));
   color: #fff;
   border-color: var(--grn);
   position: relative;
+  box-shadow: 0 0 0 4px rgba(34,197,94,0.14);
 }
 .step-card.state-complete .step-badge .step-num { display: none; }
 .step-card.state-complete .step-badge::before {
   content: '✓';
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   line-height: 1;
+  font-weight: 800;
 }
 
 /* Busy: badge spinner. */
@@ -680,8 +710,19 @@ button:focus-visible, .quit-btn:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--s-3) var(--s-4);
+  padding: 16px 20px;
   gap: 12px;
+  cursor: default;
+}
+/* When SM is enabled but the body isn't shown yet, the header looks like
+   a banner instead of a chrome strip — subtle accent line on the left. */
+.sm-card:not(.sm-disabled) .sm-card-header {
+  border-left: 3px solid var(--acc);
+  padding-left: 17px;
+}
+.sm-card.sm-disabled .sm-card-header {
+  border-left: 3px solid transparent;
+  padding-left: 17px;
 }
 .sm-card-title {
   font-weight: 700;
@@ -850,11 +891,27 @@ button:focus-visible, .quit-btn:focus-visible {
 .radio-row label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
+  gap: 10px;
+  font-size: 0.86rem;
   color: var(--text);
   cursor: pointer;
   margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: var(--card);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.radio-row label:hover {
+  background: var(--card-2);
+  border-color: var(--border-3);
+}
+/* Lit-up selected row — uses :has() so the parent label reacts to the
+   inner radio's checked state without any JS. */
+.radio-row label:has(input:checked) {
+  background: var(--acc-soft);
+  border-color: rgba(59,130,246,0.40);
+  color: var(--acc-2);
 }
 .radio-row input[type="radio"] {
   width: auto;

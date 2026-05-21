@@ -285,7 +285,9 @@ function setLibStatus(msg, cls) {
 
 // Update the always-visible sidebar footer pill with the current library
 // status. Orange warning when no library is loaded — beginners need to
-// know why songs aren't matching.
+// know why songs aren't matching. "items" not "songs": PP's library
+// can hold media, presentations, video clips, scripture decks — not
+// just sung worship.
 function setLibraryFooter(count, source) {
   const el = document.getElementById('library-footer-status');
   if (!el) return;
@@ -296,7 +298,7 @@ function setLibraryFooter(count, source) {
     const where = source === 'api'  ? 'from PP'
                 : source === 'disk' ? 'from disk'
                 : '';
-    el.textContent = `♪ ${count} song${count!==1?'s':''} loaded${where ? ' ' + where : ''}`;
+    el.textContent = `♪ ${count} item${count!==1?'s':''} loaded${where ? ' ' + where : ''}`;
     el.classList.remove('stat-warn');
   }
 }
@@ -315,8 +317,8 @@ async function loadLibraryAuto() {
     const res = await fetch('/api/library/auto?' + qs).then(r => r.json());
     libraryItems = res.items || [];
     setLibraryFooter(res.count || 0, res.source);
-    if (res.source === 'api')  setLibStatus(`${res.count} items loaded from ProPresenter`, 'stat-ok');
-    else if (res.source === 'disk') setLibStatus(`${res.count} items loaded from disk`, 'stat-ok');
+    if (res.source === 'api')  setLibStatus(`${res.count} item${res.count!==1?'s':''} loaded from ProPresenter`, 'stat-ok');
+    else if (res.source === 'disk') setLibStatus(`${res.count} item${res.count!==1?'s':''} loaded from disk`, 'stat-ok');
     else                            setLibStatus('No library found — check the path or start ProPresenter.', 'stat-err');
   } catch (e) {
     setLibraryFooter(0, 'none');
@@ -331,7 +333,7 @@ async function reloadLibraryAuto() {
   await loadLibraryAuto();
   const n = libraryItems.length;
   setStatus(n
-    ? `✓ Library re-scanned — ${n} song${n!==1?'s':''} loaded.`
+    ? `✓ Library re-scanned — ${n} item${n!==1?'s':''} loaded.`
     : '⚠ No library found — check the source / path in Settings.',
     n ? 'var(--grn)' : 'var(--org)');
 }

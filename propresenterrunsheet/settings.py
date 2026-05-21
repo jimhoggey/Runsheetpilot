@@ -27,7 +27,11 @@ def _default_settings() -> dict:
         "library_dir":   lib_dirs[0] if lib_dirs else "",
         "export_dir":    str(Path.home() / "Desktop"),
         "threshold":     0.55,
-        "lib_source":    "disk",
+        # Library auto-load mode. "auto" tries PP REST first then falls back
+        # to disk — works for the most operators out of the box. Was "disk"
+        # before the UI redesign; switched to "auto" so the Settings modal
+        # radio defaults to the recommended option for first-time users.
+        "lib_source":    "auto",
         "create_timers": True,
         # User-customised AI prompt. Empty string = use built-in DEFAULT_PROMPT.
         "ai_prompt":     "",
