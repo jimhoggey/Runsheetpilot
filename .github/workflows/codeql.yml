@@ -27,6 +27,13 @@ jobs:
   analyze:
     name: Analyse (${{ matrix.language }})
     runs-on: ubuntu-latest
+    # CodeQL on private repos requires GitHub Advanced Security (paid).
+    # Without GHAS, the SARIF upload is rejected and the scan minutes
+    # are wasted. Skip the workflow entirely while the repo is private —
+    # GitHub will mark the check as "Skipped" (still green for branch
+    # protection). If the repo ever goes public this gate auto-evaluates
+    # to true and CodeQL starts running with no config change needed.
+    if: github.event.repository.private == false
     strategy:
       fail-fast: false
       matrix:
