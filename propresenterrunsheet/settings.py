@@ -31,6 +31,13 @@ def _default_settings() -> dict:
         "create_timers": True,
         # User-customised AI prompt. Empty string = use built-in DEFAULT_PROMPT.
         "ai_prompt":     "",
+        # UUID of the PP playlist used as a template at parse time. When
+        # set (or auto-detected — first playlist whose name contains
+        # "library" / "template"), the parser feeds the template's
+        # section header names into the LLM prompt and expands matching
+        # runsheet items into the template's media items at playlist-
+        # build time. Empty string = no template (parse normally).
+        "template_playlist_uuid": "",
         # Reusable-templates feature (planned) — list of saved PP playlist
         # references the user marks as templates. UI lands in a future change.
         "templates":     [],

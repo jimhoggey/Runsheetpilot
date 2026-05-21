@@ -92,6 +92,31 @@
     </div>
   </div>
 
+  <!-- "Template Playlist" — points at an existing PP playlist whose
+       sections (Culture, Welcome, Worship, …) should be reused in
+       parse-time matching. When a parsed runsheet item maps to one of
+       this playlist's section names, we expand it into that section's
+       media items in the playlist we create. -->
+  <div class="sidebar-section">
+    <div class="sec-title"><span>Template Playlist</span></div>
+    <div class="field" style="margin-bottom:6px">
+      <label>Reuse sections from this PP playlist</label>
+      <select id="template-playlist" style="width:100%;padding:6px 8px;
+                                            background:#1c1c25;color:#e8e8f0;
+                                            border:1px solid #333;border-radius:4px">
+        <option value="">⚡ Auto — pick best for this runsheet</option>
+      </select>
+    </div>
+    <button class="btn btn-dim btn-sm" onclick="loadTemplatePlaylists()"
+            style="margin-bottom:6px">↻ Refresh playlists from PP</button>
+    <div id="template-status" style="font-size:.72rem;color:var(--muted);
+                                     line-height:1.5">
+      <strong>Auto</strong> routes by runsheet content — a youth runsheet
+      picks "Youth Service - Library", a sunday runsheet picks
+      "Sunday Morning Library". Override here to lock a specific template.
+    </div>
+  </div>
+
   <div class="sidebar-section">
     <div class="sec-title"><span>Timers</span></div>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;

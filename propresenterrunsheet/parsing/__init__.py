@@ -7,6 +7,8 @@
 
 from .ai import (
     DEFAULT_PROMPT,
+    LIBRARY_CONTEXT_ADDENDUM,
+    LIBRARY_NAMES_MAX,
     SERVICE_MATE_CUE_ADDENDUM,
     assemble_prompt,
     parse_ai_response,

@@ -13,6 +13,7 @@ from .library import (
     _norm,
     _uuid_from_binary,
     fuzzy_match,
+    resolve_library_name,
     scan_library,
 )
 from .paths import (
@@ -27,6 +28,13 @@ from .playlist import (
     _color_dict,
     _color_for_type,
     build_playlist_payload,
+)
+from .templates import (
+    auto_detect_template_uuid,
+    fetch_pp_playlist_items,
+    fetch_pp_playlists,
+    playlist_to_sections,
+    resolve_section,
 )
 from .timers import (
     _RB_TIMER_PREFIX,

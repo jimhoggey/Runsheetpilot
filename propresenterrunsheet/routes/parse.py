@@ -21,6 +21,10 @@ from ..config import APP_NAME, UPLOAD_FOLDER
 from ..parsing.ai import DEFAULT_PROMPT, assemble_prompt, parse_ai_response
 from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
+from ..propresenter.templates import (
+    auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
+    playlist_to_sections, resolve_section,
+)
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 from ..settings import _default_settings, load_settings
 
@@ -71,7 +75,49 @@ def api_upload_and_parse():
         # Service Mate cue addendum so the model also emits per-role cues.
         prompt_template = (settings.get("ai_prompt") or "").strip() or DEFAULT_PROMPT
         runsheet_text = raw[:7000]
-        prompt = assemble_prompt(prompt_template, runsheet_text)
+
+        # 5a. If the operator has (or we can auto-detect) a "template
+        # playlist" in PP — typically named "<Service> - Library" —
+        # fetch it and feed the section header names into the prompt.
+        # The model can then tag runsheet items with a section name; at
+        # playlist-build time we expand each tagged item into that
+        # section's full media list, so the operator doesn't drag the
+        # same "Culture" / "Welcome" / "Worship" slides in every week.
+        # Best-effort: any failure here (PP not running, no playlists,
+        # template gone) drops back to parse-without-template.
+        sections: list = []
+        pp_host = (settings.get("pp_host") or "localhost").strip()
+        pp_port = (settings.get("pp_port") or "50001").strip()
+        base = f"http://{pp_host}:{pp_port}"
+        tmpl_uuid = (settings.get("template_playlist_uuid") or "").strip()
+        if not tmpl_uuid:
+            # Auto-pick the template based on runsheet content. The hint
+            # combines filename + the start of the extracted text — both
+            # usually say "youth" / "sunday" / "wednesday" / etc., which
+            # lets the picker route a youth runsheet to "Youth Service -
+            # Library" and a sunday runsheet to "Sunday Morning Library"
+            # automatically. Fall back to the first template-named
+            # playlist on tie or no signal.
+            detect_hint = " ".join(filter(None, [
+                pdf_file.filename or "", raw[:500]]))
+            try:
+                tmpl_uuid = auto_detect_template_uuid(
+                    fetch_pp_playlists(base),
+                    hint=detect_hint) or ""
+            except Exception:
+                log.exception("template auto-detect failed; continuing without")
+        if tmpl_uuid:
+            try:
+                raw_items = fetch_pp_playlist_items(base, tmpl_uuid)
+                sections = playlist_to_sections(raw_items)
+            except Exception:
+                log.exception("template playlist fetch failed; "
+                              "continuing without template context")
+        section_names = [s["header"]["name"] for s in sections
+                         if s.get("header") and s["header"].get("name")]
+
+        prompt = assemble_prompt(prompt_template, runsheet_text,
+                                 library_names=section_names)
 
         # 6. Call OpenRouter
         # Specific 4xx responses become friendly JSON errors (HTTP 200 so the
@@ -118,10 +164,39 @@ def api_upload_and_parse():
             service_name = re.sub(r"[_]+", " ", stem).strip()
 
         # Fill any per-role cue gaps from the rule table so every item has
-        # cues for the Service Mate clocks.
+        # cues for the Service Mate clocks. Also resolve any `library_match`
+        # name the model emitted back to a real section dict (header +
+        # media items), so build_playlist_payload can expand it into the
+        # template's slides. Hallucinated names (no section hit) get
+        # dropped to None and the item falls back to existing paths.
+        resolved_section_hits = 0
         for it in items:
-            if isinstance(it, dict):
-                _ensure_item_cues(it)
+            if not isinstance(it, dict):
+                continue
+            _ensure_item_cues(it)
+            raw_match = it.get("library_match")
+            # The model sometimes returns the full dict, sometimes a bare
+            # string, sometimes null, sometimes the literal "null" str.
+            # We only care about the string case — resolve it to a section.
+            name = ""
+            if isinstance(raw_match, str):
+                name = raw_match.strip()
+                if name.lower() in ("", "null", "none"):
+                    name = ""
+            elif isinstance(raw_match, dict):
+                # Defensive: some models try to be helpful and return a
+                # {"name": "Culture"} dict instead of the bare string.
+                name = (raw_match.get("name") or "").strip()
+            section = resolve_section(name, sections) if name else None
+            if section:
+                it["library_match"] = section
+                resolved_section_hits += 1
+            else:
+                it["library_match"] = None
+        if sections:
+            log.info(f"Template-context parse: "
+                     f"{resolved_section_hits}/{len(items)} items linked to "
+                     f"template sections (template has {len(sections)} sections)")
 
         # Also seed the Service Mate runsheet state on parse — so the user can
         # test the clock cue flow without going through Create Playlist (which
@@ -167,6 +242,19 @@ def api_match():
     threshold = float(body.get("threshold", 0.55))
     results = []
     for item in parsed:
+        # Priority 1: the parse step already linked this item to a template
+        # section via the LLM (`library_match` is a section dict with
+        # `header` + `items` after parse-time resolution). Surface it as
+        # the match so the UI can show ♻ + slide count and so
+        # build_playlist_payload can expand it. Confidence 1.0 — the LLM
+        # had the section names in front of it and we already validated.
+        lib = item.get("library_match")
+        if isinstance(lib, dict) and lib.get("header") and lib.get("items") is not None:
+            results.append({"parsed": item, "match": lib, "confidence": 1.0})
+            continue
+        # Priority 2: existing song-only fuzzy match against whatever
+        # library the UI sent in this request — unchanged behaviour for
+        # songs the LLM didn't pre-link.
         if item.get("type") == "song" and library:
             match, conf = fuzzy_match(item.get("title", ""), library, threshold)
         else:

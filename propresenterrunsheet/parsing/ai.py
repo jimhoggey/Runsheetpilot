@@ -9,6 +9,7 @@ in markdown fences, some emit a bare array, some emit a full object)."""
 
 import json
 import re
+from typing import Optional
 
 
 # Fed to the model with `{RUNSHEET}` replaced by the extracted PDF text.
@@ -137,14 +138,54 @@ SERVICE_MATE_CUE_ADDENDUM = (
 )
 
 
-def assemble_prompt(template: str, runsheet_text: str) -> str:
+# Appended to the prompt when the operator has a TEMPLATE PLAYLIST set up
+# in ProPresenter — a reusable playlist with section headers like "Culture",
+# "Welcome", "Worship", each followed by the slides used every week. The
+# model picks an EXACT section name; the route resolves the name to a
+# section and the playlist builder expands the runsheet item into the
+# section's slides. Operators stop recreating the same content weekly.
+LIBRARY_CONTEXT_ADDENDUM = (
+    "\n\nADDITIONAL FIELD — `library_match`:\n"
+    "Below is a list of SECTION names from the operator's template playlist\n"
+    "in ProPresenter. Each section already contains the slides we want to\n"
+    "show for that part of the service — we will paste them into the new\n"
+    "playlist whenever a runsheet item clearly corresponds to one.\n\n"
+    "For EACH runsheet item, decide whether it CLEARLY corresponds to one\n"
+    "of these sections (e.g. runsheet 'Culture Moment - Generosity - Ps\n"
+    "Melissa' → section 'Culture'; runsheet 'Welcome and Connection Cards'\n"
+    "→ section 'Welcome'). If yes, set `library_match` to the EXACT section\n"
+    "name from the list below (copy-paste it). If no clear match exists,\n"
+    "set `library_match` to an empty string.\n\n"
+    "Be conservative — only match when the runsheet item is clearly the\n"
+    "same content the section was built for. Don't try to match every item;\n"
+    "songs, action items, scripture readings rarely have a section match.\n\n"
+    "SECTIONS:\n{LIBRARY_NAMES}\n"
+)
+
+# Cap how many library names we send to the model — most runsheets only
+# need a handful, and a 2k-item library would balloon the prompt.
+LIBRARY_NAMES_MAX = 200
+
+
+def assemble_prompt(template: str, runsheet_text: str,
+                    library_names: Optional[list] = None) -> str:
     """Substitute the runsheet text into the user's (or default) template,
     appending the Service Mate cue addendum so the model also emits
-    per-role cue lines."""
+    per-role cue lines. If `library_names` is provided, also append the
+    library-context addendum so the model can tag items with the
+    name of an existing presentation it should reuse."""
     if "{RUNSHEET}" in template:
         prompt = template.replace("{RUNSHEET}", runsheet_text)
     else:
         prompt = f"{template}\n\nRUNSHEET:\n---\n{runsheet_text}\n---"
+    if library_names:
+        # Sorted + capped so the prompt is stable across runs (helps caching
+        # on the OpenRouter side) and never blows the context window.
+        names = sorted({(n or "").strip() for n in library_names if n})
+        names = [n for n in names if n][:LIBRARY_NAMES_MAX]
+        if names:
+            block = "\n".join(f"- {n}" for n in names)
+            prompt += LIBRARY_CONTEXT_ADDENDUM.replace("{LIBRARY_NAMES}", block)
     return prompt + SERVICE_MATE_CUE_ADDENDUM
 
 
