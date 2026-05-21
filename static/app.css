@@ -79,51 +79,109 @@ body {
 
 /* ─── header ───────────────────────────────────────────────────────────── */
 header {
+  /* Dark glassy bar over the page bg — looks like a real desktop-app
+     chrome strip instead of a bright SaaS banner. The two shadows
+     stack: a 1 px line at the bottom (--border-2), then a hair-thin
+     accent glow underneath that to give the header an "edge". */
   background:
-    linear-gradient(135deg, rgba(29,78,216,0.95), rgba(59,130,246,0.85) 60%, rgba(96,165,250,0.85));
-  padding: 13px 22px;
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 60%),
+    rgba(10, 10, 22, 0.78);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  padding: 12px 22px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   position: sticky;
   top: 0;
   z-index: 20;
-  backdrop-filter: saturate(140%) blur(10px);
-  -webkit-backdrop-filter: saturate(140%) blur(10px);
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  box-shadow: 0 1px 0 rgba(0,0,0,0.2);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  box-shadow:
+    inset 0 -1px 0 rgba(59,130,246,0.14),     /* hair-thin accent under */
+    0 6px 20px -4px rgba(0,0,0,0.45);
 }
 header h1 {
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: #fff;
-  display: flex; align-items: center; gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 400;             /* base — children override */
+  font-size: 0.85rem;
+  margin: 0;
+}
+/* The primary brand: small-caps style wordmark, tight letter-spacing.
+   Reads as a designed logo rather than a sentence. */
+.brand-mark {
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--text);
+  text-transform: uppercase;
+  font-feature-settings: 'ss01' on;
+}
+/* Thin vertical divider between the wordmark and the subtitle —
+   gives the title bar a typeset feel instead of a run-on phrase. */
+.brand-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255,255,255,0.16);
+  display: inline-block;
+}
+.brand-sub {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.005em;
+}
+/* Tiny pulsing accent dot before the brand name — gives the header a
+   "this app is alive" cue without being shouty. */
+header h1::before {
+  content: '';
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--acc);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.20),
+              0 0 12px rgba(59,130,246,0.55);
+  animation: header-dot 3s ease-in-out infinite;
+}
+@keyframes header-dot {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(59,130,246,0.20),
+                          0 0 12px rgba(59,130,246,0.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(59,130,246,0.08),
+                          0 0 18px rgba(59,130,246,0.45); }
 }
 .header-right { display: flex; align-items: center; gap: 10px; }
 header .badge {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 600;
-  color: rgba(255,255,255,0.85);
-  background: rgba(255,255,255,0.12);
-  padding: 4px 10px;
+  color: var(--acc-2);
+  background: var(--acc-soft);
+  padding: 3px 10px;
   border-radius: 999px;
-  letter-spacing: 0.02em;
-  border: 1px solid rgba(255,255,255,0.10);
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(59,130,246,0.28);
+  font-variant-numeric: tabular-nums;
+  /* Clickable — but the cursor stays default so the click target stays
+     hidden. Only someone fiddling with it discovers the easter egg. */
+  user-select: none;
 }
 .quit-btn {
-  background: rgba(255,255,255,0.10);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.15);
-  padding: 6px 12px;
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  border: 1px solid var(--border-2);
+  padding: 5px 12px;
   border-radius: var(--r-1);
-  font-size: 0.75rem;
+  font-size: 0.73rem;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  transition: background .15s, border-color .15s, transform .06s;
+  transition: background .15s, border-color .15s, color .15s, transform .06s;
 }
-.quit-btn:hover { background: rgba(239,68,68,0.65); border-color: rgba(239,68,68,0.6); }
+.quit-btn:hover {
+  background: rgba(239,68,68,0.14);
+  border-color: rgba(239,68,68,0.40);
+  color: #fca5a5;
+}
 .quit-btn:active { transform: translateY(1px); }
 
 /* ─── layout ───────────────────────────────────────────────────────────── */
@@ -147,16 +205,25 @@ aside {
 main {
   display: flex;
   flex-direction: column;
-  padding: var(--s-5);
-  gap: var(--s-4);
+  padding: 26px 28px;
+  gap: 16px;
   min-width: 0;
+  max-width: 1100px;        /* keep the line length comfortable on big screens */
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* ─── sidebar sections ─────────────────────────────────────────────────── */
-.sidebar-section {
-  padding: var(--s-4) var(--s-4) var(--s-2);
-  border-bottom: 1px solid var(--border);
+aside {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.012), transparent 200px),
+    var(--panel);
 }
+.sidebar-section {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.sidebar-section:last-of-type { border-bottom: none; }
 .sec-title {
   font-size: 0.66rem;
   font-weight: 700;
@@ -314,10 +381,12 @@ input[type="checkbox"] {
 
 /* ─── cards ────────────────────────────────────────────────────────────── */
 .card {
-  background: var(--panel);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 40%),
+    var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  padding: var(--s-4);
+  border-radius: 14px;
+  padding: 20px;
   box-shadow: 0 1px 0 rgba(255,255,255,0.025) inset, var(--sh-1);
 }
 .card-title {
@@ -538,4 +607,463 @@ code {
 button:focus-visible, .quit-btn:focus-visible {
   box-shadow: var(--ring);
   outline: none;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   UI REDESIGN — step cards, master switch, settings modal, sidebar polish.
+   New components only; existing tokens / cards / forms above are unchanged.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ─── sidebar action buttons (Settings / Edit AI Prompt) ────────────────── */
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Library status line in the sidebar footer. Two-state colour. */
+#library-footer-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+#library-footer-status.stat-warn { color: var(--org); font-weight: 500; }
+
+/* ─── step cards — 1·2·3 main-panel flow ───────────────────────────────── */
+.step-card {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.022), transparent 35%),
+    var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 24px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, var(--sh-1);
+  transition: border-color .25s, box-shadow .25s, opacity .25s,
+              transform .15s, background .25s;
+  position: relative;
+}
+.step-card:not(.state-locked):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, var(--sh-2);
+}
+.step-header {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.step-badge {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1rem;
+  background: var(--card);
+  color: var(--dim);
+  border: 1px solid var(--border-2);
+  transition: background .25s, color .25s, box-shadow .35s, border-color .25s;
+  position: relative;
+}
+.step-title {
+  font-weight: 700;
+  font-size: 1.08rem;
+  letter-spacing: -0.015em;
+}
+.step-meta {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.step-desc {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 0 0 14px 0;
+  line-height: 1.55;
+}
+.step-body { display: block; }
+.step-locked-msg {
+  display: none;
+  color: var(--dim);
+  font-size: 0.84rem;
+  padding: 4px 0 0 0;
+}
+
+/* Locked: grey badge, body hidden, lock message shown. */
+.step-card.state-locked {
+  opacity: 0.55;
+  background: var(--card);
+  box-shadow: none;
+}
+.step-card.state-locked .step-body { display: none; }
+.step-card.state-locked .step-locked-msg { display: block; }
+
+/* Active: blue glowing badge with a subtle pulse, full body, glowing card. */
+.step-card.state-active {
+  border-color: rgba(59,130,246,0.32);
+  box-shadow:
+    0 0 0 1px var(--acc-soft) inset,
+    0 8px 30px -10px rgba(59,130,246,0.35),
+    var(--sh-1);
+}
+.step-card.state-active .step-badge {
+  background: linear-gradient(180deg, var(--acc-2), var(--acc));
+  color: #fff;
+  border-color: var(--acc);
+  box-shadow: 0 0 0 5px var(--acc-soft);
+  animation: badge-pulse 2.4s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(59,130,246,0.18); }
+  50%      { box-shadow: 0 0 0 9px rgba(59,130,246,0.08); }
+}
+
+/* Complete: green check badge, body still interactive. */
+.step-card.state-complete {
+  border-color: rgba(34,197,94,0.20);
+}
+.step-card.state-complete .step-badge {
+  background: linear-gradient(180deg, #34d399, var(--grn));
+  color: #fff;
+  border-color: var(--grn);
+  position: relative;
+  box-shadow: 0 0 0 4px rgba(34,197,94,0.14);
+}
+.step-card.state-complete .step-badge .step-num { display: none; }
+.step-card.state-complete .step-badge::before {
+  content: '✓';
+  font-size: 1.15rem;
+  line-height: 1;
+  font-weight: 800;
+}
+
+/* Busy: badge spinner. */
+.step-card.state-busy .step-badge {
+  background: var(--acc);
+  border-color: var(--acc);
+  position: relative;
+}
+.step-card.state-busy .step-badge .step-num { visibility: hidden; }
+.step-card.state-busy .step-badge::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  margin: -8px 0 0 -8px;
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* The primary button in each step gets a touch more weight. */
+.btn-step {
+  padding: 12px 18px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+/* ─── master switch (Service Mate enable / disable) ────────────────────── */
+.sm-card { padding: 0; }
+.sm-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  gap: 12px;
+  cursor: default;
+}
+/* When SM is enabled but the body isn't shown yet, the header looks like
+   a banner instead of a chrome strip — subtle accent line on the left. */
+.sm-card:not(.sm-disabled) .sm-card-header {
+  border-left: 3px solid var(--acc);
+  padding-left: 17px;
+}
+.sm-card.sm-disabled .sm-card-header {
+  border-left: 3px solid transparent;
+  padding-left: 17px;
+}
+.sm-card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sm-card-subtitle {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.sm-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Pill toggle. The native checkbox is hidden visually but stays in the
+   DOM (id="sm-enabled") so existing JS reads it. */
+.master-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.master-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  pointer-events: none;
+}
+.master-switch-track {
+  width: 44px;
+  height: 24px;
+  background: var(--card-2);
+  border: 1px solid var(--border-3);
+  border-radius: 999px;
+  position: relative;
+  transition: background .18s, border-color .18s;
+}
+.master-switch-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: transform .18s;
+}
+.master-switch input:checked ~ .master-switch-track {
+  background: var(--acc);
+  border-color: var(--acc);
+}
+.master-switch input:checked ~ .master-switch-track .master-switch-thumb {
+  transform: translateX(20px);
+}
+.master-switch-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  min-width: 28px;
+  transition: color .18s;
+}
+.master-switch input:checked ~ .master-switch-label {
+  color: var(--acc-2);
+}
+
+/* Chevron button beside the master switch. */
+.btn-chevron {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-2);
+  color: var(--muted);
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  display: grid;
+  place-items: center;
+  transition: background .15s, color .15s, border-color .15s, transform .15s;
+}
+.btn-chevron:hover { background: var(--card-2); color: var(--text); border-color: var(--border-3); }
+.sm-card[data-collapsed] .btn-chevron { transform: rotate(0deg); }
+.sm-card:not([data-collapsed]) .btn-chevron { transform: rotate(180deg); }
+
+/* SM body: padded section under the header. Hidden while collapsed. */
+.sm-body { padding: 0 var(--s-4) var(--s-4); }
+.sm-intro {
+  color: var(--muted);
+  margin: 0 0 12px 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+/* Off-state hint shown ONLY when master switch is off AND card is
+   expanded. JS hides it when the switch is on. */
+.sm-off-hint {
+  padding: 0 var(--s-4) var(--s-4);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  display: none;
+}
+.sm-card[data-collapsed] .sm-off-hint { display: none; }
+.sm-card.sm-disabled:not([data-collapsed]) .sm-off-hint { display: block; }
+
+/* ─── settings modal — wider than prompt modal, sections instead of
+   a single textarea. ───────────────────────────────────────────────── */
+.modal-settings {
+  max-width: 720px;
+  height: auto;
+  max-height: 85vh;
+  gap: 0;
+}
+.modal-settings .modal-head { margin-bottom: var(--s-3); }
+.modal-settings .modal-head h2 { flex: 1; }
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--s-4);
+}
+.settings-section:first-child { border-top: none; padding-top: 0; }
+.settings-section h3 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--acc-2);
+  margin-bottom: var(--s-2);
+}
+.settings-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 var(--s-3) 0;
+}
+.settings-section .field { margin-bottom: var(--s-3); }
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+.radio-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.86rem;
+  color: var(--text);
+  cursor: pointer;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: var(--card);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.radio-row label:hover {
+  background: var(--card-2);
+  border-color: var(--border-3);
+}
+/* Lit-up selected row — uses :has() so the parent label reacts to the
+   inner radio's checked state without any JS. */
+.radio-row label:has(input:checked) {
+  background: var(--acc-soft);
+  border-color: rgba(59,130,246,0.40);
+  color: var(--acc-2);
+}
+.radio-row input[type="radio"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--acc);
+  cursor: pointer;
+}
+
+/* Small credits line at the bottom of the Settings modal. Plain text,
+   muted — never the focal point of the modal. */
+.settings-credits {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.settings-credits strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Easter-egg toast — pops in the corner after 7 quick taps on the
+   version badge. Slides up + fades in, then fades out after 4 s. Never
+   appears on its own; never blocks input (pointer-events: none). */
+.ee-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  background:
+    linear-gradient(180deg, rgba(59,130,246,0.10), transparent 60%),
+    var(--card-2);
+  color: var(--text);
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(59,130,246,0.32);
+  box-shadow:
+    inset 0 0 0 1px rgba(59,130,246,0.10),
+    0 12px 32px -8px rgba(0,0,0,0.6),
+    0 0 28px -6px rgba(59,130,246,0.32);
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity .35s ease, transform .35s ease;
+  pointer-events: none;
+}
+.ee-toast-show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Easter-egg confetti — pure CSS keyframe animation, one node per
+   particle, no JS animation loop. Each piece reads its trajectory from
+   inline CSS custom properties (--tx / --ty / --rot / --dur / --delay)
+   set in app.js's _burstConfetti(). Container is a full-screen overlay
+   that captures no input. */
+.ee-confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 99;
+}
+.ee-confetti-piece {
+  position: absolute;
+  width: 9px; height: 9px;
+  opacity: 0;
+  animation: ee-confetti-fall var(--dur) cubic-bezier(.22,.7,.42,1) var(--delay) forwards;
+  transform-origin: 50% 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+/* Three shapes for visual interest — square w/ tiny radius, perfect
+   circle, narrow strip. */
+.ee-confetti-square { border-radius: 2px; }
+.ee-confetti-circle { border-radius: 50%; }
+.ee-confetti-strip  { width: 4px; height: 14px; border-radius: 2px; }
+
+/* Burst out fast for the first 25 % of the animation, then gravity:
+   the y component grows non-linearly via the intermediate keyframe.
+   Opacity holds until ~80 % so colours stay vivid before fading. */
+@keyframes ee-confetti-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  8%   { opacity: 1; }
+  30%  { transform: translate(calc(var(--tx) * 0.55), calc(var(--ty) * 0.18))
+                    rotate(calc(var(--rot) * 0.55));
+         opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) rotate(var(--rot));
+         opacity: 0; }
 }

@@ -9,9 +9,13 @@
 <body>
 
 <header>
-  <h1>🎛 ProPresenter Runsheet Builder</h1>
+  <h1>
+    <span class="brand-mark">PROPRESENTER</span>
+    <span class="brand-sep"></span>
+    <span class="brand-sub">Runsheet Builder</span>
+  </h1>
   <div class="header-right">
-    <span class="badge" id="version-badge">v—</span>
+    <span class="badge" id="version-badge" onclick="bumpVersionTaps()" title="">v—</span>
     <button class="quit-btn" onclick="quitApp()" title="Stop the app and close the browser tab">Quit</button>
   </div>
 </header>
@@ -20,64 +24,15 @@
 
 <aside>
 
+  <!-- ProPresenter connection: stays in the sidebar because the operator
+       needs to be able to verify the link to PP at a glance. Other PP-only
+       settings (template playlist) live below this one. The host/port
+       mirror the values inside the Settings modal so the operator can
+       fix a typo here without opening Settings. -->
   <div class="sidebar-section">
-    <div class="sec-title">
-      <span>Library Source</span>
+    <div class="sec-title"><span>ProPresenter</span>
       <span class="save-dot" id="save-dot">auto-save</span>
     </div>
-    <div class="sidebar-tabs">
-      <button class="tab active" id="tab-btn-disk" onclick="switchTab('disk')">📁 From Disk</button>
-      <button class="tab" id="tab-btn-api" onclick="switchTab('api')">🔌 Via API</button>
-    </div>
-
-    <div id="tab-disk" class="tab-panel active">
-      <div class="field"><label>ProPresenter Library Folder</label>
-        <input id="lib-dir" type="text" placeholder="Path to your Libraries folder…">
-      </div>
-      <button class="btn btn-grn btn-full" onclick="scanLibrary()">↓ Scan Library from Disk</button>
-    </div>
-
-    <div id="tab-api" class="tab-panel">
-      <div class="field"><label>Host</label>
-        <input id="pp-host" type="text" value="localhost">
-      </div>
-      <div class="field"><label>Port</label>
-        <input id="pp-port" type="text" value="50001" style="width:90px">
-      </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-dim btn-sm" onclick="testConnection()">Test</button>
-        <button class="btn btn-grn" onclick="fetchLibraryApi()">↓ Fetch Library</button>
-      </div>
-    </div>
-
-    <div id="lib-status">No library loaded</div>
-  </div>
-
-  <div class="sidebar-section">
-    <div class="sec-title"><span>OpenRouter API</span></div>
-    <div class="field"><label>API Key</label>
-      <input id="or-key" type="password" placeholder="sk-or-…" autocomplete="off">
-    </div>
-    <div class="field"><label>Model — paste any OpenRouter model string</label>
-      <input id="or-model" type="text"
-             placeholder="e.g. google/gemini-2.0-flash-exp:free"
-             title="Any model from openrouter.ai/models">
-    </div>
-    <div style="font-size:.72rem;color:var(--muted);margin-top:-6px;margin-bottom:8px">
-      Find models at <code>openrouter.ai/models</code>
-    </div>
-    <button class="btn btn-dim btn-sm btn-full" onclick="openPromptModal()">
-      📝 Show / edit AI prompt
-    </button>
-  </div>
-
-  <!-- Second host/port section. The same values appear in the API tab above
-       (#pp-host / #pp-port), but PP host/port is also relevant when *creating*
-       the playlist, so we surface it again here. The two pairs are mirrored
-       in JS (loadSettings binds input listeners both ways) so the user only
-       ever sees one set of values. -->
-  <div class="sidebar-section">
-    <div class="sec-title"><span>ProPresenter Connection</span></div>
     <div class="row" style="margin-bottom:8px">
       <div class="field" style="flex:2;margin-bottom:0"><label>Host</label>
         <input id="pp-host2" type="text" value="localhost" style="margin-bottom:0">
@@ -86,207 +41,369 @@
         <input id="pp-port2" type="text" value="50001" style="margin-bottom:0">
       </div>
     </div>
-    <button class="btn btn-dim btn-sm" onclick="testConnection2()" style="margin-bottom:8px">⚡ Test Connection</button>
-    <div style="font-size:.72rem;color:var(--muted)">
-      Enable in ProPresenter → Preferences → Integrations → Network
+    <button class="btn btn-dim btn-sm btn-full" onclick="testConnection2()" style="margin-bottom:8px">⚡ Test connection</button>
+    <div id="pp-conn-status" style="font-size:.72rem;color:var(--muted);line-height:1.5">
+      Enable Network in ProPresenter → Preferences → Integrations.
     </div>
   </div>
 
-  <!-- "Template Playlist" — points at an existing PP playlist whose
-       sections (Culture, Welcome, Worship, …) should be reused in
-       parse-time matching. When a parsed runsheet item maps to one of
-       this playlist's section names, we expand it into that section's
-       media items in the playlist we create. -->
+  <!-- Template Playlist — the recurring template the operator built once in
+       PP (e.g. "Youth Service - Library"). Auto routes by runsheet content
+       when there are multiple templates; operator can lock to a specific
+       one via the dropdown. See routes/parse.py for the resolution. -->
   <div class="sidebar-section">
     <div class="sec-title"><span>Template Playlist</span></div>
     <div class="field" style="margin-bottom:6px">
       <label>Reuse sections from this PP playlist</label>
-      <select id="template-playlist" style="width:100%;padding:6px 8px;
-                                            background:#1c1c25;color:#e8e8f0;
-                                            border:1px solid #333;border-radius:4px">
+      <select id="template-playlist">
         <option value="">⚡ Auto — pick best for this runsheet</option>
       </select>
     </div>
-    <button class="btn btn-dim btn-sm" onclick="loadTemplatePlaylists()"
+    <button class="btn btn-dim btn-sm btn-full" onclick="loadTemplatePlaylists()"
             style="margin-bottom:6px">↻ Refresh playlists from PP</button>
-    <div id="template-status" style="font-size:.72rem;color:var(--muted);
-                                     line-height:1.5">
-      <strong>Auto</strong> routes by runsheet content — a youth runsheet
-      picks "Youth Service - Library", a sunday runsheet picks
-      "Sunday Morning Library". Override here to lock a specific template.
+    <div id="template-status" style="font-size:.72rem;color:var(--muted);line-height:1.5">
+      <strong>Auto</strong> routes by runsheet content. Override here to
+      lock a specific template.
     </div>
   </div>
 
-  <div class="sidebar-section">
-    <div class="sec-title"><span>Timers</span></div>
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;
-                  font-size:.82rem;color:#e8e8f0;margin-bottom:8px">
-      <input type="checkbox" id="create-timers" checked
-             style="width:auto;margin:0;cursor:pointer">
-      <span>Create countdown timers from runsheet times</span>
-    </label>
-    <div style="font-size:.72rem;color:var(--muted);line-height:1.5">
-      For every section with a duration (e.g. <code>30 min</code> sermon),
-      a countdown timer is added in PP's Timer panel. Operator starts each
-      one when the section begins. Old <code>[RB]</code> timers are cleared
-      first so re-runs don't pile up.
-    </div>
+  <!-- The two buttons collect the rest of the configuration that an
+       operator only touches occasionally. They open modals so the main
+       3-step flow on the right isn't cluttered with auth keys, library
+       paths, and threshold sliders. -->
+  <div class="sidebar-section sidebar-actions">
+    <button class="btn btn-dim btn-full" onclick="openSettingsModal()">
+      ⚙ Settings
+    </button>
+    <button class="btn btn-dim btn-full" onclick="openPromptModal()">
+      📝 Edit AI prompt
+    </button>
   </div>
 
-  <div class="sidebar-section">
-    <div class="sec-title"><span>Match Sensitivity</span></div>
-    <label>Threshold: <span id="thresh-val" style="color:var(--acc);font-weight:700">55%</span></label>
-    <input type="range" id="threshold" min="30" max="90" value="55" style="margin-bottom:8px"
-           oninput="document.getElementById('thresh-val').textContent=this.value+'%'">
+  <!-- Sidebar footer: library status + the data dir path. Library status
+       turns orange when no library is loaded so the operator knows why
+       songs aren't matching. -->
+  <div class="footer-info">
+    <div id="library-footer-status">♪ Loading library…</div>
+    <div id="footer-info" style="margin-top:6px;color:var(--dim)">—</div>
   </div>
-
-  <div class="sidebar-section">
-    <div class="sec-title"><span>Export .playlist File To</span></div>
-    <div class="field"><label>Folder (leave blank to skip export)</label>
-      <input id="export-dir" type="text" placeholder="~/Desktop">
-    </div>
-  </div>
-
-  <div class="footer-info" id="footer-info">—</div>
 
 </aside>
 
 <main>
 
-  <div class="card">
-    <div class="card-title">📄 Upload Runsheet PDF</div>
-    <div id="drop-zone" onclick="document.getElementById('pdf-input').click()"
-         ondragover="handleDragOver(event)" ondrop="handleDrop(event)"
-         ondragleave="this.classList.remove('drag-over')">
-      <div class="icon">☁️</div>
-      <div style="font-weight:600;margin-bottom:4px">Drop your PDF here or click to browse</div>
-      <div class="hint">Runsheet · Order of Service · any PDF</div>
+  <!-- ── STEP 1 — UPLOAD ──────────────────────────────────────────── -->
+  <div class="step-card state-active" id="step-card-1">
+    <div class="step-header">
+      <div class="step-badge"><span class="step-num">1</span></div>
+      <div class="step-title">Upload Runsheet</div>
+      <div class="step-meta" id="step-1-meta"></div>
     </div>
-    <input id="pdf-input" type="file" accept=".pdf" style="display:none"
-           onchange="handleFileSelect(this.files[0])">
-    <div style="margin-top:10px">
-      <button class="btn btn-acc btn-full" id="parse-btn" onclick="parseRunsheet()">
-        🔍 Parse Runsheet with AI
+    <div class="step-body">
+      <div id="drop-zone" onclick="document.getElementById('pdf-input').click()"
+           ondragover="handleDragOver(event)" ondrop="handleDrop(event)"
+           ondragleave="this.classList.remove('drag-over')">
+        <div class="icon">☁️</div>
+        <div style="font-weight:600;margin-bottom:4px">Drop your PDF here, or click to browse</div>
+        <div class="hint">Runsheet · Order of Service · any PDF</div>
+      </div>
+      <input id="pdf-input" type="file" accept=".pdf" style="display:none"
+             onchange="handleFileSelect(this.files[0])">
+    </div>
+  </div>
+
+  <!-- ── STEP 2 — PARSE ──────────────────────────────────────────── -->
+  <div class="step-card state-locked" id="step-card-2">
+    <div class="step-header">
+      <div class="step-badge"><span class="step-num">2</span></div>
+      <div class="step-title">Parse with AI</div>
+      <div class="step-meta" id="step-2-meta">~12 seconds</div>
+    </div>
+    <div class="step-body">
+      <p class="step-desc">
+        We send the PDF to OpenRouter and extract the service items
+        (songs, MC moments, sermon, etc.) into a structured list.
+      </p>
+      <button class="btn btn-acc btn-full btn-step" id="parse-btn" onclick="parseRunsheet()">
+        🔍 Parse Runsheet
       </button>
     </div>
+    <div class="step-locked-msg">Upload a PDF to unlock this step.</div>
   </div>
 
+  <!-- Status bar — sits between Parse and Create. Used for live "uploading…"
+       messages and the post-parse summary ("10 items parsed · 3/3 matched"). -->
   <div id="status-bar">
-    <span>Ready — load your library, then upload a PDF.</span>
+    <span>👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
   </div>
 
-  <div class="card">
-    <div class="card-title">🎵 Create Playlist in ProPresenter</div>
-    <div class="row" style="align-items:stretch">
-      <div style="flex:1">
-        <label>Playlist Name</label>
-        <input id="playlist-name" type="text" placeholder="Sunday Service · 4 May 2026" style="margin-bottom:0">
-      </div>
-      <div style="display:flex;align-items:flex-end">
-        <button class="btn btn-grn" id="create-btn" style="padding:10px 18px" onclick="createPlaylist()">
-          ✓ Create Playlist + Export File
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div class="results-wrap">
+  <!-- Results table — populated after parse. Hidden until then so the
+       empty state doesn't clutter Step 2/3. -->
+  <div class="results-wrap" id="results-wrap" hidden>
     <table>
       <thead>
         <tr>
           <th style="width:32px">#</th>
           <th style="width:100px">Type</th>
           <th>Title / Description</th>
-          <th>Matched Library Item</th>
+          <th>Matched / Reused</th>
           <th style="width:56px">Score</th>
         </tr>
       </thead>
-      <tbody id="results-body">
-        <tr><td colspan="5" style="color:var(--muted);padding:24px;text-align:center">
-          Parse a runsheet to see items here.
-        </td></tr>
-      </tbody>
+      <tbody id="results-body"></tbody>
     </table>
   </div>
 
+  <!-- ── STEP 3 — CREATE ──────────────────────────────────────────── -->
+  <div class="step-card state-locked" id="step-card-3">
+    <div class="step-header">
+      <div class="step-badge"><span class="step-num">3</span></div>
+      <div class="step-title">Create Runsheet &amp; Export</div>
+      <div class="step-meta" id="step-3-meta"></div>
+    </div>
+    <div class="step-body">
+      <p class="step-desc">
+        The new playlist will appear in ProPresenter immediately. If you
+        set an export folder in Settings, a <code>.playlist</code> backup
+        file is saved there too.
+      </p>
+      <div class="row" style="align-items:stretch;gap:12px">
+        <div style="flex:1">
+          <label for="playlist-name">Service name (also the playlist name in PP)</label>
+          <input id="playlist-name" type="text"
+                 placeholder="Sunday Service · 4 May 2026" style="margin-bottom:0">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-grn btn-step" id="create-btn"
+                  style="padding:10px 18px;white-space:nowrap"
+                  onclick="createPlaylist()">
+            ✓ Create Runsheet &amp; Export File
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="step-locked-msg">Parse the runsheet to unlock this step.</div>
+  </div>
+
+  <!-- Result notice — green/red banner that appears after create. -->
   <div id="result-notice"></div>
 
-  <!-- ═══════════ Service Mate (GeekMagic clocks) ═══════════ -->
-  <div class="card" id="sm-card">
-    <div class="card-title">📺 Service Mate · GeekMagic clocks</div>
-    <p style="color:var(--muted);margin:0 0 12px 0;font-size:0.84rem">
-      Each Service Mate is a GeekMagic SmallTV-Ultra on your LAN. The app
-      pushes a 240×240 cue every couple of seconds: current item, countdown,
-      and a role-aware hint of what's next.
-    </p>
-
-    <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
-      <thead>
-        <tr style="color:var(--muted);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase">
-          <th style="text-align:left;padding:6px 4px;width:80px">Role</th>
-          <th style="text-align:left;padding:6px 4px">IP address</th>
-          <th style="text-align:left;padding:6px 4px;width:120px">Layout</th>
-          <th style="text-align:left;padding:6px 4px;width:200px">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="sm-clocks-body">
-        <!-- filled by JS -->
-      </tbody>
-    </table>
-
-    <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-      <label style="display:flex;align-items:center;gap:6px;margin:0">
-        <input type="checkbox" id="sm-enabled" onchange="smSaveSettings()">
-        <span style="font-size:0.85rem">Pushing to clocks</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;margin:0">
-        <input type="checkbox" id="sm-autotrack" onchange="smSaveAutoTrack()">
-        <span style="font-size:0.85rem">Auto-track ProPresenter</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;margin:0">
-        <span style="font-size:0.85rem">Brightness</span>
-        <input type="range" id="sm-brightness" min="1" max="100" value="70"
-               style="width:120px" onchange="smSaveSettings()">
-        <span id="sm-brightness-val" style="font-size:0.78rem;color:var(--muted);min-width:30px">70</span>
-      </label>
+  <!-- ── SERVICE MATE (collapsible, off by default) ──────────────── -->
+  <div class="card sm-card" id="sm-card" data-collapsed>
+    <div class="sm-card-header">
+      <div class="sm-card-title">
+        ⏰ Service Mate Clocks
+        <span class="sm-card-subtitle">GeekMagic SmallTV-Ultra on your LAN</span>
+      </div>
+      <div class="sm-card-controls">
+        <!-- Master switch: drives `enabled` on clocks.json. When OFF, the
+             daemon's per-tick gate short-circuits — no PP polling, no
+             clock pushes, and the action endpoints return 409. The
+             checkbox keeps the existing `sm-enabled` id so smSaveSettings
+             still reads it. -->
+        <label class="master-switch" title="Enable or disable the whole Service Mate feature">
+          <input type="checkbox" id="sm-enabled" onchange="smMasterToggle()">
+          <span class="master-switch-track">
+            <span class="master-switch-thumb"></span>
+          </span>
+          <span class="master-switch-label" id="sm-master-label">OFF</span>
+        </label>
+        <button class="btn-chevron" onclick="smToggleCollapse()"
+                aria-label="Expand or collapse the Service Mate panel"
+                id="sm-chevron">▾</button>
+      </div>
     </div>
 
-    <div class="row" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
-      <div style="flex:1 1 220px">
-        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">
-          Cue control
+    <!-- Body shown only when the master switch is ON AND the section is
+         expanded. JS toggles [hidden] based on collapse state. -->
+    <div class="sm-body" id="sm-body" hidden>
+      <p class="sm-intro">
+        Each Service Mate is a GeekMagic SmallTV-Ultra on your LAN. The app
+        pushes a 240×240 cue every couple of seconds: current item,
+        countdown, and a role-aware hint of what's next.
+      </p>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+        <thead>
+          <tr style="color:var(--muted);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase">
+            <th style="text-align:left;padding:6px 4px;width:80px">Role</th>
+            <th style="text-align:left;padding:6px 4px">IP address</th>
+            <th style="text-align:left;padding:6px 4px;width:120px">Layout</th>
+            <th style="text-align:left;padding:6px 4px;width:200px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="sm-clocks-body"></tbody>
+      </table>
+
+      <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="sm-autotrack" onchange="smSaveAutoTrack()">
+          <span style="font-size:0.85rem">Auto-track ProPresenter</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin:0">
+          <span style="font-size:0.85rem">Brightness</span>
+          <input type="range" id="sm-brightness" min="1" max="100" value="70"
+                 style="width:120px" onchange="smSaveSettings()">
+          <span id="sm-brightness-val" style="font-size:0.78rem;color:var(--muted);min-width:30px">70</span>
+        </label>
+      </div>
+
+      <div class="row" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
+        <div style="flex:1 1 220px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">
+            Cue control
+          </div>
+          <div id="sm-current" style="font-size:0.92rem;font-weight:600;margin-bottom:4px;min-height:1.3em">—</div>
+          <div id="sm-next" style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;min-height:1.2em">—</div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <button class="btn btn-dim btn-sm" onclick="smCue(-1)">◀ Prev</button>
+            <button class="btn btn-acc btn-sm" onclick="smCue(+1)">Next ▶</button>
+            <button class="btn btn-dim btn-sm" onclick="smRestart()" title="Restart current item's countdown">↺</button>
+            <button class="btn btn-dim btn-sm" onclick="smStandby()"
+                    title="Send all clocks to a pre-service waiting page"
+                    style="margin-left:auto">⏸ Standby</button>
+          </div>
         </div>
-        <div id="sm-current" style="font-size:0.92rem;font-weight:600;margin-bottom:4px;min-height:1.3em">
-          —
-        </div>
-        <div id="sm-next" style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;min-height:1.2em">
-          —
-        </div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          <button class="btn btn-dim btn-sm" onclick="smCue(-1)">◀ Prev</button>
-          <button class="btn btn-acc btn-sm" onclick="smCue(+1)">Next ▶</button>
-          <button class="btn btn-dim btn-sm" onclick="smRestart()" title="Restart current item's countdown">↺</button>
-          <button class="btn btn-dim btn-sm" onclick="smStandby()"
-                  title="Send all clocks to a pre-service waiting page"
-                  style="margin-left:auto">⏸ Standby</button>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">
+            Live preview
+          </div>
+          <select id="sm-preview-role" onchange="smRefreshPreview()" style="font-size:0.78rem;padding:3px 6px">
+            <option value="screen">Screen</option>
+            <option value="sound">Sound</option>
+            <option value="lights">Lights</option>
+          </select>
+          <img id="sm-preview" alt="preview" width="160" height="160"
+               style="border-radius:8px;border:1px solid var(--border);background:#0a0a14">
         </div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
-        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">
-          Live preview
-        </div>
-        <select id="sm-preview-role" onchange="smRefreshPreview()" style="font-size:0.78rem;padding:3px 6px">
-          <option value="screen">Screen</option>
-          <option value="sound">Sound</option>
-          <option value="lights">Lights</option>
-        </select>
-        <img id="sm-preview" alt="preview" width="160" height="160"
-             style="border-radius:8px;border:1px solid var(--border);background:#0a0a14">
-      </div>
+    </div>
+
+    <!-- Off-state hint shown only when master switch is OFF AND body
+         would otherwise be visible. Tells the operator what flipping the
+         switch will do. -->
+    <div class="sm-off-hint" id="sm-off-hint">
+      Service Mate is off. Flip the switch on the right to push runsheet
+      cues to GeekMagic clocks on your LAN. Most operators don't need
+      this — leave it off if you don't own one.
     </div>
   </div>
 
 </main>
+</div>
+
+<!-- ═══════════ Settings Modal ═══════════ -->
+<!-- Holds the "set once, forget" config: library source/path, OpenRouter
+     credentials, the timer toggle, the matching threshold, and the
+     export path. Auto-save mirrors the existing prompt-modal pattern —
+     fields share the same IDs as the old sidebar inputs so the existing
+     event listeners in app.js keep working unchanged. -->
+<div id="settings-modal" class="modal-backdrop"
+     onclick="if(event.target===this)closeSettingsModal()">
+  <div class="modal modal-settings">
+    <div class="modal-head">
+      <h2>⚙ Settings</h2>
+      <span class="save-dot" id="settings-save-dot">auto-save</span>
+      <button class="btn btn-dim btn-sm" onclick="closeSettingsModal()">✕ Close</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- LIBRARY ─────────────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>Library</h3>
+        <p class="settings-hint">
+          Where to fetch the list of songs / presentations to match against.
+          <strong>Auto</strong> tries ProPresenter's API first, falls back
+          to the local folder. Loaded silently on launch and again before
+          each parse — most operators never need to touch this.
+        </p>
+        <div class="field">
+          <label>Source</label>
+          <div class="radio-row">
+            <label><input type="radio" name="lib-source" value="auto" checked> Auto (recommended)</label>
+            <label><input type="radio" name="lib-source" value="api">  ProPresenter API only</label>
+            <label><input type="radio" name="lib-source" value="disk"> Local folder only</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="lib-dir">Disk path (used by Auto + Disk modes)</label>
+          <input id="lib-dir" type="text" placeholder="~/Documents/ProPresenter/Libraries/Default">
+        </div>
+        <div class="row" style="align-items:center;gap:12px">
+          <button class="btn btn-dim btn-sm" onclick="reloadLibraryAuto()">↻ Re-scan now</button>
+          <span id="lib-status" style="font-size:.78rem;color:var(--muted)">—</span>
+        </div>
+      </section>
+
+      <!-- OPENROUTER AI ───────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>OpenRouter AI</h3>
+        <p class="settings-hint">
+          The model that parses your runsheet PDF into structured items.
+          A free model is selected by default. Find more at
+          <code>openrouter.ai/models</code>.
+        </p>
+        <div class="field">
+          <label for="or-key">API key</label>
+          <input id="or-key" type="password" placeholder="sk-or-…" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="or-model">Model</label>
+          <input id="or-model" type="text"
+                 placeholder="e.g. google/gemini-2.0-flash-exp:free">
+        </div>
+      </section>
+
+      <!-- PLAYLIST OPTIONS ────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>Playlist options</h3>
+        <label class="settings-check">
+          <input type="checkbox" id="create-timers" checked>
+          <span>Create countdown timers from runsheet durations</span>
+        </label>
+        <p class="settings-hint" style="margin-left:24px;margin-top:4px">
+          For every section with a duration (e.g. <code>30 min</code> sermon),
+          a countdown timer appears in PP's Timer panel. Old <code>[RB]</code>
+          timers are cleared first so re-runs don't pile up.
+        </p>
+
+        <div class="field" style="margin-top:14px">
+          <label>
+            Match strictness for songs:
+            <span id="thresh-val" style="color:var(--acc);font-weight:700">55%</span>
+          </label>
+          <input type="range" id="threshold" min="30" max="90" value="55"
+                 oninput="document.getElementById('thresh-val').textContent=this.value+'%'">
+          <p class="settings-hint" style="margin-top:-4px">
+            Higher = fewer false matches but more "ACTION NEEDED" placeholders.
+            Lower = more confident matches but risk of wrong song.
+          </p>
+        </div>
+      </section>
+
+      <!-- EXPORT ─────────────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>Export</h3>
+        <div class="field">
+          <label for="export-dir">Save a .playlist backup file to (leave blank to skip)</label>
+          <input id="export-dir" type="text" placeholder="~/Desktop">
+        </div>
+      </section>
+
+      <!-- HIDDEN: legacy mirrored host/port for the Library API fallback.
+           The visible host/port in the sidebar (#pp-host2/#pp-port2) is
+           the source of truth; these stay so the existing JS that reads
+           #pp-host / #pp-port continues to work without rewriting. -->
+      <div style="display:none">
+        <input id="pp-host" type="text" value="localhost">
+        <input id="pp-port" type="text" value="50001">
+      </div>
+    </div>
+    <div class="settings-credits">
+      Developed by <strong>Fynn</strong>
+      <span style="opacity:0.5"> · v<span id="settings-version">—</span></span>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════ Edit AI Prompt Modal ═══════════ -->
