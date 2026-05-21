@@ -161,6 +161,9 @@ header .badge {
   letter-spacing: 0.03em;
   border: 1px solid rgba(59,130,246,0.28);
   font-variant-numeric: tabular-nums;
+  /* Clickable — but the cursor stays default so the click target stays
+     hidden. Only someone fiddling with it discovers the easter egg. */
+  user-select: none;
 }
 .quit-btn {
   background: rgba(255,255,255,0.04);
@@ -975,4 +978,52 @@ button:focus-visible, .quit-btn:focus-visible {
   margin: 0;
   accent-color: var(--acc);
   cursor: pointer;
+}
+
+/* Small credits line at the bottom of the Settings modal. Plain text,
+   muted — never the focal point of the modal. */
+.settings-credits {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.settings-credits strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Easter-egg toast — pops in the corner after 7 quick taps on the
+   version badge. Slides up + fades in, then fades out after 4 s. Never
+   appears on its own; never blocks input (pointer-events: none). */
+.ee-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  background:
+    linear-gradient(180deg, rgba(59,130,246,0.10), transparent 60%),
+    var(--card-2);
+  color: var(--text);
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(59,130,246,0.32);
+  box-shadow:
+    inset 0 0 0 1px rgba(59,130,246,0.10),
+    0 12px 32px -8px rgba(0,0,0,0.6),
+    0 0 28px -6px rgba(59,130,246,0.32);
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity .35s ease, transform .35s ease;
+  pointer-events: none;
+}
+.ee-toast-show {
+  opacity: 1;
+  transform: translateY(0);
 }

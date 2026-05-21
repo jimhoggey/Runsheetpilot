@@ -105,6 +105,8 @@ async function loadSettings() {
   document.getElementById('playlist-name').value = 'Service ' + today;
 
   document.getElementById('version-badge').textContent = 'v' + (s.version || '?');
+  const sv = document.getElementById('settings-version');
+  if (sv) sv.textContent = s.version || '?';
   document.getElementById('footer-info').innerHTML =
     `Settings: <code>${s.data_dir || ''}</code>`;
 
@@ -684,6 +686,34 @@ async function resetPrompt() {
   } catch (e) {
     alert('Could not reset: ' + e);
   }
+}
+
+// ─── Easter egg ───────────────────────────────────────────────────────────
+// Seven taps on the version badge within a rolling 3-second window pops
+// a small thank-you toast. Hidden by design — the badge looks decorative,
+// nobody clicks it on purpose, and 7 quick taps with the counter
+// resetting on a 3 s gap means no accidental triggers.
+let _eeTaps = 0;
+let _eeTimer = null;
+function bumpVersionTaps() {
+  _eeTaps++;
+  clearTimeout(_eeTimer);
+  _eeTimer = setTimeout(() => { _eeTaps = 0; }, 3000);
+  if (_eeTaps >= 7) {
+    _eeTaps = 0;
+    _showEasterEggToast();
+  }
+}
+function _showEasterEggToast() {
+  const toast = document.createElement('div');
+  toast.className = 'ee-toast';
+  toast.textContent = '✨ Built with care — Fynn';
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('ee-toast-show'));
+  setTimeout(() => {
+    toast.classList.remove('ee-toast-show');
+    setTimeout(() => toast.remove(), 400);
+  }, 4000);
 }
 
 // ─── 9. Quit + boot ───────────────────────────────────────────────────────
