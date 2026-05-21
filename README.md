@@ -78,13 +78,38 @@ The Windows `.exe` must be built on a Windows machine — PyInstaller doesn't cr
 
 ## Typical workflow
 
+The main panel walks you through three numbered steps; each one unlocks
+when the previous is done, so it's hard to do them out of order.
+
 1. Make sure ProPresenter is running with Network enabled.
-2. Start the app.
-3. In the sidebar: paste your OpenRouter API key, set the model (e.g. `openai/gpt-oss-20b:free`).
-4. Click **Scan local library** or **Fetch from ProPresenter** to load your songs.
-5. Upload the runsheet PDF — the AI parses it; songs are fuzzy-matched against your library.
-6. Review matches; override any wrong ones via the Pick prompt.
-7. Click **Create playlist** — it appears in ProPresenter, and the `.playlist` file is copied to your export folder.
+2. Start the app — the library is fetched silently in the background.
+3. On first run, open **⚙ Settings** and paste your OpenRouter API key
+   + model (e.g. `openai/gpt-oss-20b:free`). Auto-saves.
+4. **Step 1 — Upload Runsheet:** drop the PDF on the upload card.
+5. **Step 2 — Parse with AI:** click *Parse Runsheet*. The AI extracts
+   items; songs are fuzzy-matched against your library; non-song items
+   that match a section in your **Template Playlist** (see below) get
+   their slides reused automatically.
+6. Review matches; override any wrong song matches via the **Pick** button.
+7. **Step 3 — Create Runsheet & Export:** click *Create Runsheet &
+   Export File*. The playlist appears in ProPresenter; if an export
+   folder is set in Settings, the `.playlist` file is copied there too.
+
+### Template playlist (reusable per-service slides)
+
+Create a playlist in ProPresenter named something like *"Youth Service -
+Library"* or *"Sunday Morning Library"* and fill it with the slides you
+reuse every week, grouped under header rows (Culture, Welcome, MC Open,
+Worship, …). The app auto-detects this playlist on parse and feeds the
+header names to the AI as context. When a runsheet item maps to one of
+those sections, the resulting playlist gets the section's slides
+expanded under the runsheet's own header. Operators stop dragging the
+same slides into every week's playlist by hand.
+
+The sidebar **Template Playlist** picker controls this. **Auto** routes
+by runsheet content — a youth runsheet picks the Youth library, a
+Sunday runsheet picks the Sunday library. Override the dropdown to lock
+to a specific template.
 
 ---
 
@@ -109,19 +134,27 @@ item, a live MM:SS countdown, and a short **role-aware** hint of what's next
 (e.g. for the sound op, "Mic on for Ps Nick"; for the lights op, "Spot —
 preacher").
 
+Service Mate is **off by default** — fresh installs see a collapsed card at
+the bottom of the main panel with a master switch in OFF position. If you
+don't own a GeekMagic clock, leave it off and nothing runs in the background.
+
 ### Setup
 
 1. Plug the clock into USB power, connect it to your Wi-Fi via the GeekMagic
    mobile app, and note its IP address (your router's client list works too).
-2. In the app's **Service Mate · GeekMagic clocks** panel, enter the IP for
-   each role (Screen, Sound, Lights). Click **Probe** to confirm the IP — a
-   green ✓ means the clock answered. Click **Test** to push a coloured test
-   card.
-3. Upload + parse a runsheet, then **Create Playlist** — the runsheet is
-   saved to disk and the clocks immediately start showing item 1.
-4. Use the **Prev / Next** buttons in the Cue panel to step through the
+2. Scroll to the **⏰ Service Mate Clocks** card and **flip the master switch
+   to ON**. The card auto-expands.
+3. Enter the IP for each role (Screen, Sound, Lights). Click **Probe** to
+   confirm the IP — a green ✓ means the clock answered. Click **Test** to
+   push a coloured test card.
+4. Upload + parse a runsheet, then **Create Runsheet & Export** — the
+   runsheet is saved to disk and the clocks immediately start showing item 1.
+5. Use the **Prev / Next** buttons in the Cue panel to step through the
    service, or leave **Auto-track ProPresenter** on and the clocks will
    follow whichever `[RB]` countdown timer is running in ProPresenter.
+
+Flip the master switch back to OFF at any time to silence everything — the
+clock IPs and other settings are preserved for next time.
 
 ### How it works
 

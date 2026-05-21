@@ -12,8 +12,10 @@ APP_NAME="ProPresenter Runsheet Builder"
 APP_BUNDLE_NAME="${APP_NAME}.app"
 ENTRY="propresenter_app.py"
 
-# Pull version from VERSION = "x.y.z" in the script
-VERSION=$(grep -E '^VERSION\s*=' "$ENTRY" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+# Pull version from VERSION = "x.y.z". Lives in propresenterrunsheet/
+# config.py since the refactor — propresenter_app.py just re-exports it.
+VERSION_FILE="propresenterrunsheet/config.py"
+VERSION=$(grep -E '^VERSION\s*=' "$VERSION_FILE" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
 [ -z "$VERSION" ] && VERSION="0.0.0"
 
 DMG_NAME="ProPresenter-Runsheet-Builder-${VERSION}.dmg"
