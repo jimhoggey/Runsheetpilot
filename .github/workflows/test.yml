@@ -21,9 +21,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Match what the user is realistically running locally (3.9 system
-        # Python on macOS) and what's current on supported distros.
-        python-version: ["3.9", "3.11", "3.12"]
+        # 3.11 = the version the release builds (PyInstaller in release.yml)
+        # 3.12, 3.13 = guard against regressions on Pythons newer than the
+        # release target, so we notice if a future Homebrew default breaks us.
+        # 3.9 was dropped May 2026 — Python 3.9 reached EOL Oct 2025 and a
+        # wave of deps (pytest 9, requests 2.34, pdfplumber 0.11) now require
+        # 3.10+. 3.10 omitted because it's in security-fix-only mode; if the
+        # PyInstaller release target ever moves up to 3.12, drop 3.11 here.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
