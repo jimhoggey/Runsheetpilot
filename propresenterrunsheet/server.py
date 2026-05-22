@@ -91,6 +91,11 @@ def _should_show_status_window() -> bool:
     Rules (kept simple deliberately — see history if you're tempted to add
     a runtime probe):
 
+      - **`--headless` in argv**: no. Explicit override for CI smoke
+        tests and other automated launches where there's no interactive
+        desktop. Real users never pass this; double-clicking the .app or
+        .exe shows the window normally.
+
       - **PyInstaller bundle**: yes. The bundle ships python.org's Python
         with a Tk built against the GitHub Actions macos-latest SDK; that
         Tk works for any user on the same or newer macOS than the build
@@ -113,6 +118,8 @@ def _should_show_status_window() -> bool:
     (devs running from source) that doesn't need the window in the first
     place. Dropped in favour of this static rule.
     """
+    if "--headless" in sys.argv:
+        return False
     if getattr(sys, "frozen", False):
         return True
     return sys.platform == "win32"
