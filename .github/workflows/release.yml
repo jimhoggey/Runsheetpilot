@@ -74,16 +74,21 @@ jobs:
             propresenter_app.py
 
       - name: Smoke-test the .exe
-        # Launches the built .exe, polls /api/health for up to 30 s, then
-        # POSTs /api/quit. Fails the workflow if the binary can't even
-        # answer "ok": catches missing PyInstaller imports, broken template
-        # paths, syntax errors, and other "the binary doesn't actually run"
+        # Launches the built .exe with --headless (suppresses the tkinter
+        # status window — the GitHub Windows runner has no interactive
+        # desktop session, so Tk hangs/crashes; real users on real
+        # Windows desktops won't pass --headless and will see the window
+        # normally). Polls /api/health for up to 30 s, then POSTs
+        # /api/quit. Fails if the binary can't even answer "ok": catches
+        # missing PyInstaller imports, broken template paths, syntax
+        # errors, and other "the binary doesn't actually run"
         # regressions that pytest cannot see.
         shell: pwsh
         run: |
           $exe = "dist\ProPresenter Runsheet Builder.exe"
           if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
-          Start-Process -FilePath $exe -PassThru | Out-Null
+          Start-Process -FilePath $exe -ArgumentList "--headless" `
+                        -PassThru | Out-Null
           $deadline = (Get-Date).AddSeconds(30)
           $ok = $false
           while ((Get-Date) -lt $deadline) {
@@ -101,7 +106,7 @@ jobs:
                               -Method POST -TimeoutSec 5 -UseBasicParsing | Out-Null
           } catch {}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-exe
           path: dist/ProPresenter Runsheet Builder.exe
@@ -167,12 +172,14 @@ jobs:
           rm -rf "$DMG_STAGE"
 
       - name: Smoke-test the .app
-        # `open` the .app, poll /api/health, quit. Same shape as the Windows
-        # smoke test. Mac PyInstaller bundles have historically had issues
-        # resolving the shipped --add-data paths (the _MEIPASS resolution);
-        # this catches those before users do.
+        # `open` the .app with --headless (suppresses the tkinter status
+        # window — see release.yml's Windows smoke test for the same
+        # reasoning). Polls /api/health, then POSTs /api/quit. Mac
+        # PyInstaller bundles have historically had issues resolving the
+        # shipped --add-data paths (the _MEIPASS resolution); this
+        # catches those before users do.
         run: |
-          open "dist/ProPresenter Runsheet Builder.app"
+          open "dist/ProPresenter Runsheet Builder.app" --args --headless
           ok=false
           for _ in $(seq 1 30); do
             if curl -sf http://localhost:5757/api/health >/dev/null 2>&1; then
@@ -188,7 +195,7 @@ jobs:
           echo "Smoke test passed."
           curl -s -X POST http://localhost:5757/api/quit >/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: mac-dmg
           path: dist/ProPresenter-Runsheet-Builder-*.dmg
