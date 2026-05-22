@@ -9,16 +9,23 @@ something to register as an NSApplication (so the app appears in the
 Dock, Cmd+Tab, and Force Quit normally) and gives the user an obvious
 Quit button.
 
-Consequence: waitress no longer owns the main thread — it runs in a
-daemon thread, and so does the Service Mate clock daemon. When the user
-closes the window (or clicks Quit) the main thread returns; with only
-daemon threads left, the Python process tears down naturally — no
-explicit os._exit needed, in-flight Flask requests are abandoned cleanly.
+Consequence in the bundle / on Windows: waitress no longer owns the
+main thread — it runs in a daemon thread, the Service Mate clock daemon
+likewise. When the user closes the window (or clicks Quit) the main
+thread returns; with only daemon threads left, the Python process tears
+down naturally — no explicit os._exit needed, in-flight Flask requests
+are abandoned cleanly.
+
+Running from source on Mac/Linux: we skip the window entirely and serve
+on the main thread (the original behaviour). Devs have a terminal as
+their visibility signal, and skipping Tk avoids the "Python quit
+unexpectedly" CrashReporter dialog on Macs where /usr/bin/python3 ships
+a Tk that aborts at init (the system Python 3.9 on macOS 26+ does this).
+See `_should_show_status_window()` for the routing rule.
 """
 
 import logging
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -78,47 +85,37 @@ def _show_startup_error(title: str, message: str) -> None:
         pass
 
 
-def _tk_works() -> bool:
-    """Return True if tkinter.Tk() can be constructed without crashing.
+def _should_show_status_window() -> bool:
+    """Return True if we should spawn the Mac/Windows Dock status window.
 
-    Why this exists: on some Mac Python builds (notably `/usr/bin/python3`
-    on macOS versions older than the Python's build-target SDK), creating
-    a Tk root calls C-level abort() and kills the entire process — there's
-    no Python exception to catch. We probe in a subprocess so the abort
-    happens there, not in our app.
+    Rules (kept simple deliberately — see history if you're tempted to add
+    a runtime probe):
 
-    The subprocess approach adds ~100 ms to startup on Mac/Linux when
-    running from source. In a PyInstaller bundle we skip the probe and
-    trust Tk works — the bundle includes its own python.org-built Tk that
-    targets the build runner's macOS, so by construction it should work
-    for anyone running the same or newer macOS than the build runner.
-    Worst case (user on an OS older than the build target): app would
-    crash hard, but Dependabot keeps the build runner's macOS current.
+      - **PyInstaller bundle**: yes. The bundle ships python.org's Python
+        with a Tk built against the GitHub Actions macos-latest SDK; that
+        Tk works for any user on the same or newer macOS than the build
+        runner. Worst case (user on an older macOS than the build target)
+        is a hard crash, which is rare enough to accept.
 
-    Windows Tk is reliable everywhere; skip the probe there too.
+      - **From source on Windows**: yes. Windows Tk is reliable.
+
+      - **From source on Mac/Linux**: no. The status window is for
+        end-users on the .app; devs running `python3 propresenter_app.py`
+        have a terminal as their visibility signal. Skipping Tk entirely
+        here avoids the "Python quit unexpectedly" CrashReporter dialog
+        on Macs whose `/usr/bin/python3` has a Tk that aborts at init
+        (system Python 3.9 on macOS 26+ is the common case).
+
+    An earlier version of this code ran a subprocess probe to detect
+    broken-Tk environments. Two problems with that: (1) the probe
+    subprocess STILL crashes, so the user still gets the CrashReporter
+    dialog every launch; (2) it added complexity for the only audience
+    (devs running from source) that doesn't need the window in the first
+    place. Dropped in favour of this static rule.
     """
-    if sys.platform == "win32":
-        return True
     if getattr(sys, "frozen", False):
-        # PyInstaller bundle — sys.executable is the bundled .app/.exe, not
-        # a Python interpreter. Spawning it with -c would just re-run the
-        # whole app and loop forever. Trust the bundle.
         return True
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c",
-             "import tkinter; r = tkinter.Tk(); r.destroy()"],
-            capture_output=True, timeout=5,
-        )
-        ok = result.returncode == 0
-        if not ok:
-            log.info("Tk probe failed (rc=%s, stderr=%r) — "
-                     "will skip status window.",
-                     result.returncode, result.stderr[:200])
-        return ok
-    except Exception as e:
-        log.info("Tk probe threw %s — will skip status window.", e)
-        return False
+    return sys.platform == "win32"
 
 
 def _serve(app, port: int) -> None:
@@ -274,22 +271,23 @@ def main() -> None:
         # its own daemon thread (idempotent).
         start_clocks_loop()
 
-        # Two-mode startup: probe whether tkinter actually works on this
-        # Python install. If it does, waitress runs in a daemon thread and
-        # the status window owns the main thread (gives us a Dock icon).
-        # If Tk would crash this process, fall back to the original
-        # behaviour — waitress on the main thread, no window — so users on
-        # broken-Tk environments still get a working app, just without the
-        # nice visibility upgrade.
-        if _tk_works():
+        # Two-mode startup, gated by _should_show_status_window():
+        #   PyInstaller bundle + Windows from-source → waitress in daemon
+        #     thread, tkinter on main thread → app appears in Dock /
+        #     taskbar with a visible status window.
+        #   From-source on Mac/Linux → waitress on main thread, no window.
+        #     Devs have a terminal; we skip Tk entirely so we never trip
+        #     a broken /usr/bin/python3 Tk install and surface the
+        #     "Python quit unexpectedly" dialog.
+        if _should_show_status_window():
             threading.Thread(target=_serve, args=(app, port),
                              daemon=True, name="waitress").start()
             _run_status_window(port)  # blocks until user closes window
         else:
-            log.warning("tkinter unavailable — running headless. The app is "
-                        "still serving at http://localhost:%s but won't show "
-                        "in the Dock. Quit via /api/quit, Ctrl+C, or kill.",
-                        port)
+            log.info("Running from source on %s — no status window. "
+                     "Server at http://localhost:%d. "
+                     "Quit with Ctrl+C or POST /api/quit.",
+                     sys.platform, port)
             _serve(app, port)  # blocks on waitress, original behaviour
     except KeyboardInterrupt:
         log.info("Interrupted — shutting down")
