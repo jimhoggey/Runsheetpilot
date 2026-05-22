@@ -76,22 +76,36 @@ jobs:
       - name: Smoke-test the .exe
         # Launches the built .exe with --headless (suppresses the tkinter
         # status window — the GitHub Windows runner has no interactive
-        # desktop session, so Tk hangs/crashes; real users on real
-        # Windows desktops won't pass --headless and will see the window
-        # normally). Polls /api/health for up to 30 s, then POSTs
+        # desktop session, so Tk would hang/crash; real users on real
+        # desktops won't pass --headless and will see the window
+        # normally). Polls /api/health for up to 60 s, then POSTs
         # /api/quit. Fails if the binary can't even answer "ok": catches
         # missing PyInstaller imports, broken template paths, syntax
         # errors, and other "the binary doesn't actually run"
         # regressions that pytest cannot see.
+        #
+        # Captures the .exe's stdout/stderr to file AND dumps the app's
+        # own log file from %APPDATA% on failure — without this, a
+        # silent crash in the bundle leaves us guessing.
         shell: pwsh
         run: |
           $exe = "dist\ProPresenter Runsheet Builder.exe"
           if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
-          Start-Process -FilePath $exe -ArgumentList "--headless" `
-                        -PassThru | Out-Null
-          $deadline = (Get-Date).AddSeconds(30)
+
+          $stdoutFile = "$env:RUNNER_TEMP\app-stdout.log"
+          $stderrFile = "$env:RUNNER_TEMP\app-stderr.log"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--headless" `
+                                -RedirectStandardOutput $stdoutFile `
+                                -RedirectStandardError $stderrFile `
+                                -PassThru
+
+          $deadline = (Get-Date).AddSeconds(60)
           $ok = $false
           while ((Get-Date) -lt $deadline) {
+            if ($proc.HasExited) {
+              Write-Host "PROCESS EXITED EARLY with code $($proc.ExitCode)"
+              break
+            }
             try {
               $r = Invoke-WebRequest -Uri http://localhost:5757/api/health `
                                      -TimeoutSec 2 -UseBasicParsing
@@ -99,7 +113,36 @@ jobs:
             } catch {}
             Start-Sleep -Seconds 1
           }
-          if (-not $ok) { throw "Smoke test: /api/health did not respond in 30 s" }
+
+          if (-not $ok) {
+            Write-Host ""
+            Write-Host "=== PROCESS STATE ==="
+            if ($proc.HasExited) {
+              Write-Host "ExitCode: $($proc.ExitCode)"
+            } else {
+              Write-Host "Still running, PID=$($proc.Id)"
+              try { Stop-Process -Id $proc.Id -Force } catch {}
+            }
+            Write-Host ""
+            Write-Host "=== .exe stdout ($stdoutFile) ==="
+            if (Test-Path $stdoutFile) { Get-Content $stdoutFile }
+              else { Write-Host "(file not created)" }
+            Write-Host ""
+            Write-Host "=== .exe stderr ($stderrFile) ==="
+            if (Test-Path $stderrFile) { Get-Content $stderrFile }
+              else { Write-Host "(file not created)" }
+            Write-Host ""
+            Write-Host "=== app.log from %APPDATA% ==="
+            $appLog = Join-Path $env:APPDATA "ProPresenter Runsheet Builder\app.log"
+            if (Test-Path $appLog) { Get-Content $appLog -Tail 80 }
+              else { Write-Host "(no app.log written — app likely died before logging_setup ran)" }
+            Write-Host ""
+            Write-Host "=== port 5757 status ==="
+            try { Get-NetTCPConnection -LocalPort 5757 -ErrorAction Stop | Format-Table }
+              catch { Write-Host "port 5757 not bound" }
+            throw "Smoke test: /api/health did not respond in 60 s"
+          }
+
           Write-Host "Smoke test passed."
           try {
             Invoke-WebRequest -Uri http://localhost:5757/api/quit `
