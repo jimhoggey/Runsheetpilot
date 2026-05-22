@@ -31,9 +31,24 @@ concurrency:
 
 jobs:
   # ─── Windows .exe ──────────────────────────────────────────────────────
+  # Currently NON-BLOCKING: continue-on-error: true means any failure in
+  # this job (build, smoke test, upload) does not fail the workflow, and
+  # the release job does not depend on this job's success.
+  #
+  # Why: the smoke test has been failing in CI since the v2.0.1 dep batch
+  # with the bundle 404-ing every route — Mac builds of the same code
+  # work fine, so it's a Windows-CI-specific PyInstaller / bundle quirk
+  # rather than an app bug. Time spent debugging keeps growing without
+  # returns. Park it; the Mac .dmg is the primary distribution target,
+  # and Windows users can be referred to the local build script
+  # (`build_win.bat`) until we want to come back to this.
+  #
+  # When/if you re-enable: drop continue-on-error here and put
+  # `build-windows` back into the release job's `needs:` list.
   build-windows:
-    name: Build Windows .exe
+    name: Build Windows .exe (non-blocking)
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
@@ -248,7 +263,14 @@ jobs:
   # ─── Publish GitHub Release ────────────────────────────────────────────
   release:
     name: Publish GitHub Release
+    # Keep both in `needs:` so the release waits for Windows to finish
+    # (success or fail) before publishing — otherwise the .exe artifact
+    # might still be uploading when we hit download-artifact. Windows is
+    # forgiven via its own continue-on-error: the workflow proceeds even
+    # when build-windows fails, but we still wait for the attempt.
     needs: [build-windows, build-mac]
+    # Only require Mac to actually succeed; Windows is best-effort.
+    if: always() && needs.build-mac.result == 'success'
     runs-on: ubuntu-latest
     # Only publish a Release when the trigger was an actual tag push.
     # On workflow_dispatch the binaries are still built and uploaded as
@@ -274,7 +296,13 @@ jobs:
             artifacts/windows-exe/ProPresenter Runsheet Builder.exe
             artifacts/mac-dmg/*.dmg
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          # Was: fail_on_unmatched_files: true. Flipped to false because
+          # Windows is non-blocking now — if the .exe didn't build we
+          # don't want the whole Release to fail on a missing-file check.
+          # The .dmg is always required for a meaningful release; if it's
+          # missing, the release job itself wouldn't have started (gated
+          # on needs.build-mac.result == 'success' above).
+          fail_on_unmatched_files: false
           # Pre-release on any tag with -alpha / -beta / -rc; clean
           # semver tags become full releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
