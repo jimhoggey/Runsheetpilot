@@ -132,4 +132,11 @@ from propresenterrunsheet.server import main  # noqa: E402
 
 
 if __name__ == "__main__":
-    main()
+    # Pass `app` explicitly so `main()` doesn't have to re-import this
+    # module via `from propresenter_app import app`. In a PyInstaller
+    # bundle that re-import has occasionally surfaced as "routes 404
+    # even though they registered" — Python ends up holding two copies
+    # of the propresenter_app module (one as __main__ from the bootloader,
+    # one freshly loaded via the import). Threading the live `app` object
+    # straight through closes that whole class of bug.
+    main(app)
