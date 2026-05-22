@@ -235,7 +235,7 @@ def _run_status_window(port: int) -> None:
     log.info("Status window closed — shutting down server")
 
 
-def main() -> None:
+def main(app=None) -> None:
     """Boot the app: discover a free port, start the Service Mate daemon,
     open the browser, and run waitress in a background thread while the
     main thread hosts the tkinter status window.
@@ -245,13 +245,28 @@ def main() -> None:
     can't tell whether the app is running. Closing the window (or
     clicking Quit) returns from `mainloop()`; with only daemon threads
     left (waitress + clocks), the process exits naturally.
+
+    `app` should be passed in from propresenter_app.py's `if __name__ ==
+    "__main__"` block. We accept None and fall back to importing it as a
+    convenience for the legacy callsite, but the explicit-pass path is
+    the safe one — `from propresenter_app import app` inside a frozen
+    PyInstaller bundle has been observed to yield a freshly-loaded
+    module instance whose `app` is missing the routes registered on the
+    bootloader's __main__ copy. End result: every URL 404s, even the
+    ones that obviously exist in the source.
     """
-    # Lazy import to avoid an import cycle at package-load time:
-    # propresenter_app imports server, server would import propresenter_app
-    # for `app` if done at module level.
-    from propresenter_app import app
+    if app is None:
+        from propresenter_app import app  # legacy / dev fallback
 
     try:
+        # Belt-and-braces diagnostic: log the routes Flask actually sees
+        # so a future "URLs 404 in the bundle but not from source"
+        # regression is one log line away from being obvious. Cheap;
+        # runs once at startup.
+        rules = sorted(
+            f"{r.rule:40} → {r.endpoint}" for r in app.url_map.iter_rules()
+        )
+        log.info("Flask URL map (%d rules):\n  %s", len(rules), "\n  ".join(rules))
         log.info(f"=== {APP_NAME} v{VERSION} ===")
         log.info(f"Platform: {sys.platform}  Frozen: {getattr(sys, 'frozen', False)}")
         log.info(f"Data dir: {DATA_DIR}")
