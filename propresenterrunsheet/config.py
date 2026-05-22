@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 APP_NAME = "ProPresenter Runsheet Builder"
 DEFAULT_PORT = 5757
 PORT_RANGE = 20  # try DEFAULT_PORT..DEFAULT_PORT+PORT_RANGE-1
