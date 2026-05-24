@@ -21,7 +21,7 @@ pass below covers that. Takes ~15 minutes.
 - [ ] `pytest tests/` → all green
 - [ ] `python3 propresenter_app.py` launches cleanly
 - [ ] Browser auto-opens at `http://localhost:5757`
-- [ ] No errors in `~/Library/Application Support/ProPresenter Runsheet Builder/app.log`
+- [ ] No errors in `~/Library/Application Support/Runsheet Pilot/app.log`
 
 ## 3. End-to-end smoke (with ProPresenter running)
 

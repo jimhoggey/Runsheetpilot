@@ -5,37 +5,66 @@ or what version we are. Kept dependency-free (stdlib only) so it can be
 imported from anywhere without import-cycle worries.
 
 `DATA_DIR` resolves the platform-appropriate writable location:
-  Mac:     ~/Library/Application Support/ProPresenter Runsheet Builder/
-  Windows: %APPDATA%\\ProPresenter Runsheet Builder\\
-  Linux:   $XDG_CONFIG_HOME (or ~/.config) /ProPresenter Runsheet Builder/
+  Mac:     ~/Library/Application Support/Runsheet Pilot/
+  Windows: %APPDATA%\\Runsheet Pilot\\
+  Linux:   $XDG_CONFIG_HOME (or ~/.config) /Runsheet Pilot/
 
 Must work both when running as a script AND inside a frozen PyInstaller
 bundle, where writing next to the executable is not allowed on signed
-Mac bundles and is fragile on Windows."""
+Mac bundles and is fragile on Windows.
+
+Renamed v2.0.3 → v2.1.0: the app was previously called "ProPresenter
+Runsheet Builder". `_LEGACY_APP_NAME` and the migration block below
+move existing users' settings/logs into the new folder on first launch.
+"""
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 
-VERSION = "2.0.3"
-APP_NAME = "ProPresenter Runsheet Builder"
+VERSION = "2.1.0"
+APP_NAME = "Runsheet Pilot"
+# Old name kept solely for the one-time DATA_DIR migration. Do not use
+# in any UI / log / build flag — that's what APP_NAME is for.
+_LEGACY_APP_NAME = "ProPresenter Runsheet Builder"
 DEFAULT_PORT = 5757
 PORT_RANGE = 20  # try DEFAULT_PORT..DEFAULT_PORT+PORT_RANGE-1
 
 
-def _user_data_dir() -> Path:
+def _platform_data_root() -> Path:
+    """Return the platform's user-data root (not including the app folder)."""
     if sys.platform == "darwin":
-        d = Path.home() / "Library" / "Application Support" / APP_NAME
-    elif sys.platform == "win32":
-        base = os.environ.get("APPDATA") or str(Path.home())
-        d = Path(base) / APP_NAME
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-        d = Path(base) / APP_NAME
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+        return Path.home() / "Library" / "Application Support"
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or str(Path.home()))
+    return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
+
+
+def _user_data_dir() -> Path:
+    """Return the per-user data dir for THIS app, migrating from the
+    legacy "ProPresenter Runsheet Builder" folder on first launch if it
+    exists. Migration is best-effort: any failure just falls through to
+    a fresh empty dir — the app still works, the user just loses their
+    old settings file (one-line fix from the in-app Settings dialog).
+    """
+    root = _platform_data_root()
+    new = root / APP_NAME
+    old = root / _LEGACY_APP_NAME
+
+    # One-time rename. Only triggers if the new folder doesn't exist AND
+    # the old one does — once new/ has been created (even empty),
+    # subsequent launches see it and skip migration.
+    if not new.exists() and old.exists():
+        try:
+            shutil.move(str(old), str(new))
+        except Exception:
+            pass
+
+    new.mkdir(parents=True, exist_ok=True)
+    return new
 
 
 DATA_DIR = _user_data_dir()

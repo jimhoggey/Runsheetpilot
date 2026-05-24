@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ProPresenter Runsheet Builder — entry point.
+"""Runsheet Pilot — entry point.
 
 The actual app lives in the `propresenterrunsheet/` package. This file
 stays as the entry point so the launchers (launch_mac.sh / run.bat) and

@@ -1,4 +1,4 @@
-# ProPresenter Runsheet Builder
+# Runsheet Pilot
 
 A local web app that turns a church service runsheet PDF into a ProPresenter 7 playlist. It reads the PDF, uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
 
@@ -64,8 +64,8 @@ Quit via the **Quit** button in the UI, or close the terminal window.
 
 If you'd rather not install Python on every machine, you can produce a native bundle. The user just double-clicks an icon — no Python required.
 
-- **Mac:** `./build_mac.sh` → `dist/ProPresenter Runsheet Builder.app` and a `.dmg` installer.
-- **Windows:** `build_win.bat` → `dist\ProPresenter Runsheet Builder.exe`.
+- **Mac:** `./build_mac.sh` → `dist/Runsheet Pilot.app` and a `.dmg` installer.
+- **Windows:** `build_win.bat` → `dist\Runsheet Pilot.exe`.
 
 Bundles are unsigned, so the first launch shows a warning:
 
@@ -194,7 +194,7 @@ The app stores its config and logs **outside** the source tree so they survive a
 
 | Platform | Location |
 |---|---|
-| Mac | `~/Library/Application Support/ProPresenter Runsheet Builder/` |
-| Windows | `%APPDATA%\ProPresenter Runsheet Builder\` |
+| Mac | `~/Library/Application Support/Runsheet Pilot/` |
+| Windows | `%APPDATA%\Runsheet Pilot\` |
 
 Files in there: `settings.json` (includes your OpenRouter API key — gitignored, never committed), `app.log` (rotated, 512 KB × 3), `runsheet_state.json` (Service Mate cue state), `clocks.json` (Service Mate clock IPs).

@@ -76,7 +76,7 @@ jobs:
         # stay in sync with build_win.bat if you change one, change both.
         run: |
           pyinstaller `
-            --name "ProPresenter Runsheet Builder" `
+            --name "Runsheet Pilot" `
             --windowed --onefile --noconfirm --clean `
             --collect-submodules pdfplumber `
             --collect-submodules waitress `
@@ -104,7 +104,7 @@ jobs:
         # silent crash in the bundle leaves us guessing.
         shell: pwsh
         run: |
-          $exe = "dist\ProPresenter Runsheet Builder.exe"
+          $exe = "dist\Runsheet Pilot.exe"
           if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
 
           $stdoutFile = "$env:RUNNER_TEMP\app-stdout.log"
@@ -148,7 +148,7 @@ jobs:
               else { Write-Host "(file not created)" }
             Write-Host ""
             Write-Host "=== app.log from %APPDATA% ==="
-            $appLog = Join-Path $env:APPDATA "ProPresenter Runsheet Builder\app.log"
+            $appLog = Join-Path $env:APPDATA "Runsheet Pilot\app.log"
             if (Test-Path $appLog) { Get-Content $appLog -Tail 80 }
               else { Write-Host "(no app.log written — app likely died before logging_setup ran)" }
             Write-Host ""
@@ -167,7 +167,7 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: windows-exe
-          path: dist/ProPresenter Runsheet Builder.exe
+          path: dist/Runsheet Pilot.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -201,14 +201,14 @@ jobs:
         run: |
           VERSION=$(grep -E '^VERSION\s*=' propresenterrunsheet/config.py \
                     | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          APP_NAME="ProPresenter Runsheet Builder"
+          APP_NAME="Runsheet Pilot"
           APP_BUNDLE="${APP_NAME}.app"
-          DMG_NAME="ProPresenter-Runsheet-Builder-${VERSION}.dmg"
+          DMG_NAME="Runsheet-Pilot-${VERSION}.dmg"
 
           pyinstaller \
             --name "${APP_NAME}" \
             --windowed --onefile --noconfirm --clean \
-            --osx-bundle-identifier "org.church.proPresenterRunsheetBuilder" \
+            --osx-bundle-identifier "org.church.runsheetPilot" \
             --collect-submodules pdfplumber \
             --collect-submodules waitress \
             --hidden-import waitress \
@@ -237,7 +237,7 @@ jobs:
         # shipped --add-data paths (the _MEIPASS resolution); this
         # catches those before users do.
         run: |
-          open "dist/ProPresenter Runsheet Builder.app" --args --headless
+          open "dist/Runsheet Pilot.app" --args --headless
           ok=false
           for _ in $(seq 1 30); do
             if curl -sf http://localhost:5757/api/health >/dev/null 2>&1; then
@@ -256,7 +256,7 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: mac-dmg
-          path: dist/ProPresenter-Runsheet-Builder-*.dmg
+          path: dist/Runsheet-Pilot-*.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -298,7 +298,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/windows-exe/ProPresenter Runsheet Builder.exe
+            artifacts/windows-exe/Runsheet Pilot.exe
             artifacts/mac-dmg/*.dmg
           generate_release_notes: true
           # Was: fail_on_unmatched_files: true. Flipped to false because

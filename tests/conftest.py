@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the ProPresenter Runsheet Builder tests.
+"""Shared pytest fixtures for the Runsheet Pilot tests.
 
 We import the app module once and let individual tests redirect its on-disk
 state files into a per-test tmpdir so route tests can roundtrip safely

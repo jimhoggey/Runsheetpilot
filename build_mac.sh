@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the Mac .app bundle and a distributable .dmg.
-# Output: dist/ProPresenter Runsheet Builder.app  and  dist/ProPresenter-Runsheet-Builder-<ver>.dmg
+# Output: dist/Runsheet Pilot.app  and  dist/Runsheet-Pilot-<ver>.dmg
 #
 # Run:  ./build_mac.sh
 # Clean: ./build_mac.sh clean
@@ -8,7 +8,7 @@
 set -e
 cd "$(dirname "$0")"
 
-APP_NAME="ProPresenter Runsheet Builder"
+APP_NAME="Runsheet Pilot"
 APP_BUNDLE_NAME="${APP_NAME}.app"
 ENTRY="propresenter_app.py"
 
@@ -18,7 +18,7 @@ VERSION_FILE="propresenterrunsheet/config.py"
 VERSION=$(grep -E '^VERSION\s*=' "$VERSION_FILE" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
 [ -z "$VERSION" ] && VERSION="0.0.0"
 
-DMG_NAME="ProPresenter-Runsheet-Builder-${VERSION}.dmg"
+DMG_NAME="Runsheet-Pilot-${VERSION}.dmg"
 
 if [ "$1" = "clean" ]; then
     echo "Cleaning build/ dist/ *.spec ..."
@@ -64,7 +64,7 @@ pyinstaller \
     --onefile \
     --noconfirm \
     --clean \
-    --osx-bundle-identifier "org.church.proPresenterRunsheetBuilder" \
+    --osx-bundle-identifier "org.church.runsheetPilot" \
     --collect-submodules pdfplumber \
     --collect-submodules waitress \
     --hidden-import waitress \

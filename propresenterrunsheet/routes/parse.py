@@ -128,7 +128,7 @@ def api_upload_and_parse():
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization":  f"Bearer {or_key}",
-                "HTTP-Referer":   "propresenter-runsheet-builder",
+                "HTTP-Referer":   "runsheet-pilot",
                 "X-Title":        APP_NAME,
                 "Content-Type":   "application/json",
             },
