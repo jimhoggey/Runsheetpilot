@@ -1,9 +1,9 @@
 #!/bin/bash
-# ProPresenter Runsheet Builder — Mac Launcher
+# Runsheet Pilot — Mac Launcher
 # Run this from Terminal, or right-click → Open With → Terminal
 
 echo "================================================"
-echo " ProPresenter Runsheet Builder"
+echo " Runsheet Pilot"
 echo "================================================"
 echo ""
 

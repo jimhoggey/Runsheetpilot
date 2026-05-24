@@ -1,6 +1,6 @@
 @echo off
 REM Build the Windows .exe using PyInstaller.
-REM Output: dist\ProPresenter Runsheet Builder.exe
+REM Output: dist\Runsheet Pilot.exe
 REM
 REM Run:    build_win.bat
 REM Clean:  build_win.bat clean
@@ -8,7 +8,7 @@ REM Clean:  build_win.bat clean
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "APP_NAME=ProPresenter Runsheet Builder"
+set "APP_NAME=Runsheet Pilot"
 set "ENTRY=propresenter_app.py"
 
 if /I "%~1"=="clean" (

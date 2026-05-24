@@ -1,9 +1,9 @@
 @echo off
-REM ProPresenter Runsheet Builder — Windows Launcher
-title ProPresenter Runsheet Builder
+REM Runsheet Pilot — Windows Launcher
+title Runsheet Pilot
 
 echo ================================================
-echo  ProPresenter Runsheet Builder
+echo  Runsheet Pilot
 echo ================================================
 echo.
 

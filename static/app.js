@@ -749,7 +749,7 @@ function _burstConfetti() {
 
 // ─── 9. Quit + boot ───────────────────────────────────────────────────────
 async function quitApp() {
-  if (!confirm('Quit the ProPresenter Runsheet Builder?\n\nYou can reopen it from your Applications folder.')) return;
+  if (!confirm('Quit the Runsheet Pilot?\n\nYou can reopen it from your Applications folder.')) return;
   try { await fetch('/api/quit', {method:'POST'}); } catch (_) {}
   document.body.innerHTML = '<div style="padding:40px;text-align:center;font-family:sans-serif">'
     + '<h2>👋 Server stopped.</h2><p style="color:#888;margin-top:10px">You can close this tab.</p></div>';
