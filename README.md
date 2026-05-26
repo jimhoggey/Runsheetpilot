@@ -1,6 +1,6 @@
 # Runsheet Pilot
 
-A local web app that turns a church service runsheet PDF into a ProPresenter 7 playlist. It reads the PDF, uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
+A local web app that turns a church service runsheet PDF into a ProPresenter playlist. It reads the PDF, uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
 
 Runs on macOS and Windows. Opens at `http://localhost:5757` in your browser.
 
