@@ -15,7 +15,7 @@ You need three things on the machine that will run the app:
 - **Mac:** `brew install python` or download from [python.org](https://python.org).
 - **Windows:** download from [python.org](https://python.org). During install, **tick "Add Python to PATH"** — the launcher needs `python` on PATH.
 
-### 2. ProPresenter 7 running, with Network enabled
+### 2. ProPresenter running, with Network enabled
 
 The app talks to ProPresenter on `localhost:50001`, so **ProPresenter must be running on the same machine** while you create playlists.
 
