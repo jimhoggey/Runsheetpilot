@@ -28,6 +28,14 @@ settings.json
 *.secret
 secrets.json
 
+# Licensing private key — NEVER commit. The Ed25519 private key signs paid
+# Service Mate licence keys; if it leaks, anyone can mint free licences.
+# Only the matching PUBLIC key is embedded (safely) in licensing.py.
+tools/secrets/
+*_private_key*
+license_private*
+*.pem
+
 # Claude Code local permissions (project-personal)
 .claude/settings.local.json
 

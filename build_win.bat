@@ -62,6 +62,7 @@ pyinstaller ^
     --clean ^
     --collect-submodules pdfplumber ^
     --collect-submodules waitress ^
+    --collect-submodules cryptography ^
     --hidden-import waitress ^
     --hidden-import flask ^
     --hidden-import pdfplumber ^

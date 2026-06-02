@@ -40,6 +40,14 @@ def _clocks_loop_tick(tick: int) -> None:
     cfg = _read_clocks_config()
     if not cfg.get("enabled") or not cfg.get("clocks"):
         return
+    # Paid add-on gate. Stamp the trial on first active tick (covers existing
+    # users who already had the switch on before this feature shipped — they
+    # get a fresh 14-day trial from first run), then stop pushing once the
+    # trial has expired and no licence is present.
+    from ..licensing import service_mate_allowed, start_trial_if_needed
+    start_trial_if_needed()
+    if not service_mate_allowed():
+        return
     # Standby = explicit operator reset, OR no runsheet has ever been loaded.
     # In both cases we want the clocks showing a clean waiting page rather
     # than a stale cue or going dark.

@@ -193,6 +193,7 @@
     <div class="sm-card-header">
       <div class="sm-card-title">
         ⏰ Service Mate Clocks
+        <span class="sm-license-badge" id="sm-license-badge" hidden></span>
         <span class="sm-card-subtitle">GeekMagic SmallTV-Ultra on your LAN</span>
       </div>
       <div class="sm-card-controls">
@@ -212,6 +213,23 @@
                 aria-label="Expand or collapse the Service Mate panel"
                 id="sm-chevron">▾</button>
       </div>
+    </div>
+
+    <!-- Locked overlay — shown only when the 14-day trial has ended and
+         no licence key is active. JS (applyLicenseState) un-hides it and
+         hides the body. Buying/activating clears it. -->
+    <div class="sm-locked-overlay" id="sm-locked-overlay" hidden>
+      <div class="sm-locked-icon">🔒</div>
+      <div class="sm-locked-title">Your Service Mate trial has ended</div>
+      <p class="sm-locked-text">
+        The clock integration is a paid add-on. Enter a licence key to keep
+        pushing live cues to your GeekMagic clocks. The rest of Runsheet
+        Pilot stays free.
+      </p>
+      <button class="btn btn-acc" onclick="openSettingsModal();
+              setTimeout(()=>document.getElementById('license-key').focus(),120)">
+        Enter a licence key
+      </button>
     </div>
 
     <!-- Body shown only when the master switch is ON AND the section is
@@ -352,6 +370,36 @@
           <input id="or-model" type="text"
                  placeholder="e.g. google/gemini-2.0-flash-exp:free">
         </div>
+      </section>
+
+      <!-- SERVICE MATE LICENCE ─────────────────────────────────── -->
+      <!-- The clocks feature is a paid add-on with a 14-day free trial.
+           The status line + input are driven by /api/license (see
+           loadLicense() / activateLicense() in app.js). -->
+      <section class="settings-section">
+        <h3>Service Mate (paid add-on)</h3>
+        <p class="settings-hint">
+          Pushing live cues to GeekMagic clocks is a paid add-on with a
+          14-day free trial. The rest of Runsheet Pilot is free forever.
+        </p>
+        <div class="license-status" id="license-status">Checking…</div>
+        <div class="field" style="margin-top:10px">
+          <label for="license-key">Licence key</label>
+          <input id="license-key" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="RP1.…  (paste the key from your purchase email)">
+        </div>
+        <div class="row" style="gap:8px;align-items:center">
+          <button class="btn btn-acc btn-sm" id="license-activate-btn"
+                  onclick="activateLicense()">Activate</button>
+          <button class="btn btn-dim btn-sm" onclick="removeLicense()"
+                  title="Remove the key from this computer">Remove</button>
+          <span id="license-msg" style="font-size:.74rem"></span>
+        </div>
+        <p class="settings-hint" style="margin-top:8px">
+          Don't have a key yet? <a href="#" id="license-buy-link"
+          target="_blank" rel="noopener">Get Service Mate</a> — then paste
+          the key above.
+        </p>
       </section>
 
       <!-- PLAYLIST OPTIONS ────────────────────────────────────── -->

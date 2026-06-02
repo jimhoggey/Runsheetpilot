@@ -67,6 +67,7 @@ pyinstaller \
     --osx-bundle-identifier "org.church.runsheetPilot" \
     --collect-submodules pdfplumber \
     --collect-submodules waitress \
+    --collect-submodules cryptography \
     --hidden-import waitress \
     --hidden-import flask \
     --hidden-import pdfplumber \
