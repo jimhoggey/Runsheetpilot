@@ -100,8 +100,8 @@ def build_playlist_payload(matched: list) -> list:
         m = mi.get("match")
         lib = p.get("library_match")
 
-        # Section expansion — runsheet's own header (so "Culture: Lauren
-        # and Fynn — 6:45 PM" keeps its context) followed by the template
+        # Section expansion — runsheet's own header (so "Culture: Jamie
+        # and Alex — 6:45 PM" keeps its context) followed by the template
         # section's items echoed in PP's native shape.
         #
         # PP-API rules locked in by live testing:
