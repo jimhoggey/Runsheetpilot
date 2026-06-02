@@ -35,11 +35,16 @@ def isolated_state(tmp_path, monkeypatch):
     rebind the re-exported alias, not the value the SM code reads.
     """
     from propresenterrunsheet.service_mate import state as sm_state
+    from propresenterrunsheet import settings as pp_settings
 
     rs = tmp_path / "runsheet_state.json"
     cl = tmp_path / "clocks.json"
     monkeypatch.setattr(sm_state, "RUNSHEET_STATE_FILE", rs)
     monkeypatch.setattr(sm_state, "CLOCKS_CONFIG_FILE", cl)
+    # Redirect settings.json too — the Service Mate licence gate (added with
+    # the paid add-on) reads license_key / sm_trial_start from settings, so
+    # route tests must not depend on (or write to) the real user settings.
+    monkeypatch.setattr(pp_settings, "SETTINGS_FILE", tmp_path / "settings.json")
     # The clock theme cache is process-global and would be polluted by other
     # tests if we don't reset it.
     ppa._CLOCK_THEME_SET.clear()

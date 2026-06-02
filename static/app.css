@@ -797,6 +797,50 @@ button:focus-visible, .quit-btn:focus-visible {
   font-weight: 500;
   letter-spacing: 0;
 }
+
+/* ── Service Mate licensing (paid add-on) ─────────────────────────────── */
+/* Small pill next to the title: "Trial · 9 days", "Licensed", "Trial ended". */
+.sm-license-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.sm-license-badge.is-trial    { color: var(--org); background: var(--org-soft); }
+.sm-license-badge.is-licensed { color: var(--grn); background: var(--grn-soft); }
+.sm-license-badge.is-expired  { color: var(--red); background: var(--red-soft); }
+
+/* Locked overlay shown in place of the body when the trial has expired. */
+.sm-locked-overlay {
+  padding: 28px 22px 30px;
+  text-align: center;
+  border-top: 1px solid var(--line, rgba(255,255,255,0.08));
+}
+.sm-locked-icon { font-size: 1.8rem; margin-bottom: 8px; }
+.sm-locked-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 6px; }
+.sm-locked-text {
+  font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 420px;
+  margin: 0 auto 16px;
+  line-height: 1.5;
+}
+
+/* Licence status line inside the Settings modal. */
+.license-status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--muted);
+}
+.license-status.is-trial    { color: var(--org); background: var(--org-soft); }
+.license-status.is-licensed { color: var(--grn); background: var(--grn-soft); }
+.license-status.is-expired  { color: var(--red); background: var(--red-soft); }
 .sm-card-controls {
   display: flex;
   align-items: center;

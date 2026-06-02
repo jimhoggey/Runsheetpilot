@@ -75,6 +75,11 @@ async function loadSettings() {
   document.getElementById('pp-port2').value   = s.pp_port  || '50001';
   document.getElementById('or-key').value     = s.or_key   || '';
   document.getElementById('or-model').value   = s.or_model || 'google/gemini-2.0-flash-exp:free';
+  const lk = document.getElementById('license-key');
+  if (lk) lk.value = s.license_key || '';
+  // Service Mate licence/trial state (drives the Settings status line, the
+  // card badge, and the locked overlay). Best-effort; never blocks boot.
+  loadLicense();
   document.getElementById('lib-dir').value    = s.library_dir || '';
   document.getElementById('export-dir').value = s.export_dir  || '';
   document.getElementById('threshold').value  = Math.round((s.threshold || .55) * 100);
@@ -346,6 +351,114 @@ function openSettingsModal() {
 }
 function closeSettingsModal() {
   document.getElementById('settings-modal').classList.remove('active');
+}
+
+// ─── 4b. Service Mate licensing (paid add-on) ─────────────────────────────
+// The clocks feature is a paid add-on with a 14-day free trial. These talk
+// to /api/license and drive three bits of UI: the Settings status line, the
+// badge on the Service Mate card header, and the locked overlay shown when
+// the trial has expired.
+//
+// TODO(owner): point this at your real store/landing URL once you pick one
+// (Gumroad / Lemon Squeezy / Stripe). For now it links to the README.
+const SERVICE_MATE_BUY_URL =
+  'https://github.com/jimhoggey/propresenter-runsheet-builder#service-mate-paid-add-on';
+
+let _licenseState = 'trial_unstarted';
+
+async function loadLicense() {
+  try {
+    applyLicenseState(await fetch('/api/license').then(r => r.json()));
+  } catch (e) {
+    console.warn('license load failed', e);
+  }
+}
+
+function applyLicenseState(st) {
+  if (!st || !st.state) return;
+  _licenseState = st.state;
+  const buy = document.getElementById('license-buy-link');
+  if (buy) buy.href = SERVICE_MATE_BUY_URL;
+
+  // 1. Settings status line.
+  const line = document.getElementById('license-status');
+  if (line) {
+    line.classList.remove('is-trial', 'is-licensed', 'is-expired');
+    if (st.state === 'licensed') {
+      line.classList.add('is-licensed');
+      line.textContent = '✓ Licensed to ' + (st.licensed_to || 'you') + ' — thank you!';
+    } else if (st.state === 'trial') {
+      line.classList.add('is-trial');
+      line.textContent = '⏳ Free trial — ' + st.days_left +
+        (st.days_left === 1 ? ' day left.' : ' days left.');
+    } else if (st.state === 'trial_unstarted') {
+      line.classList.add('is-trial');
+      line.textContent = '14-day free trial — starts when you turn Service Mate on.';
+    } else {
+      line.classList.add('is-expired');
+      line.textContent = '🔒 Trial ended — enter a key to keep using Service Mate.';
+    }
+  }
+
+  // 2. Badge on the Service Mate card header.
+  const badge = document.getElementById('sm-license-badge');
+  if (badge) {
+    badge.classList.remove('is-trial', 'is-licensed', 'is-expired');
+    if (st.state === 'licensed') {
+      badge.hidden = false; badge.classList.add('is-licensed'); badge.textContent = 'Licensed';
+    } else if (st.state === 'trial') {
+      badge.hidden = false; badge.classList.add('is-trial');
+      badge.textContent = 'Trial · ' + st.days_left + 'd';
+    } else if (st.state === 'expired') {
+      badge.hidden = false; badge.classList.add('is-expired'); badge.textContent = 'Trial ended';
+    } else {
+      badge.hidden = true;
+    }
+  }
+
+  // 3. Locked overlay — only when expired. Re-apply the collapse logic so
+  //    the body/overlay/off-hint visibility stays consistent.
+  if (typeof smApplyCollapsed === 'function') {
+    const card = document.getElementById('sm-card');
+    smApplyCollapsed(card ? card.hasAttribute('data-collapsed') : true);
+  }
+}
+
+async function activateLicense() {
+  const input = document.getElementById('license-key');
+  const msg = document.getElementById('license-msg');
+  const key = (input && input.value || '').trim();
+  const setMsg = (color, text) => { if (msg) { msg.style.color = color; msg.textContent = text; } };
+  if (!key) { setMsg('var(--org)', 'Paste your key first.'); return; }
+  setMsg('var(--muted)', 'Checking…');
+  try {
+    const r = await fetch('/api/license', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key})});
+    const st = await r.json();
+    if (r.ok && st.ok) {
+      setMsg('var(--grn)', '✓ Activated.');
+      applyLicenseState(st);
+    } else {
+      setMsg('var(--red)', st.error || 'That key was not recognised.');
+    }
+  } catch (e) {
+    setMsg('var(--red)', 'Could not reach the app. Try again.');
+  }
+}
+
+async function removeLicense() {
+  const input = document.getElementById('license-key');
+  const msg = document.getElementById('license-msg');
+  try {
+    const st = await fetch('/api/license', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: ''})}).then(r => r.json());
+    if (input) input.value = '';
+    if (msg) { msg.style.color = 'var(--muted)'; msg.textContent = 'Key removed.'; }
+    applyLicenseState(st);
+  } catch (e) {
+    if (msg) { msg.style.color = 'var(--red)'; msg.textContent = 'Could not reach the app.'; }
+  }
 }
 
 // ─── 5. Connection test ───────────────────────────────────────────────────
@@ -828,17 +941,23 @@ function smApplyCollapsed(collapsed) {
   const card = document.getElementById('sm-card');
   const body = document.getElementById('sm-body');
   const off  = document.getElementById('sm-off-hint');
+  const overlay = document.getElementById('sm-locked-overlay');
   const enabled = document.getElementById('sm-enabled').checked;
+  // When the paid trial has expired, the locked overlay replaces the body
+  // regardless of the master switch — the feature can't run anyway.
+  const expired = (_licenseState === 'expired');
   if (collapsed) {
     card.setAttribute('data-collapsed', '');
     body.hidden = true;
     if (off) off.style.display = 'none';
+    if (overlay) overlay.hidden = true;
   } else {
     card.removeAttribute('data-collapsed');
-    // Expanded view: show the body if SM is enabled, show the off-hint
-    // if it's disabled. They never appear at the same time.
-    body.hidden = !enabled;
-    if (off) off.style.display = enabled ? 'none' : 'block';
+    if (overlay) overlay.hidden = !expired;
+    // Expanded view: show the body if SM is enabled (and not expired); show
+    // the off-hint only when disabled and not expired. They never overlap.
+    body.hidden = expired ? true : !enabled;
+    if (off) off.style.display = (enabled || expired) ? 'none' : 'block';
   }
 }
 

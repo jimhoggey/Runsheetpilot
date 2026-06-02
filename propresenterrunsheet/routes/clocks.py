@@ -36,10 +36,30 @@ _DISABLED_RESPONSE = ({"ok": False,
                       409)
 
 
+# Returned when the paid Service Mate trial has ended and no licence key is
+# active. 402 Payment Required is the semantically-correct status. The UI
+# reads license_state to switch the card into its "locked" overlay.
+_UNLICENSED_RESPONSE = ({"ok": False,
+                         "error": "Your Service Mate free trial has ended. "
+                                  "Enter a licence key in Settings to keep "
+                                  "pushing cues to your clocks.",
+                         "license_state": "expired"},
+                        402)
+
+
 def _check_sm_enabled(cfg: dict):
-    """Return (json_body, status_code) when Service Mate is disabled, else
+    """Return (json_body, status_code) when Service Mate may NOT run, else
     None to indicate the caller should proceed. Tiny helper so each
-    hardware-touching route can early-return with one line."""
+    hardware-touching route can early-return with one line.
+
+    Two gates, in order:
+      1. Licence/trial — blocks (402) when the 14-day trial has expired and
+         no valid licence key is present. See propresenterrunsheet/licensing.
+      2. Master switch — blocks (409) when the operator has it toggled off.
+    """
+    from ..licensing import service_mate_allowed
+    if not service_mate_allowed():
+        return _UNLICENSED_RESPONSE
     if not cfg.get("enabled"):
         return _DISABLED_RESPONSE
     return None
@@ -77,6 +97,11 @@ def api_clocks_post():
             pass
     if "enabled" in body:
         cfg["enabled"] = bool(body["enabled"])
+        # Turning the master switch on counts as "first active use" — start
+        # the 14-day trial clock now (no-op if already licensed/started).
+        if cfg["enabled"]:
+            from ..licensing import start_trial_if_needed
+            start_trial_if_needed()
     _write_clocks_config(cfg)
     return jsonify({"ok": True, "config": cfg})
 

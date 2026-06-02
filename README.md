@@ -125,7 +125,7 @@ to a specific template.
 
 ---
 
-## Service Mate — GeekMagic clocks (optional)
+## Service Mate (paid add-on)
 
 If you have one or more **GeekMagic SmallTV-Ultra** clocks on your LAN, the
 app can use them as silent visual cue prompters at the Screen, Sound, and
@@ -133,6 +133,24 @@ Lights stations during a service. Each clock shows the **current** runsheet
 item, a live MM:SS countdown, and a short **role-aware** hint of what's next
 (e.g. for the sound op, "Mic on for Ps Nick"; for the lights op, "Spot —
 preacher").
+
+> **Service Mate is a paid add-on with a 14-day free trial.** The rest of
+> Runsheet Pilot — upload, AI parse, and create-playlist — is **free
+> forever**. The trial starts the first time you switch Service Mate on, and
+> runs fully featured for 14 days. After that you'll need a licence key to
+> keep pushing cues to your clocks.
+
+### Get a key & activate
+
+1. **Buy a licence** — see the in-app *Settings → Service Mate (paid add-on)*
+   section for the purchase link. You'll receive a key that looks like
+   `RP1.…`.
+2. Open **⚙ Settings → Service Mate (paid add-on)**, paste the key into the
+   **Licence key** box, and click **Activate**. It should turn green and show
+   *"Licensed to <your church>"*.
+3. That's it — the licence is stored on your machine and works **offline**
+   (no internet needed during a service). One key unlocks Service Mate on
+   that computer.
 
 Service Mate is **off by default** — fresh installs see a collapsed card at
 the bottom of the main panel with a master switch in OFF position. If you

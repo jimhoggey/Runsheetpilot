@@ -45,6 +45,12 @@ def _default_settings() -> dict:
         # Reusable-templates feature (planned) — list of saved PP playlist
         # references the user marks as templates. UI lands in a future change.
         "templates":     [],
+        # Service Mate paid add-on (see propresenterrunsheet/licensing.py).
+        # license_key: the buyer's signed RP1 key, empty until they activate.
+        # sm_trial_start: ISO date the 14-day trial began (stamped on first
+        # active use); empty means the trial hasn't started yet.
+        "license_key":     "",
+        "sm_trial_start":  "",
     }
 
 
