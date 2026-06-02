@@ -201,10 +201,10 @@ def api_clocks_preview():
                  "cues": {"screen": "Cue song slides",
                           "sound":  "Band mics live · MC mute",
                           "lights": "Stage wash — band"}},
-                {"type": "sermon", "title": "King Jesus — Ps Nick", "duration_min": 30,
+                {"type": "sermon", "title": "King Jesus — Ps David", "duration_min": 30,
                  "notes": "10:14 AM",
                  "cues": {"screen": "Sermon slides",
-                          "sound":  "Mic on for Ps Nick",
+                          "sound":  "Mic on for Ps David",
                           "lights": "Spot — preacher"}}
             ],
             "current_index": 0,

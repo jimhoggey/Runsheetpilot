@@ -120,7 +120,7 @@ def test_library_match_on_non_song_becomes_presentation_item():
     payload = build_playlist_payload([{
         "parsed": {
             "type": "announcement",
-            "title": "Culture Moment - Generosity - Ps Melissa",
+            "title": "Culture Moment - Generosity - Ps Sarah",
             "notes": "10:00 AM",
             "library_match": {"uuid": "lib-culture-uuid",
                               "name": "Culture",
@@ -227,16 +227,16 @@ def _culture_section():
 
 
 def test_section_library_match_expands_into_header_plus_presentations():
-    """The headline feature: runsheet item "Culture: Lauren and Fynn — 6:45 PM"
+    """The headline feature: runsheet item "Culture: Jamie and Alex — 6:45 PM"
     with library_match = Culture section (3 media items) expands to:
-      1) runsheet's own coloured header (preserves Lauren/Fynn/time context)
+      1) runsheet's own coloured header (preserves Jamie/Alex/time context)
       2) presentation entry for Heat the house
       3) presentation entry for NO ONE STANDS ALONE
       4) presentation entry for Take Ownership"""
     payload = build_playlist_payload([{
         "parsed": {
             "type":  "announcement",
-            "title": "Culture: Lauren and Fynn",
+            "title": "Culture: Jamie and Alex",
             "notes": "6:45 PM",
             "library_match": _culture_section(),
         },
@@ -245,7 +245,7 @@ def test_section_library_match_expands_into_header_plus_presentations():
     assert len(payload) == 4
     # 1. Header — runsheet's own labelling (NOT the template's "Culture" header).
     assert payload[0]["type"] == "header"
-    assert "Culture: Lauren and Fynn" in payload[0]["id"]["name"]
+    assert "Culture: Jamie and Alex" in payload[0]["id"]["name"]
     assert "6:45 PM" in payload[0]["id"]["name"]
     # 2-4. Each template media item becomes a real entry pointing at the
     # actual asset's UUID. Two PP-API rules locked in here:
@@ -316,7 +316,7 @@ def test_section_expansion_preserves_loop_with_presentation_info_and_duration():
         ],
     }
     payload = build_playlist_payload([{
-        "parsed": {"type": "mc_on_stage", "title": "MC Welcome - Lauren & Daisy",
+        "parsed": {"type": "mc_on_stage", "title": "MC Welcome - Jamie & Morgan",
                    "notes": "6:20 PM", "library_match": mc_welcome_with_loop},
         "match":  None,
     }])

@@ -132,7 +132,7 @@ If you have one or more **GeekMagic SmallTV-Ultra** clocks on your LAN, the
 app can use them as silent visual cue prompters at the Screen, Sound, and
 Lights stations during a service. Each clock shows the **current** runsheet
 item, a live MM:SS countdown, and a short **role-aware** hint of what's next
-(e.g. for the sound op, "Mic on for Ps Nick"; for the lights op, "Spot —
+(e.g. for the sound op, "Mic on for Ps David"; for the lights op, "Spot —
 preacher").
 
 > **Service Mate is a paid add-on with a 14-day free trial.** The rest of

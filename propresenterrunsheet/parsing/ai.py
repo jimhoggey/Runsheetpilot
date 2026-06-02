@@ -18,8 +18,8 @@ You are analysing a church service runsheet (order of service).
 
 ## WHAT TO SKIP
 Most runsheets have a "rostering" section at the very top that lists who
-is doing each role (lines like "Pre Service Prayer: Grant, Rebekah",
-"Worship Leader: Chitsaka, Pascar", "Speaker: Hind, Nick", "ML Open: ...").
+is doing each role (lines like "Pre Service Prayer: Taylor, Jordan",
+"Worship Leader: Rivera, Sam", "Speaker: Walker, Alex", "ML Open: ...").
 This is just credits — IGNORE IT COMPLETELY.
 
 The actual service begins at the FIRST item that has a specific time-of-day
@@ -59,8 +59,8 @@ creation in ProPresenter.
 
 - mc_on_stage   A person stepping on stage to lead a transition or open/land
                 a section. ALMOST ALWAYS has a person's name with a dash.
-                Examples: "Land Worship - Lauren", "Welcome - John",
-                "Open Service - Mary", "Meeting Land and Recap - Matt".
+                Examples: "Land Worship - Priya", "Welcome - Daniel",
+                "Open Service - Hannah", "Meeting Land and Recap - Chris".
 
 - announcement  Speaker giving information to the congregation.
                 Examples: "Junior Youth Out", "Upcoming Dates",
@@ -100,14 +100,14 @@ Use empty string ("") if there is no extra info.
    {"type":"song","title":"Alleluia","notes":"9:50 AM","duration_min":0},
    {"type":"song","title":"The King Is In The Room","notes":"","duration_min":0},
    {"type":"song","title":"Jesus Be The Name","notes":"","duration_min":0},
-   {"type":"mc_on_stage","title":"Land Worship - Lauren","notes":"9:50 AM","duration_min":5},
+   {"type":"mc_on_stage","title":"Land Worship - Priya","notes":"9:50 AM","duration_min":5},
    {"type":"scripture","title":"Genesis 1:23-28","notes":"9:55 AM","duration_min":2},
    {"type":"announcement","title":"Welcome and Connection Cards","notes":"9:55 AM","duration_min":5},
-   {"type":"announcement","title":"Culture Moment - Generosity - Ps Melissa","notes":"10:00 AM","duration_min":10},
+   {"type":"announcement","title":"Culture Moment - Generosity - Ps Sarah","notes":"10:00 AM","duration_min":10},
    {"type":"announcement","title":"Junior Youth Out","notes":"10:10 AM","duration_min":1},
-   {"type":"sermon","title":"Preach: King Jesus - Ps Nick","notes":"10:14 AM","duration_min":30},
+   {"type":"sermon","title":"Preach: King Jesus - Ps David","notes":"10:14 AM","duration_min":30},
    {"type":"prayer","title":"Altar Call/Ministry Moment","notes":"10:44 AM","duration_min":5},
-   {"type":"mc_on_stage","title":"Meeting Land and Recap - Matt","notes":"10:49 AM","duration_min":2},
+   {"type":"mc_on_stage","title":"Meeting Land and Recap - Chris","notes":"10:49 AM","duration_min":2},
    {"type":"announcement","title":"Upcoming Dates","notes":"10:53 AM","duration_min":5}
  ]}
 
@@ -132,7 +132,7 @@ SERVICE_MATE_CUE_ADDENDUM = (
     "Use the title, speaker names, and notes for specificity. "
     "Examples:\n"
     "  cues.screen = \"Slide — Build My Life\"\n"
-    "  cues.sound  = \"Mic on for Ps Nick\"\n"
+    "  cues.sound  = \"Mic on for Ps David\"\n"
     "  cues.lights = \"Spot — preacher\"\n"
     "If you can't tell, leave the field as an empty string."
 )
@@ -152,7 +152,7 @@ LIBRARY_CONTEXT_ADDENDUM = (
     "playlist whenever a runsheet item clearly corresponds to one.\n\n"
     "For EACH runsheet item, decide whether it CLEARLY corresponds to one\n"
     "of these sections (e.g. runsheet 'Culture Moment - Generosity - Ps\n"
-    "Melissa' → section 'Culture'; runsheet 'Welcome and Connection Cards'\n"
+    "Sarah' → section 'Culture'; runsheet 'Welcome and Connection Cards'\n"
     "→ section 'Welcome'). If yes, set `library_match` to the EXACT section\n"
     "name from the list below (copy-paste it). If no clear match exists,\n"
     "set `library_match` to an empty string.\n\n"
