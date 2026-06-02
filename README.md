@@ -1,4 +1,5 @@
 # Runsheet Pilot
+Check out: https://propresenterbuilder.netlify.app/
 
 A local web app that turns a church service runsheet PDF into a ProPresenter playlist. It reads the PDF, uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
 
