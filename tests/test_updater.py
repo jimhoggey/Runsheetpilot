@@ -249,3 +249,110 @@ def test_execute_swap_rolls_back_rename_when_move_fails(tmp_path):
 
     assert installed.exists()                                   # rolled back
     assert not installed.with_name(installed.name + ".old").exists()
+
+
+# ── Orchestration ───────────────────────────────────────────────────────────
+def test_check_for_update_sets_available_state(upd_env):
+    payload = _release_payload(tag="v99.0.0")
+    info = updater.check_for_update(
+        http_get=lambda url, **kw: FakeResponse(json_data=payload),
+        platform="win32")
+    assert info["version"] == "99.0.0"
+    st = updater.get_state()
+    assert st["state"] == "available"
+    assert st["latest"] == "99.0.0"
+    assert updater._AVAILABLE["asset_name"] == "Runsheet-Pilot-windows.exe"
+
+
+def test_check_for_update_offline_is_silent(upd_env):
+    def boom(url, **kw):
+        raise OSError("no network")
+    assert updater.check_for_update(http_get=boom, platform="win32") is None
+    assert updater.get_state()["state"] == "idle"     # no error surfaced
+
+
+def test_apply_update_happy_path_windows_ops(upd_env, tmp_path, monkeypatch):
+    import hashlib
+    body = b"exe-bytes"
+    sha = hashlib.sha256(body).hexdigest()
+    updater._AVAILABLE.update({
+        "asset_name": "Runsheet-Pilot-windows.exe",
+        "asset_url": "https://gh/win.exe",
+        "sums_url": "https://gh/sums.txt",
+        "version": "99.0.0",
+    })
+    fake_exe = tmp_path / "install" / "Runsheet Pilot.exe"
+    fake_exe.parent.mkdir(parents=True)
+    fake_exe.write_bytes(b"old")
+    monkeypatch.setattr(updater, "install_location",
+                        lambda executable=None, platform=None: (fake_exe, True))
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+
+    def http_get(url, **kw):
+        if url == "https://gh/sums.txt":
+            return FakeResponse(text=f"{sha}  Runsheet-Pilot-windows.exe\n")
+        return FakeResponse(content=body)
+
+    executed = []
+    monkeypatch.setattr(updater, "_execute_swap",
+                        lambda ops, **kw: executed.extend(ops))
+    updater.apply_update(http_get=http_get)
+
+    assert updater.get_state()["state"] == "applying"
+    assert executed[0] == ("rename", fake_exe,
+                           fake_exe.with_name("Runsheet Pilot.exe.old"))
+    assert executed[1][2] == fake_exe                 # move lands on exe path
+    assert executed[2] == ("spawn_exe", fake_exe)
+
+
+def test_apply_update_unwritable_location_errors_without_download(upd_env, monkeypatch):
+    updater._AVAILABLE.update({
+        "asset_name": "Runsheet-Pilot-windows.exe",
+        "asset_url": "https://gh/win.exe",
+        "sums_url": "https://gh/sums.txt",
+        "version": "99.0.0",
+    })
+    monkeypatch.setattr(updater, "install_location",
+                        lambda executable=None, platform=None: (Path("X:/ro.exe"), False))
+    updater.apply_update(http_get=lambda url, **kw: FakeResponse(text="", content=b""))
+    st = updater.get_state()
+    assert st["state"] == "error"
+    assert "writable" in st["error"].lower() or "move the app" in st["error"].lower()
+
+
+def test_apply_update_checksum_mismatch_sets_error(upd_env, tmp_path, monkeypatch):
+    updater._AVAILABLE.update({
+        "asset_name": "Runsheet-Pilot-windows.exe",
+        "asset_url": "https://gh/win.exe",
+        "sums_url": "https://gh/sums.txt",
+        "version": "99.0.0",
+    })
+    fake_exe = tmp_path / "install" / "Runsheet Pilot.exe"
+    fake_exe.parent.mkdir(parents=True)
+    fake_exe.write_bytes(b"old")
+    monkeypatch.setattr(updater, "install_location",
+                        lambda executable=None, platform=None: (fake_exe, True))
+
+    def http_get(url, **kw):
+        if url == "https://gh/sums.txt":
+            return FakeResponse(text=("f" * 64) + "  Runsheet-Pilot-windows.exe\n")
+        return FakeResponse(content=b"tampered")
+
+    updater.apply_update(http_get=http_get)
+    assert updater.get_state()["state"] == "error"
+    assert fake_exe.read_bytes() == b"old"            # install untouched
+
+
+def test_cleanup_leftovers_removes_old_and_updates_dir(upd_env, tmp_path, monkeypatch):
+    exe = tmp_path / "install" / "Runsheet Pilot.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"new")
+    old = exe.with_name(exe.name + ".old")
+    old.write_bytes(b"old")
+    updater.UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+    (updater.UPDATES_DIR / "junk.part").write_bytes(b"x")
+    monkeypatch.setattr(updater, "install_location",
+                        lambda executable=None, platform=None: (exe, True))
+    updater.cleanup_leftovers(retry_delay=0)
+    assert not old.exists()
+    assert not updater.UPDATES_DIR.exists()

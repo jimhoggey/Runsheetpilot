@@ -229,3 +229,110 @@ def _execute_swap(ops, spawn=None, hard_exit=None):
                 except Exception:
                     log.exception("Rollback step failed (continuing)")
             raise
+
+
+def check_for_update(http_get=None, timeout=5, platform=None):
+    """Hit /releases/latest; stage + expose 'available' if newer. Failures
+    are logged and swallowed — a booth without internet must never see an
+    update error it didn't ask for."""
+    get = http_get or requests.get
+    try:
+        r = get(API_LATEST, timeout=timeout,
+                headers={"Accept": "application/vnd.github+json"})
+        r.raise_for_status()
+        info = parse_release(r.json(), platform=platform)
+    except Exception as e:
+        log.info("Update check skipped: %s", e)
+        return None
+    if info:
+        with _lock:
+            _AVAILABLE.clear()
+            _AVAILABLE.update(info)
+        _set(state="available", latest=info["version"],
+             notes_url=info["notes_url"], error=None)
+        log.info("Update available: v%s", info["version"])
+    return info
+
+
+def _prepare_payload(archive_path, platform):
+    """Windows: the downloaded exe IS the payload. Mac: extract the zip
+    with `ditto -x -k` (zipfile would strip the executable bits) and
+    sanity-check the bundle shape before we ever touch the installed app."""
+    if platform != "darwin":
+        return archive_path
+    extract = UPDATES_DIR / "extracted"
+    shutil.rmtree(extract, ignore_errors=True)
+    extract.mkdir(parents=True)
+    subprocess.run(["ditto", "-x", "-k", str(archive_path), str(extract)],
+                   check=True, capture_output=True)
+    apps = [p for p in extract.iterdir() if p.name.endswith(".app")]
+    if len(apps) != 1 or not (apps[0] / "Contents" / "MacOS").is_dir():
+        raise ValueError("Update zip did not contain a valid app bundle")
+    return apps[0]
+
+
+def apply_update(http_get=None, spawn=None, hard_exit=None):
+    """download -> verify -> prepare -> swap. Runs in a worker thread from
+    the route; every failure lands in state=error with the install intact."""
+    with _lock:
+        info = dict(_AVAILABLE)
+    if not info.get("asset_url"):
+        _set(state="error", error="No update staged — check for updates first.")
+        return
+    try:
+        install, writable = install_location()
+        if not writable:
+            raise PermissionError(
+                "Install location is not writable. Move the app to "
+                "Applications (Mac) or a writable folder (Windows), or "
+                "download the update manually.")
+        _set(state="downloading", error=None)
+        get = http_get or requests.get
+        sums_resp = get(info["sums_url"], timeout=30)
+        sums_resp.raise_for_status()
+        expected = parse_sha256sums(sums_resp.text).get(info["asset_name"])
+        if not expected:
+            raise ValueError(f"{info['asset_name']} missing from {SUMS_ASSET}")
+        archive = download_and_verify(info["asset_url"], info["asset_name"],
+                                      expected, http_get=http_get)
+        _set(state="verifying")
+        payload = _prepare_payload(archive, sys.platform)
+        _set(state="applying")
+        _execute_swap(plan_swap(install, payload, sys.platform),
+                      spawn=spawn, hard_exit=hard_exit)
+    except Exception as e:
+        log.exception("Update failed")
+        _set(state="error", error=str(e))
+
+
+def cleanup_leftovers(retry_delay=0.5):
+    """Boot-time janitor: delete the previous version (.old) and the
+    updates staging dir. The old process may still be exiting, so deleting
+    the .old retries briefly. Never fatal."""
+    try:
+        install, _ = install_location()
+        old = install.with_name(install.name + ".old")
+        for _ in range(10):
+            if not old.exists():
+                break
+            try:
+                if old.is_dir():
+                    shutil.rmtree(old)
+                else:
+                    old.unlink()
+                log.info("Removed previous version leftover: %s", old.name)
+                break
+            except Exception:
+                time.sleep(retry_delay)
+        shutil.rmtree(UPDATES_DIR, ignore_errors=True)
+    except Exception:
+        log.exception("cleanup_leftovers failed (non-fatal)")
+
+
+def start_background_check():
+    """Fire-and-forget launch check. Frozen bundles only — running from
+    source must never self-update."""
+    if not getattr(sys, "frozen", False):
+        return
+    threading.Thread(target=check_for_update, daemon=True,
+                     name="update-check").start()
