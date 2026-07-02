@@ -153,3 +153,21 @@ def download_and_verify(url, name, expected_sha, http_get=None, timeout=120):
         raise ValueError(f"Checksum mismatch for {name}")
     part.replace(final)
     return final
+
+
+def install_location(executable=None, platform=None):
+    """(install_root, writable). Mac: the .app bundle directory resolved
+    by walking up from sys.executable; Windows: the exe path itself.
+    `writable` checks the PARENT directory because the swap is two renames
+    inside it. Read-only (dmg mount, network share, no rights) -> the UI
+    degrades to notify-only instead of attempting a doomed swap."""
+    exe = Path(executable or sys.executable)
+    plat = platform or sys.platform
+    if plat == "darwin":
+        for parent in exe.parents:
+            if parent.name.endswith(".app"):
+                return parent, os.access(str(parent.parent), os.W_OK)
+        return exe.parent, False   # not in a bundle (dev) — never writable
+    if plat == "win32":
+        return exe, os.access(str(exe.parent), os.W_OK)
+    return exe, False

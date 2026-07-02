@@ -159,3 +159,34 @@ def test_download_and_verify_bad_checksum_deletes_and_raises(upd_env):
             http_get=lambda url, **kw: FakeResponse(content=b"tampered"))
     leftovers = list(updater.UPDATES_DIR.glob("*")) if updater.UPDATES_DIR.exists() else []
     assert leftovers == []
+
+
+# ── Install location ────────────────────────────────────────────────────────
+def test_install_location_mac_walks_up_to_app_bundle(tmp_path):
+    app = tmp_path / "Applications" / "Runsheet Pilot.app"
+    exe = app / "Contents" / "MacOS" / "Runsheet Pilot"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    loc, writable = updater.install_location(executable=str(exe), platform="darwin")
+    assert loc == app
+    assert writable is True   # tmp_path is writable
+
+
+def test_install_location_mac_readonly_volume_reports_unwritable(tmp_path, monkeypatch):
+    app = tmp_path / "Volumes" / "Runsheet Pilot" / "Runsheet Pilot.app"
+    exe = app / "Contents" / "MacOS" / "Runsheet Pilot"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(updater.os, "access", lambda p, m: False)
+    loc, writable = updater.install_location(executable=str(exe), platform="darwin")
+    assert loc == app
+    assert writable is False
+
+
+def test_install_location_windows_is_exe_path(tmp_path):
+    exe = tmp_path / "Desktop" / "Runsheet Pilot.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    loc, writable = updater.install_location(executable=str(exe), platform="win32")
+    assert loc == exe
+    assert writable is True
