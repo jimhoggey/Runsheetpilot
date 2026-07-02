@@ -95,6 +95,24 @@ jobs:
         shell: pwsh
         run: Copy-Item "dist\Runsheet Pilot.exe" "dist\Runsheet-Pilot-windows.exe"
 
+      # Upload BEFORE the smoke test. The smoke test has a known
+      # CI-runner-only failure mode (the bundle 404s every route on
+      # windows-latest; identical builds work on real Windows desktops —
+      # parked, see PR #32). With the upload after it, that quirk meant
+      # no Windows exe ever shipped, which would permanently break
+      # Windows self-update. The smoke test stays below as SIGNAL
+      # (job-level continue-on-error already keeps it non-blocking), and
+      # RELEASE_CHECKLIST.md mandates verifying the exe on the real
+      # church Windows machine before announcing a release.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-exe
+          path: |
+            dist/Runsheet Pilot.exe
+            dist/Runsheet-Pilot-windows.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Smoke-test the .exe
         # Launches the built .exe with --headless (suppresses the tkinter
         # status window — the GitHub Windows runner has no interactive
@@ -170,15 +188,6 @@ jobs:
             Invoke-WebRequest -Uri http://localhost:5757/api/quit `
                               -Method POST -TimeoutSec 5 -UseBasicParsing | Out-Null
           } catch {}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-exe
-          path: |
-            dist/Runsheet Pilot.exe
-            dist/Runsheet-Pilot-windows.exe
-          if-no-files-found: error
-          retention-days: 7
 
   # ─── Mac .dmg ──────────────────────────────────────────────────────────
   build-mac:
@@ -328,9 +337,14 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
+          # `**` matches zero or more path segments, covering BOTH layouts
+          # download-artifact@v8 produces: per-artifact subfolders when
+          # several artifacts exist, but a FLATTENED root when only one
+          # does (e.g. the Windows build failed). v2.3.0's first build
+          # lost its .dmg to exactly that flattening.
           files: |
-            artifacts/windows-exe/Runsheet Pilot.exe
-            artifacts/mac-dmg/*.dmg
+            artifacts/**/Runsheet Pilot.exe
+            artifacts/**/*.dmg
             stable/Runsheet-Pilot-*
             stable/SHA256SUMS.txt
           generate_release_notes: true
