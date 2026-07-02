@@ -39,6 +39,9 @@ license_private*
 # Claude Code local permissions (project-personal)
 .claude/settings.local.json
 
+# graphify knowledge graph (local dev aid — regenerate with /graphify)
+graphify-out/
+
 # Claude Code project-context file — kept locally for Claude sessions only,
 # deliberately NOT pushed to GitHub.
 CLAUDE.md
