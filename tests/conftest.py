@@ -4,10 +4,20 @@ We import the app module once and let individual tests redirect its on-disk
 state files into a per-test tmpdir so route tests can roundtrip safely
 without touching the user's real settings/runsheet/clocks files.
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# Isolate the app's data dir BEFORE importing it. config.DATA_DIR (and the
+# LOG_FILE handler) are resolved at import time, so this must be set first —
+# otherwise `pytest` writes into the real app.log, which previously polluted
+# the CI Windows smoke-test's app.log dump and made frozen-exe failures
+# undiagnosable. One throwaway dir for the whole test session is fine.
+os.environ.setdefault(
+    "RUNSHEET_PILOT_DATA_DIR", tempfile.mkdtemp(prefix="rp-test-datadir-"))
 
 # Make the project root importable so `import propresenter_app` works when
 # pytest is invoked from anywhere (CI, repo root, IDE).

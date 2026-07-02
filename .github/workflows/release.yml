@@ -132,6 +132,13 @@ jobs:
           $exe = "dist\Runsheet Pilot.exe"
           if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
 
+          # Clear any prior app.log so the failure dump below shows ONLY this
+          # exe's own startup output. (The test suite no longer writes here —
+          # it isolates via RUNSHEET_PILOT_DATA_DIR — but a previous smoke run
+          # on the same runner could still have left lines behind.)
+          $appLog = Join-Path $env:APPDATA "Runsheet Pilot\app.log"
+          Remove-Item $appLog -ErrorAction SilentlyContinue
+
           $stdoutFile = "$env:RUNNER_TEMP\app-stdout.log"
           $stderrFile = "$env:RUNNER_TEMP\app-stderr.log"
           $proc = Start-Process -FilePath $exe -ArgumentList "--headless" `
@@ -155,6 +162,23 @@ jobs:
           }
 
           if (-not $ok) {
+            Write-Host ""
+            Write-Host "=== FINAL PROBE (real status, does not throw) ==="
+            # -SkipHttpErrorCheck returns the response instead of throwing on
+            # 4xx/5xx, so we can tell a *wrong status* (404/500 = routes not
+            # registered / app error) apart from *no response at all*
+            # (connection refused / hang). This is the decisive signal the
+            # old try/catch{} swallowed.
+            foreach ($path in @("/api/health", "/")) {
+              try {
+                $resp = Invoke-WebRequest -Uri "http://localhost:5757$path" `
+                          -TimeoutSec 4 -UseBasicParsing -SkipHttpErrorCheck
+                $body = if ($resp.Content) { $resp.Content.Substring(0, [Math]::Min(200, $resp.Content.Length)) } else { "" }
+                Write-Host "  $path -> HTTP $($resp.StatusCode)  body: $body"
+              } catch {
+                Write-Host "  $path -> NO RESPONSE ($($_.Exception.Message))"
+              }
+            }
             Write-Host ""
             Write-Host "=== PROCESS STATE ==="
             if ($proc.HasExited) {

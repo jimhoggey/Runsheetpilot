@@ -50,6 +50,17 @@ def _user_data_dir() -> Path:
     a fresh empty dir — the app still works, the user just loses their
     old settings file (one-line fix from the in-app Settings dialog).
     """
+    # Explicit override — points the ENTIRE data dir (settings, logs,
+    # runsheet/clock state) somewhere isolated. The test suite sets this
+    # so `pytest` never writes to the real app.log; without it, test runs
+    # polluted the CI Windows smoke test's app.log dump and made frozen-
+    # exe failures impossible to diagnose. Also handy for portable installs.
+    override = os.environ.get("RUNSHEET_PILOT_DATA_DIR")
+    if override:
+        d = Path(override)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     root = _platform_data_root()
     new = root / APP_NAME
     old = root / _LEGACY_APP_NAME
