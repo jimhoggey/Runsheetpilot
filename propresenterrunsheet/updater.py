@@ -118,3 +118,38 @@ def parse_release(payload, platform=None):
         "asset_url": asset["browser_download_url"],
         "sums_url": sums["browser_download_url"],
     }
+
+
+def parse_sha256sums(text):
+    """Parse `sha256sum` output: '<64-hex>  <name>' per line. Tolerates the
+    binary marker (*name) and path prefixes — keys are bare filenames."""
+    out = {}
+    for line in (text or "").splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and len(parts[0]) == 64:
+            name = parts[-1].lstrip("*").replace("\\", "/").rsplit("/", 1)[-1]
+            out[name] = parts[0].lower()
+    return out
+
+
+def download_and_verify(url, name, expected_sha, http_get=None, timeout=120):
+    """Stream `url` to UPDATES_DIR/<name> (via a .part file so a torn
+    download can never be mistaken for a complete one) and verify SHA-256.
+    Mismatch -> delete + ValueError."""
+    get = http_get or requests.get
+    UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+    part = UPDATES_DIR / (name + ".part")
+    final = UPDATES_DIR / name
+    digest = hashlib.sha256()
+    with get(url, stream=True, timeout=timeout) as r:
+        r.raise_for_status()
+        with open(part, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1 << 16):
+                if chunk:
+                    f.write(chunk)
+                    digest.update(chunk)
+    if digest.hexdigest().lower() != (expected_sha or "").lower():
+        part.unlink(missing_ok=True)
+        raise ValueError(f"Checksum mismatch for {name}")
+    part.replace(final)
+    return final

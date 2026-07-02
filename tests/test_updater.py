@@ -121,3 +121,41 @@ def test_parse_release_none_when_not_newer_or_missing_assets():
         {"name": "Runsheet-Pilot-windows.exe", "browser_download_url": "https://gh/w.exe"}])
     assert updater.parse_release(no_sums, platform="win32") is None
     assert updater.parse_release(None, platform="win32") is None
+
+
+# ── Checksums + download ────────────────────────────────────────────────────
+def test_parse_sha256sums_handles_binary_marker_and_paths():
+    good = "a" * 64
+    text = (
+        f"{good}  Runsheet-Pilot-windows.exe\n"
+        f"{'b' * 64} *Runsheet-Pilot-mac.zip\n"
+        f"{'c' * 64}  ./stable/Runsheet-Pilot-other.bin\n"
+        "not a sums line\n"
+    )
+    sums = updater.parse_sha256sums(text)
+    assert sums["Runsheet-Pilot-windows.exe"] == good
+    assert sums["Runsheet-Pilot-mac.zip"] == "b" * 64
+    assert sums["Runsheet-Pilot-other.bin"] == "c" * 64
+    assert updater.parse_sha256sums("") == {}
+    assert updater.parse_sha256sums(None) == {}
+
+
+def test_download_and_verify_good_checksum(upd_env):
+    import hashlib
+    body = b"new-shiny-binary" * 1000
+    expected = hashlib.sha256(body).hexdigest()
+    got = updater.download_and_verify(
+        "https://gh/win.exe", "Runsheet-Pilot-windows.exe", expected,
+        http_get=lambda url, **kw: FakeResponse(content=body))
+    assert got.read_bytes() == body
+    assert got.name == "Runsheet-Pilot-windows.exe"
+    assert not got.with_name(got.name + ".part").exists()
+
+
+def test_download_and_verify_bad_checksum_deletes_and_raises(upd_env):
+    with pytest.raises(ValueError, match="Checksum mismatch"):
+        updater.download_and_verify(
+            "https://gh/win.exe", "Runsheet-Pilot-windows.exe", "f" * 64,
+            http_get=lambda url, **kw: FakeResponse(content=b"tampered"))
+    leftovers = list(updater.UPDATES_DIR.glob("*")) if updater.UPDATES_DIR.exists() else []
+    assert leftovers == []
