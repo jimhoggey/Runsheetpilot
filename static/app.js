@@ -1160,3 +1160,128 @@ document.getElementById('prompt-textarea')
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePromptModal();
 });
+
+// ─── 11. Self-update ───────────────────────────────────────────────────────
+// Banner appears when the background check (server-side, on launch) found
+// a newer GitHub release. "Update & Restart" downloads + verifies + swaps
+// the app; while the server restarts we poll until it answers again, then
+// reload the page into the new version.
+
+let _updateDismissed = false;
+
+async function loadUpdateState() {
+  try {
+    const st = await fetch('/api/update').then(r => r.json());
+    renderUpdateState(st);
+  } catch (e) { /* server unreachable — ignore */ }
+}
+
+function renderUpdateState(st) {
+  const cur = document.getElementById('update-current-version');
+  if (cur && st.current) cur.textContent = st.current;
+  const banner = document.getElementById('update-banner');
+  if (!banner) return;
+  if (st.state === 'available' && !_updateDismissed) {
+    document.getElementById('update-banner-text').textContent =
+      '⬆ Version ' + st.latest + ' is available.';
+    const link = document.getElementById('update-notes-link');
+    if (st.notes_url) { link.href = st.notes_url; link.hidden = false; }
+    banner.hidden = false;
+  } else if (st.state === 'error') {
+    document.getElementById('update-banner-text').textContent =
+      '⚠ Update failed: ' + (st.error || 'unknown error') + ' ';
+    const link = document.getElementById('update-notes-link');
+    link.textContent = 'Download manually';
+    link.href = 'https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest';
+    link.hidden = false;
+    const btn = document.getElementById('update-apply-btn');
+    btn.disabled = false;
+    btn.textContent = 'Try again';
+    banner.hidden = false;
+  } else if (st.state !== 'downloading' && st.state !== 'verifying'
+             && st.state !== 'applying') {
+    banner.hidden = true;
+  }
+}
+
+async function applyUpdate() {
+  const btn = document.getElementById('update-apply-btn');
+  btn.disabled = true;
+  btn.textContent = 'Downloading…';
+  try {
+    const r = await fetch('/api/update/apply', {method: 'POST'});
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      btn.disabled = false;
+      btn.textContent = 'Update & Restart';
+      setStatus('Update could not start: ' + (body.error || r.status), 'var(--org)');
+      return;
+    }
+  } catch (e) { /* fall through to polling — server may already be swapping */ }
+  _pollUpdateProgress();
+}
+
+async function _pollUpdateProgress() {
+  const btn = document.getElementById('update-apply-btn');
+  try {
+    const st = await fetch('/api/update').then(r => r.json());
+    if (st.state === 'error') { renderUpdateState(st); return; }
+    if (st.state === 'downloading' || st.state === 'verifying') {
+      btn.textContent = 'Downloading…';
+    } else if (st.state === 'applying') {
+      btn.textContent = 'Restarting…';
+    }
+    setTimeout(_pollUpdateProgress, 1000);
+  } catch (e) {
+    // Server went away — the swap + relaunch is happening. Reload until
+    // the new version answers.
+    btn.textContent = 'Restarting…';
+    _reloadWhenBack(20);
+  }
+}
+
+function _reloadWhenBack(attempts) {
+  if (attempts <= 0) {
+    setStatus('The app is restarting — reload this page in a moment.', 'var(--org)');
+    return;
+  }
+  setTimeout(async () => {
+    try {
+      await fetch('/api/health', {cache: 'no-store'});
+      location.reload();
+    } catch (e) {
+      _reloadWhenBack(attempts - 1);
+    }
+  }, 1500);
+}
+
+function dismissUpdateBanner() {
+  _updateDismissed = true;
+  document.getElementById('update-banner').hidden = true;
+}
+
+async function checkForUpdatesNow() {
+  const msg = document.getElementById('update-check-msg');
+  msg.style.color = 'var(--muted)';
+  msg.textContent = 'Checking…';
+  try {
+    const st = await fetch('/api/update?refresh=1').then(r => r.json());
+    if (st.state === 'dev') {
+      msg.textContent = 'Running from source — self-update is disabled.';
+    } else if (st.state === 'available') {
+      msg.style.color = 'var(--grn)';
+      msg.textContent = 'Version ' + st.latest + ' available — see the banner above.';
+      _updateDismissed = false;
+      renderUpdateState(st);
+    } else {
+      msg.style.color = 'var(--grn)';
+      msg.textContent = 'You are up to date.';
+    }
+  } catch (e) {
+    msg.style.color = 'var(--org)';
+    msg.textContent = 'Could not reach GitHub — check your connection.';
+  }
+}
+
+loadUpdateState();
+setInterval(loadUpdateState, 60 * 60 * 1000);   // re-render if a check lands later

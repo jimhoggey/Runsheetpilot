@@ -20,6 +20,20 @@
   </div>
 </header>
 
+<!-- Update banner — hidden unless the background check found a newer
+     release (state=available from /api/update). One click downloads,
+     verifies, swaps the app, and relaunches. Driven by app.js. -->
+<div id="update-banner" hidden>
+  <span id="update-banner-text">⬆ A new version is available.</span>
+  <a id="update-notes-link" href="#" target="_blank" rel="noopener">Release notes</a>
+  <span style="flex:1"></span>
+  <button class="btn btn-acc btn-sm" id="update-apply-btn" onclick="applyUpdate()">
+    Update &amp; Restart
+  </button>
+  <button class="btn btn-dim btn-sm" id="update-later-btn"
+          onclick="dismissUpdateBanner()" title="Hide until next launch">Later</button>
+</div>
+
 <div class="layout">
 
 <aside>
@@ -435,6 +449,20 @@
         <div class="field">
           <label for="export-dir">Save a .playlist backup file to (leave blank to skip)</label>
           <input id="export-dir" type="text" placeholder="~/Desktop">
+        </div>
+      </section>
+
+      <!-- UPDATES ──────────────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>Updates</h3>
+        <div class="row" style="gap:8px;align-items:center">
+          <span style="font-size:.8rem;color:var(--muted)">
+            Current version: v<span id="update-current-version">—</span>
+          </span>
+          <button class="btn btn-dim btn-sm" onclick="checkForUpdatesNow()">
+            Check for updates
+          </button>
+          <span id="update-check-msg" style="font-size:.74rem"></span>
         </div>
       </section>
 

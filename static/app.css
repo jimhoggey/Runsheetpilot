@@ -1111,3 +1111,17 @@ button:focus-visible, .quit-btn:focus-visible {
   100% { transform: translate(var(--tx), var(--ty)) rotate(var(--rot));
          opacity: 0; }
 }
+
+/* ── Self-update banner ─────────────────────────────────────────────── */
+#update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  background: var(--acc-soft);
+  border-bottom: 1px solid var(--acc-glow);
+  font-size: 0.82rem;
+}
+#update-banner[hidden] { display: none; }
+#update-banner-text { font-weight: 600; }
+#update-notes-link { color: var(--acc-2); font-size: 0.76rem; }
