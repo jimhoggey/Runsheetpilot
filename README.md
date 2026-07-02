@@ -7,73 +7,75 @@ Runs on macOS and Windows. Opens at `http://localhost:5757` in your browser.
 
 ---
 
-## Before you start
+## Install
 
-You need three things on the machine that will run the app:
+Runsheet Pilot is a ready-to-run app — **no Python, no setup**. You install it once; after that it **updates itself** (a one-click **Update & Restart** button appears in the app whenever a new version is out).
 
-### 1. Python 3
+### 🍎 Mac
 
-- **Mac:** `brew install python` or download from [python.org](https://python.org).
-- **Windows:** download from [python.org](https://python.org). During install, **tick "Add Python to PATH"** — the launcher needs `python` on PATH.
+**Download & install**
 
-### 2. ProPresenter running, with Network enabled
+1. Download **[Runsheet-Pilot-mac.dmg](https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-mac.dmg)**.
+2. Open it, then drag **Runsheet Pilot** into your **Applications** folder.
+3. **First launch only:** right-click the app → **Open**, then click **Open** on the prompt. (macOS shows this once because the app isn't signed by Apple; after that it opens normally.)
 
-The app talks to ProPresenter on `localhost:50001`, so **ProPresenter must be running on the same machine** while you create playlists.
-
-To enable the API:
-
-1. Open ProPresenter → **Preferences** → **Integrations** → **Network**
-2. Switch **Network** to **ON**
-
-If Network is off, playlist creation will fail with a connection-refused error.
-
-### 3. An OpenRouter API key
-
-The app uses OpenRouter to parse the runsheet PDF.
-
-1. Sign up at [openrouter.ai](https://openrouter.ai) and create an API key.
-2. **Recommended free model: GPT-OSS.** It's free to use and parses runsheets reliably. Find it at [openrouter.ai/models](https://openrouter.ai/models) (search "gpt-oss") and copy the model ID — for example `openai/gpt-oss-20b:free` — into the app's *Model* field.
-3. Paste your key into the *API Key* field in the app's sidebar. It auto-saves.
-
-Your key is stored locally in your OS app-data folder (see [Where settings live](#where-settings-and-logs-live)) — it never leaves your machine except in calls to OpenRouter, and it is never committed to git.
-
----
-
-## Run on Mac
-
-From a Terminal in the project folder:
+**Or, install with one line** — paste into **Terminal**. It downloads, installs to Applications, skips the security prompt, and launches the app:
 
 ```bash
-./launch_mac.sh
+curl -L https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-mac.zip -o /tmp/rp.zip && ditto -x -k /tmp/rp.zip /Applications && xattr -dr com.apple.quarantine "/Applications/Runsheet Pilot.app" && open "/Applications/Runsheet Pilot.app"
 ```
 
-Or directly: `python3 propresenter_app.py`.
+### 🪟 Windows
 
-The launcher installs/updates Python dependencies on each run, then starts the server. Your browser should open automatically at `http://localhost:5757`.
+**Download & run**
 
-Quit via the **Quit** button in the UI, or `Ctrl+C` in the terminal.
+1. Download **[Runsheet-Pilot-windows.exe](https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-windows.exe)**.
+2. Move it somewhere permanent — a **Runsheet Pilot** folder or your **Desktop** works well (not the Downloads folder, so the app has a stable home for its self-updates).
+3. Double-click it. Windows SmartScreen warns because the app isn't signed: click **More info → Run anyway**. (Once only — after that it launches straight away.)
 
-## Run on Windows
+**Or, download with one line** — paste into **PowerShell**. It saves the app to your Desktop:
 
-Double-click `run.bat`. It checks Python is installed, installs/updates dependencies, and starts the server. Your browser should open automatically.
+```powershell
+$ProgressPreference='SilentlyContinue'; iwr https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-windows.exe -OutFile "$HOME\Desktop\Runsheet Pilot.exe"
+```
 
-Quit via the **Quit** button in the UI, or close the terminal window.
+Then double-click **Runsheet Pilot** on your Desktop (**More info → Run anyway** the first time).
+
+> **After this first install you never download again.** When a new version ships, the app shows an **Update & Restart** banner — one click swaps it and relaunches. Quit any time with the **Quit** button in the app.
 
 ---
 
-## Build a one-click app (optional)
+## First-time setup
 
-If you'd rather not install Python on every machine, you can produce a native bundle. The user just double-clicks an icon — no Python required.
+Two quick things so the app can build playlists. You only do these once.
 
-- **Mac:** `./build_mac.sh` → `dist/Runsheet Pilot.app` and a `.dmg` installer.
-- **Windows:** `build_win.bat` → `dist\Runsheet Pilot.exe`.
+### 1. Turn on ProPresenter's network API
 
-Bundles are unsigned, so the first launch shows a warning:
+The app talks to ProPresenter on the same computer. In ProPresenter: **Preferences → Integrations → Network → ON**. (If it's off, creating a playlist fails with a "connection refused" error.)
 
-- **Mac:** right-click the app → **Open** (one-time Gatekeeper prompt).
-- **Windows:** click **More info** → **Run anyway** on the SmartScreen prompt.
+### 2. Add a free OpenRouter key
 
-The Windows `.exe` must be built on a Windows machine — PyInstaller doesn't cross-compile.
+The app uses an OpenRouter AI model to read your runsheet PDF.
+
+1. Sign up at [openrouter.ai](https://openrouter.ai) and create an API key.
+2. In the app, open **⚙ Settings** and paste the key into **OpenRouter → API key** (it auto-saves).
+3. Recommended free model: search "gpt-oss" at [openrouter.ai/models](https://openrouter.ai/models) and put e.g. `openai/gpt-oss-20b:free` in the **Model** field.
+
+Your key stays on your computer (in the app-data folder — see [Where settings live](#where-settings-and-logs-live)); it's never committed to git and only leaves your machine in calls to OpenRouter.
+
+---
+
+## Run from source (for developers)
+
+Only needed if you want to modify the code. Requires **Python 3.11+**.
+
+```bash
+git clone https://github.com/jimhoggey/propresenter-runsheet-builder.git
+cd propresenter-runsheet-builder
+./launch_mac.sh          # Mac: installs dependencies, then runs
+```
+
+On **Windows**, double-click **`run.bat`** instead (it does the same). Either way the app opens at `http://localhost:5757`. To build your own installable bundles: `./build_mac.sh` (Mac) or `build_win.bat` (Windows — the `.exe` must be built on a Windows machine; PyInstaller doesn't cross-compile).
 
 ---
 
