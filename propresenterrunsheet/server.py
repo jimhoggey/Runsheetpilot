@@ -34,6 +34,7 @@ import webbrowser
 from .config import APP_NAME, DATA_DIR, DEFAULT_PORT, LOG_FILE, PORT_RANGE
 from .config import SETTINGS_FILE, UPLOAD_FOLDER, VERSION
 from .service_mate.daemon import start_clocks_loop
+from .updater import cleanup_leftovers, start_background_check
 
 
 log = logging.getLogger("pp_runsheet")
@@ -292,6 +293,14 @@ def main(app=None) -> None:
         # the LAN. No-op if no clock IPs are configured. Internally spawns
         # its own daemon thread (idempotent).
         start_clocks_loop()
+
+        # Self-update housekeeping (frozen bundles only — both are no-ops
+        # from source): delete the previous version's .old leftover and the
+        # updates staging dir, then check GitHub for a newer release in the
+        # background. Never blocks startup; check failures are silent.
+        if getattr(sys, "frozen", False):
+            cleanup_leftovers()
+        start_background_check()
 
         # Two-mode startup, gated by _should_show_status_window():
         #   PyInstaller bundle + Windows from-source → waitress in daemon

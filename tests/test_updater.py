@@ -356,3 +356,54 @@ def test_cleanup_leftovers_removes_old_and_updates_dir(upd_env, tmp_path, monkey
     updater.cleanup_leftovers(retry_delay=0)
     assert not old.exists()
     assert not updater.UPDATES_DIR.exists()
+
+
+# ── Routes ──────────────────────────────────────────────────────────────────
+def test_api_update_get_dev_mode(client):
+    r = client.get("/api/update")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["state"] == "dev"
+    assert body["current"] == updater.VERSION
+
+
+def test_api_update_apply_409_in_dev_mode(client):
+    r = client.post("/api/update/apply")
+    assert r.status_code == 409
+
+
+def test_api_update_get_frozen_returns_state(client, monkeypatch, upd_env):
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    updater._set(state="available", latest="99.0.0",
+                 notes_url="https://gh/rel", error=None)
+    body = client.get("/api/update").get_json()
+    assert body["state"] == "available"
+    assert body["latest"] == "99.0.0"
+
+
+def test_api_update_apply_starts_worker_when_available(client, monkeypatch, upd_env):
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    updater._set(state="available", latest="99.0.0")
+    calls = []
+    monkeypatch.setattr(updater, "apply_update", lambda **kw: calls.append(1))
+
+    import propresenterrunsheet.routes.update as upd_routes
+    ran = []
+
+    class FakeThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._t = target
+        def start(self):
+            self._t()
+            ran.append(1)
+    monkeypatch.setattr(upd_routes.threading, "Thread", FakeThread)
+
+    r = client.post("/api/update/apply")
+    assert r.status_code == 200
+    assert calls == [1] and ran == [1]
+
+
+def test_api_update_apply_409_when_nothing_available(client, monkeypatch, upd_env):
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    updater._set(state="idle")
+    assert client.post("/api/update/apply").status_code == 409
