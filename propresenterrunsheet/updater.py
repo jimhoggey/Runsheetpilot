@@ -87,3 +87,34 @@ def is_newer(tag, current=VERSION) -> bool:
     remote = parse_semver(tag)
     local = parse_semver(current)
     return bool(remote and local and remote > local)
+
+
+def pick_platform_asset(assets, platform=None):
+    """Exact-name match for this platform's stable asset, else None."""
+    want = ASSET_MAC if (platform or sys.platform) == "darwin" else ASSET_WIN
+    for a in assets or []:
+        if a.get("name") == want:
+            return a
+    return None
+
+
+def parse_release(payload, platform=None):
+    """Turn a /releases/latest payload into update info, or None if the
+    release isn't newer, lacks this platform's stable asset, or lacks the
+    checksums file (unverifiable -> not offered)."""
+    tag = (payload or {}).get("tag_name") or ""
+    ver = parse_semver(tag)
+    if not ver or not is_newer(tag):
+        return None
+    assets = payload.get("assets") or []
+    asset = pick_platform_asset(assets, platform)
+    sums = next((a for a in assets if a.get("name") == SUMS_ASSET), None)
+    if not asset or not sums:
+        return None
+    return {
+        "version": ".".join(str(p) for p in ver),
+        "notes_url": payload.get("html_url") or RELEASES_PAGE,
+        "asset_name": asset["name"],
+        "asset_url": asset["browser_download_url"],
+        "sums_url": sums["browser_download_url"],
+    }

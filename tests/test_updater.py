@@ -74,3 +74,50 @@ def test_is_newer_orders_numerically_not_lexically():
     assert updater.is_newer("v2.3.0", current="2.3.0") is False
     assert updater.is_newer("v2.2.9", current="2.3.0") is False
     assert updater.is_newer("garbage", current="2.3.0") is False
+
+
+# ── Release payload parsing ─────────────────────────────────────────────────
+def _release_payload(tag="v9.9.9", assets=None):
+    if assets is None:
+        assets = [
+            {"name": "Runsheet-Pilot-mac.zip",
+             "browser_download_url": "https://gh/mac.zip"},
+            {"name": "Runsheet-Pilot-windows.exe",
+             "browser_download_url": "https://gh/win.exe"},
+            {"name": "SHA256SUMS.txt",
+             "browser_download_url": "https://gh/sums.txt"},
+            {"name": "Runsheet-Pilot-9.9.9.dmg",
+             "browser_download_url": "https://gh/inst.dmg"},
+        ]
+    return {"tag_name": tag, "html_url": "https://gh/rel", "assets": assets}
+
+
+def test_pick_platform_asset_darwin_and_win32():
+    assets = _release_payload()["assets"]
+    assert updater.pick_platform_asset(assets, "darwin")["name"] == "Runsheet-Pilot-mac.zip"
+    assert updater.pick_platform_asset(assets, "win32")["name"] == "Runsheet-Pilot-windows.exe"
+    assert updater.pick_platform_asset([], "darwin") is None
+
+
+def test_parse_release_returns_info_when_newer():
+    info = updater.parse_release(_release_payload(), platform="win32")
+    assert info == {
+        "version": "9.9.9",
+        "notes_url": "https://gh/rel",
+        "asset_name": "Runsheet-Pilot-windows.exe",
+        "asset_url": "https://gh/win.exe",
+        "sums_url": "https://gh/sums.txt",
+    }
+
+
+def test_parse_release_none_when_not_newer_or_missing_assets():
+    assert updater.parse_release(_release_payload(tag="v0.0.1"), platform="win32") is None
+    # newer tag but no stable asset for the platform -> invisible to updater
+    no_win = _release_payload(assets=[
+        {"name": "SHA256SUMS.txt", "browser_download_url": "https://gh/sums.txt"}])
+    assert updater.parse_release(no_win, platform="win32") is None
+    # newer tag, asset present, but sums file missing -> refuse (can't verify)
+    no_sums = _release_payload(assets=[
+        {"name": "Runsheet-Pilot-windows.exe", "browser_download_url": "https://gh/w.exe"}])
+    assert updater.parse_release(no_sums, platform="win32") is None
+    assert updater.parse_release(None, platform="win32") is None
