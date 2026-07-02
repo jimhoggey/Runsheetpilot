@@ -171,3 +171,61 @@ def install_location(executable=None, platform=None):
     if plat == "win32":
         return exe, os.access(str(exe.parent), os.W_OK)
     return exe, False
+
+
+def plan_swap(install_path, new_payload, platform):
+    """Pure: the exact operation sequence for the swap, as data. Kept free
+    of side effects so the Windows order is asserted in tests that run on
+    the Mac dev machine (Windows is the production deployment)."""
+    old = install_path.with_name(install_path.name + ".old")
+    spawn_kind = "spawn_exe" if platform == "win32" else "spawn_app"
+    return [
+        ("rename", install_path, old),
+        ("move", new_payload, install_path),
+        (spawn_kind, install_path),
+        ("exit",),
+    ]
+
+
+def _default_spawn(op):
+    kind, target = op[0], op[1]
+    if kind == "spawn_exe":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — the child must
+        # outlive this process or the relaunch dies with us.
+        flags = 0x00000008 | 0x00000200
+        subprocess.Popen([str(target)], creationflags=flags, close_fds=True)
+    else:
+        subprocess.Popen(["open", str(target)])
+
+
+def _execute_swap(ops, spawn=None, hard_exit=None):
+    """Walk the op plan. Any failure rolls the filesystem ops back in
+    reverse so the installed copy keeps working, then re-raises for the
+    caller to surface in the banner."""
+    spawn = spawn or _default_spawn
+    hard_exit = hard_exit or os._exit
+    done = []
+    for op in ops:
+        kind = op[0]
+        try:
+            if kind == "rename":
+                op[1].rename(op[2])
+                done.append(op)
+            elif kind == "move":
+                shutil.move(str(op[1]), str(op[2]))
+                done.append(op)
+            elif kind in ("spawn_exe", "spawn_app"):
+                spawn(op)
+            elif kind == "exit":
+                log.info("Update applied — restarting")
+                hard_exit(0)
+        except Exception:
+            for d in reversed(done):
+                try:
+                    if d[0] == "rename":
+                        d[2].rename(d[1])
+                    elif d[0] == "move":
+                        shutil.move(str(d[2]), str(d[1]))
+                except Exception:
+                    log.exception("Rollback step failed (continuing)")
+            raise

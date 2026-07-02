@@ -190,3 +190,62 @@ def test_install_location_windows_is_exe_path(tmp_path):
     loc, writable = updater.install_location(executable=str(exe), platform="win32")
     assert loc == exe
     assert writable is True
+
+
+# ── Swap plan + executor ────────────────────────────────────────────────────
+def test_plan_swap_windows_exact_operation_order():
+    exe = Path("C:/Users/av/Desktop/Runsheet Pilot.exe")
+    new = Path("C:/Users/av/AppData/Roaming/Runsheet Pilot/updates/Runsheet-Pilot-windows.exe")
+    ops = updater.plan_swap(exe, new, "win32")
+    assert ops == [
+        ("rename", exe, Path("C:/Users/av/Desktop/Runsheet Pilot.exe.old")),
+        ("move", new, exe),
+        ("spawn_exe", exe),
+        ("exit",),
+    ]
+
+
+def test_plan_swap_mac_uses_open():
+    app = Path("/Applications/Runsheet Pilot.app")
+    new = Path("/tmp/updates/extracted/Runsheet Pilot.app")
+    ops = updater.plan_swap(app, new, "darwin")
+    assert ops == [
+        ("rename", app, Path("/Applications/Runsheet Pilot.app.old")),
+        ("move", new, app),
+        ("spawn_app", app),
+        ("exit",),
+    ]
+
+
+def test_execute_swap_happy_path_filesystem_end_state(tmp_path):
+    installed = tmp_path / "Runsheet Pilot.app"
+    (installed / "Contents").mkdir(parents=True)
+    (installed / "Contents" / "old-marker").write_text("v1")
+    new = tmp_path / "staged" / "Runsheet Pilot.app"
+    (new / "Contents").mkdir(parents=True)
+    (new / "Contents" / "new-marker").write_text("v2")
+
+    spawned, exited = [], []
+    ops = updater.plan_swap(installed, new, "darwin")
+    updater._execute_swap(ops, spawn=lambda op: spawned.append(op),
+                          hard_exit=lambda code=0: exited.append(code))
+
+    assert (installed / "Contents" / "new-marker").exists()
+    old = installed.with_name(installed.name + ".old")
+    assert (old / "Contents" / "old-marker").exists()
+    assert spawned == [("spawn_app", installed)]
+    assert exited == [0]
+
+
+def test_execute_swap_rolls_back_rename_when_move_fails(tmp_path):
+    installed = tmp_path / "Runsheet Pilot.app"
+    (installed / "Contents").mkdir(parents=True)
+    missing_new = tmp_path / "staged" / "does-not-exist.app"   # move will fail
+
+    ops = updater.plan_swap(installed, missing_new, "darwin")
+    with pytest.raises(Exception):
+        updater._execute_swap(ops, spawn=lambda op: None,
+                              hard_exit=lambda code=0: None)
+
+    assert installed.exists()                                   # rolled back
+    assert not installed.with_name(installed.name + ".old").exists()
