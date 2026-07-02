@@ -318,3 +318,38 @@ def test_index_returns_html(client):
     assert b"<!DOCTYPE html>" in r.data
     # Service Mate UI is on the main page
     assert b"Service Mate" in r.data
+
+
+# ── HTTP error handling ─────────────────────────────────────────────────────
+def test_unknown_url_returns_404_not_500(client):
+    """A missing URL — e.g. the browser's automatic /favicon.ico probe —
+    must return a real 404, not be logged as an unhandled crash and masked
+    as a 500 by the catch-all exception handler (regression: Windows log
+    filled with tracebacks on every launch)."""
+    assert client.get("/favicon.ico").status_code == 404
+    assert client.get("/definitely-not-a-route").status_code == 404
+
+
+def test_wrong_method_returns_405_not_500(client):
+    """Wrong HTTP method on a real route keeps its 405 through the catch-all
+    handler instead of collapsing to a 500."""
+    # /api/health is GET-only
+    assert client.post("/api/health").status_code == 405
+
+
+def test_catch_all_passes_through_http_exception(app_module):
+    """The catch-all returns HTTPExceptions unchanged (preserving their
+    status), rather than logging + wrapping them as a 500."""
+    from werkzeug.exceptions import NotFound
+    exc = NotFound()
+    assert app_module._unhandled(exc) is exc
+
+
+def test_catch_all_returns_500_for_non_http_exception(app_module):
+    """A genuine (non-HTTP) exception still becomes a JSON 500 — the
+    pass-through only spares HTTPExceptions. Called directly so Flask's
+    TESTING-mode exception propagation doesn't get in the way."""
+    with app_module.app.app_context():
+        resp, status = app_module._unhandled(RuntimeError("kaboom"))
+    assert status == 500
+    assert "kaboom" in resp.get_json()["error"]
