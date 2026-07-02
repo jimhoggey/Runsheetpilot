@@ -221,7 +221,11 @@ jobs:
                     | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
           APP_NAME="Runsheet Pilot"
           APP_BUNDLE="${APP_NAME}.app"
-          DMG_NAME="Runsheet-Pilot-${VERSION}.dmg"
+          # Stable, versionless name so the README can link to a permanent
+          # download URL (/releases/latest/download/Runsheet-Pilot-mac.dmg)
+          # that always points at the newest release. The version is still
+          # visible in the release title/tag.
+          DMG_NAME="Runsheet-Pilot-mac.dmg"
 
           pyinstaller \
             --name "${APP_NAME}" \
@@ -342,8 +346,13 @@ jobs:
           # several artifacts exist, but a FLATTENED root when only one
           # does (e.g. the Windows build failed). v2.3.0's first build
           # lost its .dmg to exactly that flattening.
+          # One clean file per platform: Runsheet-Pilot-mac.dmg (human
+          # install), Runsheet-Pilot-mac.zip (Mac updater payload),
+          # Runsheet-Pilot-windows.exe (Windows install + updater), plus
+          # SHA256SUMS.txt. The old space-named "Runsheet Pilot.exe" is
+          # deliberately NOT published — it was a confusing duplicate of
+          # the stable-named exe.
           files: |
-            artifacts/**/Runsheet Pilot.exe
             artifacts/**/*.dmg
             stable/Runsheet-Pilot-*
             stable/SHA256SUMS.txt
