@@ -45,6 +45,7 @@ if __name__ == "__main__" and "propresenter_app" not in sys.modules:
     sys.modules["propresenter_app"] = sys.modules["__main__"]
 
 from flask import Flask, jsonify
+from werkzeug.exceptions import HTTPException
 
 # Side-effect imports: `propresenterrunsheet/__init__.py` configures
 # logging and loads the propresenter / service_mate / parsing sub-packages
@@ -76,6 +77,14 @@ def _too_large(_e):
 
 @app.errorhandler(Exception)
 def _unhandled(e):
+    # Flask routes werkzeug HTTPExceptions (404, 405, …) through this
+    # catch-all too, because it's registered on the base Exception class.
+    # Let those keep their own status code instead of being logged as a
+    # crash and masked as a 500 — otherwise the browser's automatic
+    # /favicon.ico probe fills the log with scary tracebacks on every
+    # launch and every missing URL "fails" as a 500.
+    if isinstance(e, HTTPException):
+        return e
     log.exception("Unhandled exception in request")
     return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
 
