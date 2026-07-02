@@ -16,10 +16,11 @@ from .parse import bp as parse_bp
 from .playlist import bp as playlist_bp
 from .runsheet import bp as runsheet_bp
 from .settings import bp as settings_bp
+from .update import bp as update_bp
 
 
 def register_blueprints(app) -> None:
     """Register every blueprint in this package onto the Flask app."""
     for bp in (core_bp, settings_bp, library_bp, parse_bp,
-               playlist_bp, runsheet_bp, clocks_bp, license_bp):
+               playlist_bp, runsheet_bp, clocks_bp, license_bp, update_bp):
         app.register_blueprint(bp)

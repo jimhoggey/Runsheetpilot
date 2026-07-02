@@ -69,6 +69,13 @@ Use a known-good runsheet PDF from a previous service.
       Release upload
 - [ ] When the workflow finishes, visit `Releases` → confirm the new
       release has BOTH the `.exe` and `.dmg` attached
+- [ ] Release has the self-updater assets: `Runsheet-Pilot-mac.zip`,
+      `Runsheet-Pilot-windows.exe` (if the Windows build passed), and
+      `SHA256SUMS.txt`
+- [ ] **Update-path check (Windows — the production machine):** with the
+      PREVIOUS version installed and running, the update banner appears;
+      one click downloads, restarts, and lands on the new version; the
+      `.exe.old` leftover is gone after the restart
 
 ## 8. Cold smoke (the final check)
 

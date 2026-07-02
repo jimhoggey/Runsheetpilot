@@ -89,6 +89,12 @@ jobs:
             --add-data "static;static" `
             propresenter_app.py
 
+      - name: Stable-named exe for the self-updater
+        # The in-app updater fetches assets by exact, versionless name so
+        # old installs can always find newer releases.
+        shell: pwsh
+        run: Copy-Item "dist\Runsheet Pilot.exe" "dist\Runsheet-Pilot-windows.exe"
+
       - name: Smoke-test the .exe
         # Launches the built .exe with --headless (suppresses the tkinter
         # status window — the GitHub Windows runner has no interactive
@@ -168,7 +174,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-exe
-          path: dist/Runsheet Pilot.exe
+          path: |
+            dist/Runsheet Pilot.exe
+            dist/Runsheet-Pilot-windows.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -231,6 +239,12 @@ jobs:
                          -ov -format UDZO "dist/${DMG_NAME}" >/dev/null
           rm -rf "$DMG_STAGE"
 
+      - name: Zip .app for the self-updater
+        # ditto preserves executable bits + symlinks that a plain `zip`
+        # (and Python's zipfile) can mangle; the in-app updater extracts
+        # with `ditto -x -k` for the same reason.
+        run: ditto -c -k --keepParent "dist/Runsheet Pilot.app" "dist/Runsheet-Pilot-mac.zip"
+
       - name: Smoke-test the .app
         # `open` the .app with --headless (suppresses the tkinter status
         # window — see release.yml's Windows smoke test for the same
@@ -258,7 +272,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: mac-dmg
-          path: dist/Runsheet-Pilot-*.dmg
+          path: |
+            dist/Runsheet-Pilot-*.dmg
+            dist/Runsheet-Pilot-mac.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -297,11 +313,26 @@ jobs:
       - name: List downloaded artifacts
         run: ls -laR artifacts
 
+      - name: Generate SHA256SUMS over stable assets
+        # Covers whichever stable assets exist — the Windows exe may be
+        # absent when its non-blocking build fails. The updater treats a
+        # missing sum entry the same as a missing asset: no update offered
+        # on that platform.
+        run: |
+          mkdir -p stable
+          find artifacts -type f -name 'Runsheet-Pilot-*' ! -name '*.dmg' -exec cp {} stable/ \;
+          cd stable
+          ls -la
+          sha256sum Runsheet-Pilot-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/windows-exe/Runsheet Pilot.exe
             artifacts/mac-dmg/*.dmg
+            stable/Runsheet-Pilot-*
+            stable/SHA256SUMS.txt
           generate_release_notes: true
           # Was: fail_on_unmatched_files: true. Flipped to false because
           # Windows is non-blocking now — if the .exe didn't build we
