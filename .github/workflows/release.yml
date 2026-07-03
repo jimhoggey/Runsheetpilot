@@ -31,24 +31,20 @@ concurrency:
 
 jobs:
   # ─── Windows .exe ──────────────────────────────────────────────────────
-  # Currently NON-BLOCKING: continue-on-error: true means any failure in
-  # this job (build, smoke test, upload) does not fail the workflow, and
-  # the release job does not depend on this job's success.
+  # BLOCKING. The smoke test (launch → poll /api/health → quit) now passes
+  # reliably: the long-standing red X was never a bundle bug — the exe
+  # served fine, but the CI probe (Invoke-WebRequest) was routing localhost
+  # through the runner's HTTP proxy and hanging. Fixed by probing 127.0.0.1
+  # with -NoProxy. Since the exe is the production target on real Windows
+  # machines, a failure here now blocks the whole release — no shipping a
+  # Windows binary that can't answer /api/health.
   #
-  # Why: the smoke test has been failing in CI since the v2.0.1 dep batch
-  # with the bundle 404-ing every route — Mac builds of the same code
-  # work fine, so it's a Windows-CI-specific PyInstaller / bundle quirk
-  # rather than an app bug. Time spent debugging keeps growing without
-  # returns. Park it; the Mac .dmg is the primary distribution target,
-  # and Windows users can be referred to the local build script
-  # (`build_win.bat`) until we want to come back to this.
-  #
-  # When/if you re-enable: drop continue-on-error here and put
-  # `build-windows` back into the release job's `needs:` list.
+  # To temporarily park it again (only if CI genuinely breaks): add
+  # `continue-on-error: true` back here AND restore the release job's
+  # `if: always() && needs.build-mac.result == 'success'` gate.
   build-windows:
-    name: Build Windows .exe (non-blocking)
+    name: Build Windows .exe
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
@@ -95,15 +91,12 @@ jobs:
         shell: pwsh
         run: Copy-Item "dist\Runsheet Pilot.exe" "dist\Runsheet-Pilot-windows.exe"
 
-      # Upload BEFORE the smoke test. The smoke test has a known
-      # CI-runner-only failure mode (the bundle 404s every route on
-      # windows-latest; identical builds work on real Windows desktops —
-      # parked, see PR #32). With the upload after it, that quirk meant
-      # no Windows exe ever shipped, which would permanently break
-      # Windows self-update. The smoke test stays below as SIGNAL
-      # (job-level continue-on-error already keeps it non-blocking), and
-      # RELEASE_CHECKLIST.md mandates verifying the exe on the real
-      # church Windows machine before announcing a release.
+      # Upload BEFORE the smoke test so the artifact exists regardless of
+      # smoke-test outcome. The smoke test below is now a real, passing
+      # gate (see the job header) — if it fails, the whole release is
+      # blocked — but keeping the upload first is harmless and means the
+      # exe is available in the run's artifacts even for a failed run,
+      # which helps debugging.
       - uses: actions/upload-artifact@v7
         with:
           name: windows-exe
@@ -325,26 +318,16 @@ jobs:
   # ─── Publish GitHub Release ────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    # Keep both in `needs:` so the release waits for Windows to finish
-    # (success or fail) before publishing — otherwise the .exe artifact
-    # might still be uploading when we hit download-artifact. Windows is
-    # forgiven via its own continue-on-error: the workflow proceeds even
-    # when build-windows fails, but we still wait for the attempt.
+    # Both builds must succeed before we publish — standard `needs` gating
+    # (no always()), so a Windows OR Mac failure blocks the release. That's
+    # the point of Windows being blocking now: we never ship a release
+    # missing a verified binary.
     needs: [build-windows, build-mac]
     runs-on: ubuntu-latest
-    # Three conditions, ALL must hold for the release job to fire:
-    #   1. always() — even when an upstream `needs:` job failed
-    #      (build-windows is allowed to fail; without always() the
-    #      whole release job would skip).
-    #   2. Mac must have succeeded — the .dmg is the hard requirement.
-    #   3. The trigger must be an actual tag push — workflow_dispatch
-    #      runs build the binaries but don't publish a Release, so test
-    #      builds don't clutter the Releases page or risk a stale version.
-    if: |
-      always() &&
-      needs.build-mac.result == 'success' &&
-      github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/')
+    # Only publish on an actual tag push — workflow_dispatch runs build +
+    # smoke-test the binaries but upload them as run artifacts only, so
+    # test builds don't clutter the Releases page or risk a stale version.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
@@ -358,10 +341,9 @@ jobs:
         run: ls -laR artifacts
 
       - name: Generate SHA256SUMS over stable assets
-        # Covers whichever stable assets exist — the Windows exe may be
-        # absent when its non-blocking build fails. The updater treats a
-        # missing sum entry the same as a missing asset: no update offered
-        # on that platform.
+        # Both builds now block the release, so both stable assets
+        # (Runsheet-Pilot-mac.zip + Runsheet-Pilot-windows.exe) are always
+        # present here — the updater verifies downloads against these sums.
         run: |
           mkdir -p stable
           find artifacts -type f -name 'Runsheet-Pilot-*' ! -name '*.dmg' -exec cp {} stable/ \;
@@ -388,13 +370,10 @@ jobs:
             stable/Runsheet-Pilot-*
             stable/SHA256SUMS.txt
           generate_release_notes: true
-          # Was: fail_on_unmatched_files: true. Flipped to false because
-          # Windows is non-blocking now — if the .exe didn't build we
-          # don't want the whole Release to fail on a missing-file check.
-          # The .dmg is always required for a meaningful release; if it's
-          # missing, the release job itself wouldn't have started (gated
-          # on needs.build-mac.result == 'success' above).
-          fail_on_unmatched_files: false
+          # Both builds block the release now, so every listed asset is
+          # guaranteed present — fail loudly if a glob matches nothing
+          # (catches a rename/path regression before a broken Release ships).
+          fail_on_unmatched_files: true
           # Pre-release on any tag with -alpha / -beta / -rc; clean
           # semver tags become full releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
