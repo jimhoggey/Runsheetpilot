@@ -237,7 +237,11 @@ def test_default_spawn_relaunch_windows_writes_batch_and_launches_cmd(upd_env, m
     assert bat.exists()
     text = bat.read_text()
     assert "PID eq 777" in text
-    assert 'start "" "C:/x/Runsheet Pilot.exe"' in text
+    # Use str(exe)/str(old), not a hardcoded forward-slash literal — the
+    # script embeds str(Path), which is backslashes on Windows and forward
+    # slashes on the Mac dev box. (Backslashes are correct for Windows cmd.)
+    assert f'start "" "{exe}"' in text
+    assert f'del "{old}"' in text
     # launched via `cmd /c <bat>`, detached
     argv = calls[0][0][0]
     assert argv[0] == "cmd" and argv[1] == "/c" and argv[2].endswith("relaunch.bat")
