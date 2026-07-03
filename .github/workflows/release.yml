@@ -154,8 +154,15 @@ jobs:
               break
             }
             try {
-              $r = Invoke-WebRequest -Uri http://localhost:5757/api/health `
-                                     -TimeoutSec 2 -UseBasicParsing
+              # 127.0.0.1 (not localhost) matches exactly where waitress
+              # binds — avoids localhost->::1 IPv6 resolution. -NoProxy is
+              # the key fix: CI runners can route even localhost through an
+              # HTTP proxy; browsers auto-bypass proxy for localhost but
+              # Invoke-WebRequest does NOT, which is why a browser reached
+              # the exe (served /api/library/auto in the logs) while this
+              # probe timed out. Diagnosed from a clean frozen-exe run.
+              $r = Invoke-WebRequest -Uri http://127.0.0.1:5757/api/health `
+                                     -TimeoutSec 2 -UseBasicParsing -NoProxy
               if ($r.StatusCode -eq 200) { $ok = $true; break }
             } catch {}
             Start-Sleep -Seconds 1
@@ -171,8 +178,8 @@ jobs:
             # old try/catch{} swallowed.
             foreach ($path in @("/api/health", "/")) {
               try {
-                $resp = Invoke-WebRequest -Uri "http://localhost:5757$path" `
-                          -TimeoutSec 4 -UseBasicParsing -SkipHttpErrorCheck
+                $resp = Invoke-WebRequest -Uri "http://127.0.0.1:5757$path" `
+                          -TimeoutSec 4 -UseBasicParsing -SkipHttpErrorCheck -NoProxy
                 $body = if ($resp.Content) { $resp.Content.Substring(0, [Math]::Min(200, $resp.Content.Length)) } else { "" }
                 Write-Host "  $path -> HTTP $($resp.StatusCode)  body: $body"
               } catch {
@@ -209,8 +216,8 @@ jobs:
 
           Write-Host "Smoke test passed."
           try {
-            Invoke-WebRequest -Uri http://localhost:5757/api/quit `
-                              -Method POST -TimeoutSec 5 -UseBasicParsing | Out-Null
+            Invoke-WebRequest -Uri http://127.0.0.1:5757/api/quit `
+                              -Method POST -TimeoutSec 5 -UseBasicParsing -NoProxy | Out-Null
           } catch {}
 
   # ─── Mac .dmg ──────────────────────────────────────────────────────────
