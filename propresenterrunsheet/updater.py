@@ -178,23 +178,65 @@ def plan_swap(install_path, new_payload, platform):
     of side effects so the Windows order is asserted in tests that run on
     the Mac dev machine (Windows is the production deployment)."""
     old = install_path.with_name(install_path.name + ".old")
-    spawn_kind = "spawn_exe" if platform == "win32" else "spawn_app"
+    if platform == "win32":
+        # Windows can't overwrite a running exe, and it also can't cleanly
+        # start the new one as a child of the dying old process — they
+        # overlap on the port and on PyInstaller's _MEI temp dirs, which
+        # broke template loading after an update. So hand off to a relaunch
+        # script that waits for THIS process to fully exit first. It carries
+        # `old` so it can delete the previous binary once we're gone.
+        relaunch = ("relaunch_windows", install_path, old)
+    else:
+        relaunch = ("spawn_app", install_path)
     return [
         ("rename", install_path, old),
         ("move", new_payload, install_path),
-        (spawn_kind, install_path),
+        relaunch,
         ("exit",),
     ]
 
 
+def _windows_relaunch_script(exe_path, old_path, pid):
+    """Batch that waits for OUR OWN pid to disappear (so the listening port,
+    the loaded DLLs, and PyInstaller's _MEI temp dir are all fully released),
+    THEN starts the new exe, deletes the previous binary (.old), and deletes
+    itself. Serializing old-death-before-new-start is what fixes the post-
+    update symptoms: TemplateNotFound, the app coming up on 5758 instead of
+    5757, and 'Failed to remove temporary directory _MEI…'.
+
+    Uses `ping` (not `timeout`) to sleep — `timeout` needs a console and
+    errors in a detached process. `tasklist /FI` filters to exactly our pid,
+    so `find` is an exact presence check."""
+    return (
+        "@echo off\r\n"
+        ":wait\r\n"
+        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul\r\n'
+        "if not errorlevel 1 (\r\n"
+        "  ping -n 2 127.0.0.1 >nul\r\n"
+        "  goto wait\r\n"
+        ")\r\n"
+        f'start "" "{exe_path}"\r\n'
+        f'del "{old_path}" 2>nul\r\n'
+        '(goto) 2>nul & del "%~f0"\r\n'
+    )
+
+
 def _default_spawn(op):
     kind, target = op[0], op[1]
-    if kind == "spawn_exe":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — the child must
-        # outlive this process or the relaunch dies with us.
-        flags = 0x00000008 | 0x00000200
+    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — the child must outlive
+    # this process or the relaunch dies with us.
+    flags = 0x00000008 | 0x00000200
+    if kind == "relaunch_windows":
+        old_path = op[2]
+        UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+        bat = UPDATES_DIR / "relaunch.bat"
+        bat.write_text(_windows_relaunch_script(str(target), str(old_path),
+                                                os.getpid()))
+        subprocess.Popen(["cmd", "/c", str(bat)],
+                         creationflags=flags, close_fds=True)
+    elif kind == "spawn_exe":
         subprocess.Popen([str(target)], creationflags=flags, close_fds=True)
-    else:
+    else:  # spawn_app (mac)
         subprocess.Popen(["open", str(target)])
 
 
@@ -214,7 +256,7 @@ def _execute_swap(ops, spawn=None, hard_exit=None):
             elif kind == "move":
                 shutil.move(str(op[1]), str(op[2]))
                 done.append(op)
-            elif kind in ("spawn_exe", "spawn_app"):
+            elif kind in ("spawn_exe", "spawn_app", "relaunch_windows"):
                 spawn(op)
             elif kind == "exit":
                 log.info("Update applied — restarting")

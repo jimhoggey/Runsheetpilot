@@ -195,14 +195,52 @@ def test_install_location_windows_is_exe_path(tmp_path):
 # ── Swap plan + executor ────────────────────────────────────────────────────
 def test_plan_swap_windows_exact_operation_order():
     exe = Path("C:/Users/av/Desktop/Runsheet Pilot.exe")
+    old = Path("C:/Users/av/Desktop/Runsheet Pilot.exe.old")
     new = Path("C:/Users/av/AppData/Roaming/Runsheet Pilot/updates/Runsheet-Pilot-windows.exe")
     ops = updater.plan_swap(exe, new, "win32")
     assert ops == [
-        ("rename", exe, Path("C:/Users/av/Desktop/Runsheet Pilot.exe.old")),
+        ("rename", exe, old),
         ("move", new, exe),
-        ("spawn_exe", exe),
+        # Hand off to a relaunch script (carries `old` so it can delete the
+        # previous binary) instead of spawning the new exe as a child of the
+        # still-dying old process.
+        ("relaunch_windows", exe, old),
         ("exit",),
     ]
+
+
+def test_windows_relaunch_script_waits_then_starts_and_self_deletes():
+    exe = "C:/Users/av/Desktop/Runsheet Pilot.exe"
+    old = "C:/Users/av/Desktop/Runsheet Pilot.exe.old"
+    script = updater._windows_relaunch_script(exe, old, pid=4242)
+    # waits for OUR pid to be gone before doing anything
+    assert 'tasklist /FI "PID eq 4242"' in script
+    assert "goto wait" in script
+    # sleeps via ping (timeout needs a console; detached procs have none)
+    assert "ping -n 2 127.0.0.1" in script
+    assert "timeout" not in script
+    # then starts the NEW exe, deletes the old binary, deletes itself
+    assert f'start "" "{exe}"' in script
+    assert f'del "{old}"' in script
+    assert 'del "%~f0"' in script
+
+
+def test_default_spawn_relaunch_windows_writes_batch_and_launches_cmd(upd_env, monkeypatch):
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "Popen",
+                        lambda *a, **k: calls.append((a, k)) or object())
+    monkeypatch.setattr(updater.os, "getpid", lambda: 777)
+    exe = Path("C:/x/Runsheet Pilot.exe")
+    old = Path("C:/x/Runsheet Pilot.exe.old")
+    updater._default_spawn(("relaunch_windows", exe, old))
+    bat = updater.UPDATES_DIR / "relaunch.bat"
+    assert bat.exists()
+    text = bat.read_text()
+    assert "PID eq 777" in text
+    assert 'start "" "C:/x/Runsheet Pilot.exe"' in text
+    # launched via `cmd /c <bat>`, detached
+    argv = calls[0][0][0]
+    assert argv[0] == "cmd" and argv[1] == "/c" and argv[2].endswith("relaunch.bat")
 
 
 def test_plan_swap_mac_uses_open():
@@ -298,11 +336,11 @@ def test_apply_update_happy_path_windows_ops(upd_env, tmp_path, monkeypatch):
                         lambda ops, **kw: executed.extend(ops))
     updater.apply_update(http_get=http_get)
 
+    old = fake_exe.with_name("Runsheet Pilot.exe.old")
     assert updater.get_state()["state"] == "applying"
-    assert executed[0] == ("rename", fake_exe,
-                           fake_exe.with_name("Runsheet Pilot.exe.old"))
+    assert executed[0] == ("rename", fake_exe, old)
     assert executed[1][2] == fake_exe                 # move lands on exe path
-    assert executed[2] == ("spawn_exe", fake_exe)
+    assert executed[2] == ("relaunch_windows", fake_exe, old)
 
 
 def test_apply_update_unwritable_location_errors_without_download(upd_env, monkeypatch):

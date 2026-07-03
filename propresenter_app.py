@@ -34,6 +34,7 @@ Common feature touch-points:
   - clock layout tweak  → service_mate/render.py
 """
 
+import os
 import sys
 
 # When invoked as a script (`python3 propresenter_app.py`), Python registers
@@ -57,11 +58,20 @@ from propresenterrunsheet.routes import register_blueprints
 
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
-# The app object lives at the project root (next to templates/ + static/) so
-# Flask auto-discovers them. PyInstaller's --add-data flags in
-# build_mac.sh / build_win.bat ship those folders into the frozen bundle.
-
-app = Flask(__name__)
+# In a normal (source) run, Flask auto-discovers templates/ + static/ next to
+# this file. In the FROZEN bundle we point Flask explicitly at the folders
+# PyInstaller extracts into sys._MEIPASS. Flask's auto-detection (via
+# __main__.__file__) is unreliable in a --onefile --windowed exe — especially
+# when the process is launched by the self-updater rather than by double-click
+# — which surfaced as "TemplateNotFound: index.html" right after an update.
+# Explicit _MEIPASS paths are the documented, bulletproof fix.
+if getattr(sys, "frozen", False):
+    _bundle = sys._MEIPASS  # PyInstaller sets this on the frozen bundle
+    app = Flask(__name__,
+                template_folder=os.path.join(_bundle, "templates"),
+                static_folder=os.path.join(_bundle, "static"))
+else:
+    app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB cap on PDF upload
 # Auto-reload templates when their files change on disk. Flask defaults
 # this to app.debug (False here), so without this any markup edit would
