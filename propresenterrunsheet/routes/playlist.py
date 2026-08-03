@@ -16,6 +16,9 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from ..logging_setup import log_safe
+from ..propresenter.media_bin import fetch_media_bin, relink_media
+from ..propresenter.net import pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
@@ -36,7 +39,7 @@ def api_create_playlist():
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
     port = body.get("port") or "50001"
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     name = (body.get("name") or "").strip()
     matched = body.get("matched") or []
     before = time.time()
@@ -47,6 +50,26 @@ def api_create_playlist():
         return jsonify({"error": "No items to add to the playlist."}), 200
 
     try:
+        # 0. Resolve template media against PP's Media bin BEFORE anything
+        # else. PP's playlist PUT matches media items by NAME against the
+        # Media bin and ignores the uuid (established by live bisection —
+        # its 404s carry an empty body, so nothing else would have told
+        # us). Media that isn't in the bin cannot be linked over the API
+        # at all; relink_media drops those entries (their runsheet items
+        # keep their coloured headers) and reports them so the UI can give
+        # the operator the one-time fix in plain words. Bin fetch failing
+        # just skips this step — worst case is the old behaviour.
+        # An empty bin result is indistinguishable from a transient PP
+        # hiccup (fetch_media_bin returns [] on failure), so relinking is
+        # skipped rather than applied — applying it against [] would drop
+        # every linked slide on a blip. If PP then refuses the template
+        # identities, the safe-mode retry below still saves the create.
+        bin_items = fetch_media_bin(base)
+        unlinked = relink_media(matched, bin_items) if bin_items else []
+        if unlinked:
+            log.info("Media not in PP's Media bin, left as headers: %s",
+                     log_safe(", ".join(u["media_name"] for u in unlinked)))
+
         # 1. Create the playlist
         r = req.post(f"{base}/v1/playlists",
                      json={"name": name, "type": "playlist"}, timeout=6)
@@ -63,15 +86,40 @@ def api_create_playlist():
         # 3. Push items to playlist
         r2 = req.put(f"{base}/v1/playlist/{playlist_id}",
                      json=items, timeout=10)
-        if r2.status_code == 404:
-            return jsonify({"error":
-                "ProPresenter rejected one of the song UUIDs (404). "
-                "Re-scan / re-fetch your library so item UUIDs are current, "
-                f"then try again. Server said: {r2.text[:200]}"}), 200
-        if r2.status_code == 400:
-            return jsonify({"error":
-                "ProPresenter rejected the playlist contents (400). "
-                f"Server said: {r2.text[:300]}"}), 200
+        if r2.status_code in (400, 404):
+            # Shouldn't happen now that media is bin-resolved up front —
+            # but if PP still refuses, recover instead of stranding the
+            # operator: strip every linked slide (headers stay), push
+            # again, and say plainly which slides were left out. The old
+            # message here blamed "song UUIDs" and told them to re-scan
+            # the library, which was wrong on both counts and
+            # unactionable for a non-developer.
+            log.error("PP refused playlist items (HTTP %s, body=%r) — "
+                      "retrying without linked slides",
+                      r2.status_code, log_safe(r2.text, 300))
+            dropped = []
+            for mi in matched:
+                parsed = mi.get("parsed") or {}
+                lib = parsed.get("library_match")
+                if isinstance(lib, dict) and lib.get("items"):
+                    for entry in lib["items"]:
+                        dropped.append({
+                            "item_title": parsed.get("title", ""),
+                            "media_name": (entry.get("name") or "").strip(),
+                        })
+                    parsed["library_match"] = None
+            items = build_playlist_payload(matched)
+            r2 = req.put(f"{base}/v1/playlist/{playlist_id}",
+                         json=items, timeout=10)
+            if r2.status_code in (400, 404):
+                log.error("PP refused even the headers-only playlist "
+                          "(HTTP %s, body=%r)",
+                          r2.status_code, log_safe(r2.text, 300))
+                return jsonify({"error":
+                    "ProPresenter wouldn't accept the playlist items. "
+                    "Try restarting ProPresenter, then click Create "
+                    "again — the app will rebuild everything fresh."}), 200
+            unlinked = unlinked + dropped
         r2.raise_for_status()
 
         songs = sum(1 for mi in matched
@@ -141,6 +189,10 @@ def api_create_playlist():
             "songs":               songs,
             "headers":             headers,
             "needs_action":        needs_action,
+            # Template slides that couldn't be attached because their
+            # media isn't in PP's Media bin — the UI turns this into a
+            # plain-English "drag these into Media, then Create again".
+            "unlinked":            unlinked,
             "timers_created":      timer_result["created"],
             "timers_deleted":      timer_result["deleted"],
             "timers_no_duration":  timer_result["no_duration"],
@@ -165,7 +217,7 @@ def api_test_connection():
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
     port = body.get("port") or "50001"
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     try:
         r = req.get(f"{base}/v1/libraries", timeout=4)
         r.raise_for_status()
@@ -185,7 +237,7 @@ def api_pp_playlists():
     them) and falls back to the standard PP defaults."""
     host = (request.args.get("host") or "localhost").strip()
     port = (request.args.get("port") or "50001").strip()
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     playlists = fetch_pp_playlists(base)
     if not playlists:
         # Common failure: PP not running, Network off, or wrong port.

@@ -611,14 +611,17 @@ async function parseRunsheet() {
 
 function tagClass(type) {
   const m = {
-    song:         'tag-song',
-    mc_on_stage:  'tag-mc',
-    announcement: 'tag-ann',
-    sermon:       'tag-serm',
-    prayer:       'tag-prayer',
-    scripture:    'tag-script',
-    offering:     'tag-offer',
-    video:        'tag-video',
+    song:                'tag-song',
+    mc_on_stage:         'tag-mc',
+    announcement:        'tag-ann',
+    sermon:              'tag-serm',
+    prayer_and_ministry: 'tag-prayer',
+    // Legacy types from states saved by older versions — the server now
+    // clamps everything to the fixed six, but keep these rendering.
+    prayer:              'tag-prayer',
+    scripture:           'tag-script',
+    offering:            'tag-offer',
+    video:               'tag-video',
   };
   return m[type] || 'tag-oth';
 }
@@ -760,6 +763,20 @@ async function createPlaylist() {
       ${res.songs} song${res.songs!==1?'s':''} added &nbsp;·&nbsp;
       ${res.headers} section header${res.headers!==1?'s':''}`;
     if (res.needs_action) html += ` &nbsp;·&nbsp; <span style="color:#fca5a5">⚠ ${res.needs_action} <strong>ACTION NEEDED</strong> placeholder${res.needs_action!==1?'s':''}</span> — open the playlist in ProPresenter and add the song${res.needs_action!==1?'s':''} manually.`;
+    if (res.unlinked && res.unlinked.length) {
+      // Media that isn't in PP's Media area can't be attached over the
+      // API at all (PP matches media by name against the Media bin).
+      // One-time fix, in plain words — after it, every future create
+      // links these automatically.
+      const names = [...new Set(res.unlinked.map(u => u.media_name))];
+      html += `<br><span style="color:#fbbf24">⚠ ${names.length} slide${names.length!==1?'s':''} couldn't be attached:
+        <strong>${names.map(escapeHtml).join(', ')}</strong>.</span><br>
+        ProPresenter can only attach media that's in its <strong>Media</strong> area
+        (the section headers were still created). One-time fix: in ProPresenter,
+        drag ${names.length!==1?'these files':'this file'} from your template playlist
+        into <strong>Media</strong> in the left sidebar, then click
+        <strong>Create Runsheet &amp; Export File</strong> again.`;
+    }
     if (res.timers_deleted) {
       html += `<br>🧹 Cleared ${res.timers_deleted} previous <code>[RB]</code> timer${res.timers_deleted!==1?'s':''} from PP.`;
     }

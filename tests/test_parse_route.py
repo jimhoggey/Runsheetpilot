@@ -81,22 +81,8 @@ def _provider_error_body(provider="Darkbloom", code=401):
     }}
 
 
-@pytest.fixture
-def parse_client(client, monkeypatch):
-    """Test client with the PDF extractor and OpenRouter call stubbed out, so
-    these tests exercise only the response-handling logic."""
-    import propresenterrunsheet.routes.parse as parse_mod
-
-    monkeypatch.setattr(parse_mod, "extract_pdf_text",
-                        lambda _p: "10:00 Welcome\n10:05 Worship")
-    # Keep ProPresenter out of it — template lookup is best-effort anyway.
-    monkeypatch.setattr(parse_mod, "fetch_pp_playlists",
-                        lambda *_a, **_k: (_ for _ in ()).throw(OSError("no PP")))
-    # No live catalogue fetch: the suite must not depend on openrouter.ai being
-    # reachable, and returning None makes resolve_model honour the model id the
-    # test passes in rather than substituting today's auto-pick.
-    monkeypatch.setattr(parse_mod, "fetch_catalogue", lambda *_a, **_k: None)
-    return client
+# The `parse_client` fixture lives in conftest.py so other test modules
+# (test_item_types.py) can drive the parse route too.
 
 
 def _post_responses(client, responses, model="test/model:free", calls=None):

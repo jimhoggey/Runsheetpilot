@@ -18,7 +18,10 @@ import time
 from flask import Blueprint, jsonify, request
 
 from ..config import APP_NAME, UPLOAD_FOLDER
-from ..parsing.ai import DEFAULT_PROMPT, assemble_prompt, parse_ai_response
+from ..parsing.ai import (
+    DEFAULT_PROMPT, assemble_prompt, canonicalize_item_type,
+    parse_ai_response,
+)
 from ..parsing.models import (
     fetch_catalogue, is_router, next_usable_model, resolve_model,
 )
@@ -29,7 +32,8 @@ from ..propresenter.templates import (
     playlist_to_objects, playlist_to_sections, resolve_object, resolve_section,
 )
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
-from ..settings import _default_settings, load_settings
+from ..logging_setup import log_safe
+from ..settings import load_settings
 
 
 bp = Blueprint("parse", __name__)
@@ -234,7 +238,7 @@ def api_upload_and_parse():
         # one retry on the next-ranked free model and an honest message,
         # before the per-status mapping below gets a chance to misdiagnose it.
         def _openrouter_post(model_id):
-            log.info(f"OpenRouter request: model={model_id}, "
+            log.info(f"OpenRouter request: model={log_safe(model_id)}, "
                      f"raw_chars={len(raw)}")
             return req.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -259,9 +263,9 @@ def api_upload_and_parse():
             if not backup:
                 return jsonify({"error":
                     _provider_failure_message(model, failure)}), 200
-            log.warning(f"Provider behind {model} failed "
-                        f"({failure['provider']} returned {failure['code']}) "
-                        f"— retrying with {backup}")
+            log.warning(f"Provider behind {log_safe(model)} failed "
+                        f"({log_safe(failure['provider'])} returned "
+                        f"{failure['code']}) — retrying with {log_safe(backup)}")
             resp = _openrouter_post(backup)
             backup_failure = _provider_failure(resp)
             if backup_failure:
@@ -294,7 +298,7 @@ def api_upload_and_parse():
         # the model the router chose.
         used_model = body.get("model") or model
         if used_model != model:
-            log.info(f"OpenRouter routed {model} -> {used_model}")
+            log.info(f"OpenRouter routed {log_safe(model)} -> {log_safe(used_model)}")
         content = (body["choices"][0]["message"].get("content") or "")
         items, service_name = parse_ai_response(content)
 
@@ -305,8 +309,8 @@ def api_upload_and_parse():
         # a junk parse silently wiped the live clock state mid-service.
         if not items:
             snippet = content.strip().replace("\n", " ")[:160]
-            log.error(f"AI returned no runsheet items. model={used_model} "
-                      f"reply={snippet!r}")
+            log.error(f"AI returned no runsheet items. model={log_safe(used_model)} "
+                      f"reply={log_safe(snippet)!r}")
             return jsonify({"error": _unusable_reply_message(
                 used_model, snippet, "returned no runsheet items")}), 200
 
@@ -326,6 +330,15 @@ def api_upload_and_parse():
         for it in items:
             if not isinstance(it, dict):
                 continue
+            # Clamp the type to the fixed list FIRST — everything after
+            # this point (cue lookup, song-vs-object routing, tag colours,
+            # timer creation) keys off it, and the model demonstrably
+            # invents types no matter what the prompt says.
+            raw_type = it.get("type")
+            it["type"] = canonicalize_item_type(raw_type)
+            if raw_type != it["type"]:
+                log.info(f"Item type clamped: {log_safe(raw_type, 60)!r} -> "
+                         f"{it['type']!r} ({log_safe(it.get('title'), 40)!r})")
             _ensure_item_cues(it)
             raw_match = it.get("library_match")
             # The model sometimes returns the full dict, sometimes a bare
@@ -392,7 +405,7 @@ def api_upload_and_parse():
             log.exception("Service Mate parse-time state write failed")
 
         log.info(f"AI parsed {len(items)} runsheet items, "
-                 f"suggested name: {service_name!r}")
+                 f"suggested name: {log_safe(service_name)!r}")
         return jsonify({
             "items":          items,
             "filename":       pdf_file.filename,
@@ -404,7 +417,8 @@ def api_upload_and_parse():
         # value: line 1 column 1 (char 0)"), which told them nothing. What
         # they need is which model answered and what it actually said.
         snippet = (content or "").strip().replace("\n", " ")[:160]
-        log.error(f"AI returned non-JSON. model={used_model} reply={snippet!r}")
+        log.error(f"AI returned non-JSON. model={log_safe(used_model)} "
+                  f"reply={log_safe(snippet)!r}")
         return jsonify({"error": _unusable_reply_message(
             used_model, snippet, "didn't return a runsheet")}), 200
     except req.exceptions.Timeout:
