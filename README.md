@@ -15,28 +15,28 @@ Runsheet Pilot is a ready-to-run app — **no Python, no setup**. You install it
 
 **Download & install**
 
-1. Download **[Runsheet-Pilot-mac.dmg](https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-mac.dmg)**.
+1. Download **[Runsheet-Pilot-mac.dmg](https://github.com/jimhoggey/Runsheetpilot/releases/latest/download/Runsheet-Pilot-mac.dmg)**.
 2. Open it, then drag **Runsheet Pilot** into your **Applications** folder.
 3. **First launch only:** right-click the app → **Open**, then click **Open** on the prompt. (macOS shows this once because the app isn't signed by Apple; after that it opens normally.)
 
 **Or, install with one line** — paste into **Terminal**. It downloads, installs to Applications, skips the security prompt, and launches the app:
 
 ```bash
-curl -L https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-mac.zip -o /tmp/rp.zip && ditto -x -k /tmp/rp.zip /Applications && xattr -dr com.apple.quarantine "/Applications/Runsheet Pilot.app" && open "/Applications/Runsheet Pilot.app"
+curl -L https://github.com/jimhoggey/Runsheetpilot/releases/latest/download/Runsheet-Pilot-mac.zip -o /tmp/rp.zip && ditto -x -k /tmp/rp.zip /Applications && xattr -dr com.apple.quarantine "/Applications/Runsheet Pilot.app" && open "/Applications/Runsheet Pilot.app"
 ```
 
 ### 🪟 Windows
 
 **Download & run**
 
-1. Download **[Runsheet-Pilot-windows.exe](https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-windows.exe)**.
+1. Download **[Runsheet-Pilot-windows.exe](https://github.com/jimhoggey/Runsheetpilot/releases/latest/download/Runsheet-Pilot-windows.exe)**.
 2. Move it somewhere permanent — a **Runsheet Pilot** folder or your **Desktop** works well (not the Downloads folder, so the app has a stable home for its self-updates).
 3. Double-click it. Windows SmartScreen warns because the app isn't signed: click **More info → Run anyway**. (Once only — after that it launches straight away.)
 
 **Or, download with one line** — paste into **PowerShell**. It saves the app to your Desktop:
 
 ```powershell
-$ProgressPreference='SilentlyContinue'; iwr https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest/download/Runsheet-Pilot-windows.exe -OutFile "$HOME\Desktop\Runsheet Pilot.exe"
+$ProgressPreference='SilentlyContinue'; iwr https://github.com/jimhoggey/Runsheetpilot/releases/latest/download/Runsheet-Pilot-windows.exe -OutFile "$HOME\Desktop\Runsheet Pilot.exe"
 ```
 
 Then double-click **Runsheet Pilot** on your Desktop (**More info → Run anyway** the first time).
@@ -70,8 +70,8 @@ Your key stays on your computer (in the app-data folder — see [Where settings 
 Only needed if you want to modify the code. Requires **Python 3.11+**.
 
 ```bash
-git clone https://github.com/jimhoggey/propresenter-runsheet-builder.git
-cd propresenter-runsheet-builder
+git clone https://github.com/jimhoggey/Runsheetpilot.git
+cd Runsheetpilot
 ./launch_mac.sh          # Mac: installs dependencies, then runs
 ```
 

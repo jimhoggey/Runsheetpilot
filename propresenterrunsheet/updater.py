@@ -39,7 +39,12 @@ from .config import DATA_DIR, VERSION
 
 log = logging.getLogger("pp_runsheet")
 
-REPO = "jimhoggey/propresenter-runsheet-builder"
+# The repo was renamed from "propresenter-runsheet-builder" to
+# "Runsheetpilot". GitHub 301-redirects the old path and `requests` follows
+# redirects by default, so builds up to v2.3.6 keep updating fine — but that
+# redirect only survives while nobody claims the old name, so point at the
+# real one.
+REPO = "jimhoggey/Runsheetpilot"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 ASSET_MAC = "Runsheet-Pilot-mac.zip"

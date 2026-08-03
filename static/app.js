@@ -362,7 +362,7 @@ function closeSettingsModal() {
 // TODO(owner): point this at your real store/landing URL once you pick one
 // (Gumroad / Lemon Squeezy / Stripe). For now it links to the README.
 const SERVICE_MATE_BUY_URL =
-  'https://github.com/jimhoggey/propresenter-runsheet-builder#service-mate-paid-add-on';
+  'https://github.com/jimhoggey/Runsheetpilot#service-mate-paid-add-on';
 
 let _licenseState = 'trial_unstarted';
 
@@ -1192,7 +1192,7 @@ function renderUpdateState(st) {
       '⚠ Update failed: ' + (st.error || 'unknown error') + ' ';
     const link = document.getElementById('update-notes-link');
     link.textContent = 'Download manually';
-    link.href = 'https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest';
+    link.href = 'https://github.com/jimhoggey/Runsheetpilot/releases/latest';
     link.hidden = false;
     const btn = document.getElementById('update-apply-btn');
     btn.disabled = false;
