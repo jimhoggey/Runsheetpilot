@@ -82,6 +82,8 @@ jobs:
             --hidden-import pdfplumber `
             --hidden-import tkinter `
             --collect-all webview `
+            --collect-all clr_loader `
+            --collect-all pythonnet `
             --icon assets\icon.ico `
             --add-data "templates;templates" `
             --add-data "static;static" `
@@ -225,9 +227,15 @@ jobs:
         # instead of on an operator's machine.
         shell: pwsh
         run: |
-          $out = & "dist\Runsheet Pilot.exe" --probe-webview 2>&1
-          Write-Host ($out -join "`n")
-          if ($LASTEXITCODE -ne 0) { throw "webview backend missing from the exe" }
+          $env:RUNSHEET_PILOT_PROBE_OUT = "$env:RUNNER_TEMP\probe.txt"
+          & "dist\Runsheet Pilot.exe" --probe-webview
+          $code = $LASTEXITCODE
+          if (Test-Path $env:RUNSHEET_PILOT_PROBE_OUT) {
+            Get-Content $env:RUNSHEET_PILOT_PROBE_OUT
+          } else {
+            Write-Host "(probe wrote no output file)"
+          }
+          if ($code -ne 0) { throw "webview backend missing from the exe" }
 
   # ─── Mac .dmg ──────────────────────────────────────────────────────────
   build-mac:
