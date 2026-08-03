@@ -24,11 +24,15 @@ TYPE_COLORS = {
     "mc_on_stage":  (0.05, 0.45, 0.50, 1.0),  # teal
     "announcement": (0.85, 0.50, 0.05, 1.0),  # amber
     "sermon":       (0.45, 0.20, 0.65, 1.0),  # purple
+    "prayer_and_ministry": (0.55, 0.35, 0.75, 1.0),  # lavender
+    "other":        (0.30, 0.30, 0.40, 1.0),  # gray
+    # Legacy types — the parse route now clamps everything to the six
+    # above, but runsheet states saved by older versions can still hold
+    # these; keep their colours so old data renders unchanged.
     "prayer":       (0.55, 0.35, 0.75, 1.0),  # lavender
     "scripture":    (0.15, 0.50, 0.30, 1.0),  # green
     "offering":     (0.70, 0.55, 0.10, 1.0),  # gold
     "video":        (0.55, 0.20, 0.20, 1.0),  # rust
-    "other":        (0.30, 0.30, 0.40, 1.0),  # gray
 }
 ACTION_NEEDED_COLOR = (0.86, 0.15, 0.15, 1.0)  # bright red
 

@@ -18,7 +18,10 @@ import time
 from flask import Blueprint, jsonify, request
 
 from ..config import APP_NAME, UPLOAD_FOLDER
-from ..parsing.ai import DEFAULT_PROMPT, assemble_prompt, parse_ai_response
+from ..parsing.ai import (
+    DEFAULT_PROMPT, assemble_prompt, canonicalize_item_type,
+    parse_ai_response,
+)
 from ..parsing.models import fetch_catalogue, is_router, resolve_model
 from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
@@ -242,6 +245,15 @@ def api_upload_and_parse():
         for it in items:
             if not isinstance(it, dict):
                 continue
+            # Clamp the type to the fixed list FIRST — everything after
+            # this point (cue lookup, song-vs-object routing, tag colours,
+            # timer creation) keys off it, and the model demonstrably
+            # invents types no matter what the prompt says.
+            raw_type = it.get("type")
+            it["type"] = canonicalize_item_type(raw_type)
+            if raw_type != it["type"]:
+                log.info(f"Item type clamped: {raw_type!r} -> {it['type']!r} "
+                         f"({str(it.get('title'))[:40]!r})")
             _ensure_item_cues(it)
             raw_match = it.get("library_match")
             # The model sometimes returns the full dict, sometimes a bare

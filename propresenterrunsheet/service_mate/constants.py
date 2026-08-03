@@ -66,7 +66,8 @@ SCREEN_CUES = {
     "sermon":       "Sermon slides",
     "scripture":    "Scripture slides",
     "announcement": "Announcement loop",
-    "prayer":       "Prayer slide",
+    "prayer_and_ministry": "Prayer / ministry slide",
+    "prayer":       "Prayer slide",   # legacy — old saved states
     "offering":     "Offering slide",
     "video":        "Video — full screen",
     "other":        "Stand by",
@@ -77,7 +78,8 @@ SOUND_CUES = {
     "sermon":       "Speaker mic ON",
     "scripture":    "Reader mic ON",
     "announcement": "MC mic ON",
-    "prayer":       "Prayer mic ON",
+    "prayer_and_ministry": "Prayer mic ON",
+    "prayer":       "Prayer mic ON",  # legacy — old saved states
     "offering":     "MC mic ON",
     "video":        "Video audio ON",
     "other":        "Stand by",
@@ -88,7 +90,8 @@ LIGHTS_CUES = {
     "sermon":       "Spot — preacher",
     "scripture":    "Soft warm wash",
     "announcement": "House lights up",
-    "prayer":       "Soft warm wash",
+    "prayer_and_ministry": "Soft warm wash",
+    "prayer":       "Soft warm wash", # legacy — old saved states
     "offering":     "House lights up",
     "video":        "Stage dim · screen up",
     "other":        "Stand by",
