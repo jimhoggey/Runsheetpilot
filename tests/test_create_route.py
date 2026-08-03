@@ -12,8 +12,6 @@ The behaviour pinned here: resolve media against the bin up front, drop
 what cannot link (headers survive), always end with a created playlist,
 and report the dropped slides so the UI can explain the one-time fix.
 """
-import json
-
 import pytest
 
 import propresenterrunsheet.routes.playlist as playlist_mod

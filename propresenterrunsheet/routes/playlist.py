@@ -16,7 +16,9 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
+from ..propresenter.net import pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
@@ -37,7 +39,7 @@ def api_create_playlist():
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
     port = body.get("port") or "50001"
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     name = (body.get("name") or "").strip()
     matched = body.get("matched") or []
     before = time.time()
@@ -66,7 +68,7 @@ def api_create_playlist():
         unlinked = relink_media(matched, bin_items) if bin_items else []
         if unlinked:
             log.info("Media not in PP's Media bin, left as headers: %s",
-                     ", ".join(u["media_name"] for u in unlinked))
+                     log_safe(", ".join(u["media_name"] for u in unlinked)))
 
         # 1. Create the playlist
         r = req.post(f"{base}/v1/playlists",
@@ -94,7 +96,7 @@ def api_create_playlist():
             # unactionable for a non-developer.
             log.error("PP refused playlist items (HTTP %s, body=%r) — "
                       "retrying without linked slides",
-                      r2.status_code, r2.text[:300])
+                      r2.status_code, log_safe(r2.text, 300))
             dropped = []
             for mi in matched:
                 parsed = mi.get("parsed") or {}
@@ -111,7 +113,8 @@ def api_create_playlist():
                          json=items, timeout=10)
             if r2.status_code in (400, 404):
                 log.error("PP refused even the headers-only playlist "
-                          "(HTTP %s, body=%r)", r2.status_code, r2.text[:300])
+                          "(HTTP %s, body=%r)",
+                          r2.status_code, log_safe(r2.text, 300))
                 return jsonify({"error":
                     "ProPresenter wouldn't accept the playlist items. "
                     "Try restarting ProPresenter, then click Create "
@@ -214,7 +217,7 @@ def api_test_connection():
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
     port = body.get("port") or "50001"
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     try:
         r = req.get(f"{base}/v1/libraries", timeout=4)
         r.raise_for_status()
@@ -234,7 +237,7 @@ def api_pp_playlists():
     them) and falls back to the standard PP defaults."""
     host = (request.args.get("host") or "localhost").strip()
     port = (request.args.get("port") or "50001").strip()
-    base = f"http://{host}:{port}"
+    base = pp_base(host, port)
     playlists = fetch_pp_playlists(base)
     if not playlists:
         # Common failure: PP not running, Network off, or wrong port.
