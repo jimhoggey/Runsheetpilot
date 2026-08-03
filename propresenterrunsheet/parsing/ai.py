@@ -12,6 +12,52 @@ import re
 from typing import Optional
 
 
+# The fixed list of runsheet item types. The model is TOLD to use exactly
+# these (see the TYPES section of DEFAULT_PROMPT), but prompt wording is
+# not enforcement — a live parse once came back with the literal type
+# "worship and ministry time" (the whole item title), which broke the tag
+# colours and the Service Mate cue lookup. canonicalize_item_type() is the
+# enforcement: whatever the model emits, only these six survive.
+ALLOWED_ITEM_TYPES = ("song", "mc_on_stage", "announcement", "sermon",
+                      "prayer_and_ministry", "other")
+
+# Word → canonical type. Applied token-by-token to whatever the model
+# invented, most-specific first (a "song" token wins over a "ministry"
+# token so "worship songs" stays a song). "worship" maps to
+# prayer_and_ministry because the operator's definition folds ministry
+# time — including the worship-block header — into that type; actual
+# songs are tagged "song" individually.
+_TYPE_SYNONYM_TOKENS = (
+    ("song",                ("song", "songs")),
+    ("mc_on_stage",         ("mc", "host", "emcee")),
+    ("sermon",              ("sermon", "preach", "preaching", "message")),
+    ("announcement",        ("announcement", "announcements", "notice",
+                             "notices")),
+    ("prayer_and_ministry", ("prayer", "ministry", "altar", "worship")),
+)
+
+
+def canonicalize_item_type(t) -> str:
+    """Clamp a model-emitted type to ALLOWED_ITEM_TYPES.
+
+    Exact members pass through (after trimming/casing/space→underscore
+    normalisation, so "MC on stage" works). Everything else is matched by
+    token against the synonym table above; anything unrecognised —
+    including the retired scripture/offering/video types — becomes
+    "other". Never raises: this runs on model output.
+    """
+    if not isinstance(t, str):
+        return "other"
+    norm = re.sub(r"[^\w]+", "_", t.strip().lower()).strip("_")
+    if norm in ALLOWED_ITEM_TYPES:
+        return norm
+    tokens = set(norm.split("_"))
+    for canonical, words in _TYPE_SYNONYM_TOKENS:
+        if tokens & set(words):
+            return canonical
+    return "other"
+
+
 # Fed to the model with `{RUNSHEET}` replaced by the extracted PDF text.
 DEFAULT_PROMPT = """\
 You are analysing a church service runsheet (order of service).
@@ -49,7 +95,9 @@ and Ministry Time" — the 20 is duration in minutes; "10:14 AM 30 Preach Title"
 Use 0 if there's no explicit duration. This field drives countdown-timer
 creation in ProPresenter.
 
-## TYPES — choose carefully
+## TYPES — a FIXED list. `type` MUST be EXACTLY one of these six strings:
+## song, mc_on_stage, announcement, sermon, prayer_and_ministry, other
+## NEVER invent a new type. NEVER use the item's title as its type.
 
 - song          ONLY actual sung worship songs the band/team performs.
                 Examples: "Amazing Grace", "Alleluia", "The King Is In The
@@ -57,34 +105,29 @@ creation in ProPresenter.
                 ⚠ DO NOT use "song" for items that mention a person's name —
                 those are MC moments, not songs.
 
-- mc_on_stage   A person stepping on stage to lead a transition or open/land
-                a section. ALMOST ALWAYS has a person's name with a dash.
-                Examples: "Land Worship - Priya", "Welcome - Daniel",
-                "Open Service - Hannah", "Meeting Land and Recap - Chris".
+- mc_on_stage   An MC / host on stage: landing worship, welcome and
+                connection cards, culture moments, interviews, transitions.
+                Often has a person's name with a dash.
+                Examples: "Land Worship - Priya", "Welcome and Connection
+                Cards", "Culture Moment - Generosity - Ps Sarah",
+                "Meeting Land and Recap - Chris", an interview segment.
 
-- announcement  Speaker giving information to the congregation.
+- announcement  Information given to the congregation.
                 Examples: "Junior Youth Out", "Upcoming Dates",
-                "Welcome and Connection Cards", "Celebrations",
-                "Whats Your Next Step Moment".
+                "Celebrations", "Whats Your Next Step Moment".
 
 - sermon        The main preaching / message slot. Look for "Preach Title",
                 "Message", or a minister's name with a sermon topic.
 
-- prayer        Prayer time / altar call / ministry moment.
+- prayer_and_ministry
+                The altar call / ministry moment (commonly right after the
+                sermon), a prayer time, or a ministry time — including the
+                "Worship and Ministry Time" block near the top of many
+                runsheets.
 
-- scripture     A bible reading. The `title` MUST be the bible reference in
-                a clean form: "Genesis 1:23-28", "John 3:16",
-                "1 Corinthians 13:4-7". Detect references like "Bible
-                Genesis 1:23-28", "Read John 3:16", "Scripture: Romans 8:28"
-                — strip the leading word, just keep the reference.
-
-- offering      Offering / tithe / giving moment.
-
-- video         A pre-recorded video clip is being played.
-
-- other         Section dividers (e.g. "Praise and Worship", "Culture Focus",
-                "Land Service"), countdowns, music beds, anything that
-                doesn't fit above.
+- other         Anything that fits none of the above: go live / streaming,
+                countdowns, music beds, section dividers, logistics,
+                scripture readings, offering, videos.
 
 ## NOTES FIELD
 Include any time-of-day (e.g. "9:30 AM") and speaker names in the notes
@@ -96,17 +139,17 @@ Use empty string ("") if there is no extra info.
  "items":[
    {"type":"other","title":"Go live - online streaming","notes":"9:24 AM","duration_min":1},
    {"type":"other","title":"Countdown - Start 9:27am","notes":"9:25 AM","duration_min":5},
-   {"type":"other","title":"Worship and Ministry Time","notes":"9:30 AM","duration_min":20},
+   {"type":"prayer_and_ministry","title":"Worship and Ministry Time","notes":"9:30 AM","duration_min":20},
    {"type":"song","title":"Alleluia","notes":"9:50 AM","duration_min":0},
    {"type":"song","title":"The King Is In The Room","notes":"","duration_min":0},
    {"type":"song","title":"Jesus Be The Name","notes":"","duration_min":0},
    {"type":"mc_on_stage","title":"Land Worship - Priya","notes":"9:50 AM","duration_min":5},
-   {"type":"scripture","title":"Genesis 1:23-28","notes":"9:55 AM","duration_min":2},
-   {"type":"announcement","title":"Welcome and Connection Cards","notes":"9:55 AM","duration_min":5},
-   {"type":"announcement","title":"Culture Moment - Generosity - Ps Sarah","notes":"10:00 AM","duration_min":10},
+   {"type":"other","title":"Genesis 1:23-28","notes":"9:55 AM","duration_min":2},
+   {"type":"mc_on_stage","title":"Welcome and Connection Cards","notes":"9:55 AM","duration_min":5},
+   {"type":"mc_on_stage","title":"Culture Moment - Generosity - Ps Sarah","notes":"10:00 AM","duration_min":10},
    {"type":"announcement","title":"Junior Youth Out","notes":"10:10 AM","duration_min":1},
    {"type":"sermon","title":"Preach: King Jesus - Ps David","notes":"10:14 AM","duration_min":30},
-   {"type":"prayer","title":"Altar Call/Ministry Moment","notes":"10:44 AM","duration_min":5},
+   {"type":"prayer_and_ministry","title":"Altar Call/Ministry Moment","notes":"10:44 AM","duration_min":5},
    {"type":"mc_on_stage","title":"Meeting Land and Recap - Chris","notes":"10:49 AM","duration_min":2},
    {"type":"announcement","title":"Upcoming Dates","notes":"10:53 AM","duration_min":5}
  ]}

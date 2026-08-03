@@ -71,6 +71,26 @@ def client(isolated_state):
 
 
 @pytest.fixture
+def parse_client(client, monkeypatch):
+    """Test client with the PDF extractor, ProPresenter, and the OpenRouter
+    model catalogue stubbed out, so parse-route tests exercise only the
+    response-handling logic. Shared by test_parse_route.py and
+    test_item_types.py."""
+    import propresenterrunsheet.routes.parse as parse_mod
+
+    monkeypatch.setattr(parse_mod, "extract_pdf_text",
+                        lambda _p: "10:00 Welcome\n10:05 Worship")
+    # Keep ProPresenter out of it — template lookup is best-effort anyway.
+    monkeypatch.setattr(parse_mod, "fetch_pp_playlists",
+                        lambda *_a, **_k: (_ for _ in ()).throw(OSError("no PP")))
+    # No live catalogue fetch: the suite must not depend on openrouter.ai
+    # being reachable, and returning None makes resolve_model honour the
+    # model id the test passes in rather than substituting today's auto-pick.
+    monkeypatch.setattr(parse_mod, "fetch_catalogue", lambda *_a, **_k: None)
+    return client
+
+
+@pytest.fixture
 def sm_enabled(client):
     """Pre-flips the Service Mate master switch ON for tests that exercise
     the clock action routes (standby / preview / probe / test). Fresh
