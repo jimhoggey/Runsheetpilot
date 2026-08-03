@@ -22,7 +22,9 @@ from ..parsing.ai import (
     DEFAULT_PROMPT, assemble_prompt, canonicalize_item_type,
     parse_ai_response,
 )
-from ..parsing.models import fetch_catalogue, is_router, resolve_model
+from ..parsing.models import (
+    fetch_catalogue, is_router, next_usable_model, resolve_model,
+)
 from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
 from ..propresenter.templates import (
@@ -56,6 +58,61 @@ def _unusable_reply_message(used_model: str, snippet: str, what: str) -> str:
         msg += ("That id picks a different model at random each time, so it "
                 "will keep failing intermittently. ")
     msg += "Open Settings and choose a model from the list."
+    return msg
+
+
+def _provider_failure(resp):
+    """Spot OpenRouter relaying an *upstream provider's* failure.
+
+    OpenRouter fronts other companies' inference. When the provider it
+    dispatched to fails, OpenRouter echoes the provider's status code with
+    the provider named in the body:
+
+        {"error": {"code": 401, "message": "Provider returned error",
+                   "metadata": {"provider_name": "Darkbloom", ...}}}
+
+    Confirmed live 2026-08-03: a Darkbloom credentials outage surfaced
+    exactly like that — as a 401 — while the operator's own key verified
+    fine at the same moment, and the handler below sent them off to rotate
+    it. `provider_name` is the discriminator: a genuine key rejection never
+    carries one, because the request dies at OpenRouter's own door before
+    any provider is involved.
+
+    Returns {"provider": ..., "code": ...} for provider-side failures, None
+    for everything else (2xx, real key/credit/model errors, bodies that
+    aren't even JSON).
+    """
+    if resp.status_code < 400:
+        return None
+    try:
+        err = resp.json().get("error") or {}
+        provider = (err.get("metadata") or {}).get("provider_name")
+    except Exception:
+        return None
+    if not provider:
+        return None
+    return {"provider": provider, "code": err.get("code") or resp.status_code}
+
+
+def _provider_failure_message(model: str, failure: dict,
+                              backup: str = None,
+                              backup_failure: dict = None) -> str:
+    """Tell the operator the truth: the model's provider broke, not their key.
+
+    Sending someone to rotate a working key is the worst kind of wrong — the
+    "fix" changes nothing, so they conclude the app itself is broken. Name
+    whose fault it is, and when the automatic backup failed too, name that
+    as well so "pick a different model" doesn't send them straight to the
+    one we already tried.
+    """
+    msg = (f"The service behind '{model}' is having problems right now "
+           f"(provider {failure['provider']} returned {failure['code']}). ")
+    if backup and backup_failure:
+        msg += (f"A backup model '{backup}' failed too (provider "
+                f"{backup_failure['provider']} returned "
+                f"{backup_failure['code']}). ")
+    msg += ("Your API key is fine — try again in a minute, or pick a "
+            "different model in Settings.")
     return msg
 
 
@@ -175,23 +232,50 @@ def api_upload_and_parse():
         # 6. Call OpenRouter
         # Specific 4xx responses become friendly JSON errors (HTTP 200 so the
         # JS reads the message); everything else falls through to raise_for_status
-        # and surfaces as a generic 500.
-        log.info(f"OpenRouter request: model={log_safe(model)}, raw_chars={len(raw)}")
-        resp = req.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization":  f"Bearer {or_key}",
-                "HTTP-Referer":   "runsheet-pilot",
-                "X-Title":        APP_NAME,
-                "Content-Type":   "application/json",
-            },
-            json={
-                "model":       model,
-                "messages":    [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-            },
-            timeout=90,
-        )
+        # and surfaces as a generic 500. But first: any error status can be
+        # OpenRouter relaying its *provider's* failure (see _provider_failure)
+        # — that is not the operator's key/credit/model-id problem, so it gets
+        # one retry on the next-ranked free model and an honest message,
+        # before the per-status mapping below gets a chance to misdiagnose it.
+        def _openrouter_post(model_id):
+            log.info(f"OpenRouter request: model={log_safe(model_id)}, "
+                     f"raw_chars={len(raw)}")
+            return req.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization":  f"Bearer {or_key}",
+                    "HTTP-Referer":   "runsheet-pilot",
+                    "X-Title":        APP_NAME,
+                    "Content-Type":   "application/json",
+                },
+                json={
+                    "model":       model_id,
+                    "messages":    [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                },
+                timeout=90,
+            )
+
+        resp = _openrouter_post(model)
+        failure = _provider_failure(resp)
+        if failure:
+            backup = next_usable_model(model, fetch_catalogue())
+            if not backup:
+                return jsonify({"error":
+                    _provider_failure_message(model, failure)}), 200
+            log.warning(f"Provider behind {log_safe(model)} failed "
+                        f"({log_safe(failure['provider'])} returned "
+                        f"{failure['code']}) — retrying with {log_safe(backup)}")
+            resp = _openrouter_post(backup)
+            backup_failure = _provider_failure(resp)
+            if backup_failure:
+                return jsonify({"error": _provider_failure_message(
+                    model, failure, backup, backup_failure)}), 200
+            # The backup answered; from here on it is the model of record —
+            # any later error message must name the model that actually
+            # produced the response.
+            model = used_model = backup
+
         if resp.status_code == 401:
             return jsonify({"error":
                 "OpenRouter rejected the API key (401). "

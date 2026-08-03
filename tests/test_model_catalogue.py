@@ -16,7 +16,7 @@ import json
 import pytest
 
 from propresenterrunsheet.parsing.models import (
-    pick_default_model, resolve_model, usable_models,
+    next_usable_model, pick_default_model, resolve_model, usable_models,
 )
 
 
@@ -167,6 +167,45 @@ def test_returns_none_when_unset_and_no_catalogue():
     """Nothing configured and nothing to choose from — the caller has to say
     so rather than send an empty model id to OpenRouter."""
     assert resolve_model("", None) is None
+
+
+# ── the backup pick after a provider-side failure ────────────────────────────
+#
+# When OpenRouter relays an upstream provider's failure (see the parse-route
+# tests), retrying the same id would land on the same broken provider. The
+# 2026-08-03 Darkbloom outage broke several free models at once while other
+# providers' models kept working — so the neighbour in the ranking is a
+# genuine second chance.
+
+def test_next_usable_model_is_the_one_ranked_below_current():
+    cat = _catalogue(
+        _model("big:free", ctx=262144),
+        _model("medium:free", ctx=128000),
+        _model("small:free", ctx=8000),
+    )
+    assert next_usable_model("big:free", cat) == "medium:free"
+    assert next_usable_model("medium:free", cat) == "small:free"
+
+
+def test_next_usable_model_for_an_unranked_id_is_the_top_pick():
+    """A paid or hand-typed model isn't in the free ranking at all; the sanest
+    backup is simply the best free model."""
+    cat = _catalogue(
+        _model("anthropic/claude-sonnet-5", free=False, ctx=999999),
+        _model("best:free", ctx=262144),
+    )
+    assert next_usable_model("anthropic/claude-sonnet-5", cat) == "best:free"
+
+
+def test_next_usable_model_none_when_nothing_else_qualifies():
+    """Only the failing model itself is usable — a retry would re-ask the
+    exact same thing, so the caller must surface the error instead."""
+    cat = _catalogue(_model("only:free"))
+    assert next_usable_model("only:free", cat) is None
+
+
+def test_next_usable_model_none_without_catalogue():
+    assert next_usable_model("some/model:free", None) is None
 
 
 # ── /api/models, which populates the Settings dropdown ───────────────────────

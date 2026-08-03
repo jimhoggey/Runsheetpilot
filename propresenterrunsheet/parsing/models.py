@@ -103,6 +103,27 @@ def pick_default_model(catalogue: dict):
     return best[0]["id"] if best else None
 
 
+def next_usable_model(current: str, catalogue: dict):
+    """The best usable model id that isn't `current`, or None.
+
+    Exists for one specific moment: OpenRouter relayed a provider-side
+    failure for `current` (see the parse route), so retrying the same id
+    would likely land on the same broken provider. The pick is the model
+    ranked just below `current` — or the top pick when `current` isn't in
+    the free ranking at all (a paid or hand-typed id). During the 2026-08-03
+    Darkbloom outage several free models broke at once while other
+    providers' models kept working, so the neighbour is a genuine second
+    chance, not a superstition.
+
+    None means there is nothing sane to retry with — catalogue missing, or
+    it offers nothing usable besides `current` itself.
+    """
+    ids = [m["id"] for m in usable_models(catalogue)]
+    if current in ids:
+        ids = ids[ids.index(current) + 1:]
+    return next((i for i in ids if i != current), None)
+
+
 def resolve_model(configured: str, catalogue: dict):
     """Decide which model id to send, or None if there's nothing to send.
 
