@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, request
 
 from ..config import APP_NAME, UPLOAD_FOLDER
 from ..parsing.ai import DEFAULT_PROMPT, assemble_prompt, parse_ai_response
+from ..parsing.models import fetch_catalogue, is_router, resolve_model
 from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
 from ..propresenter.templates import (
@@ -31,6 +32,27 @@ from ..settings import _default_settings, load_settings
 
 bp = Blueprint("parse", __name__)
 log = logging.getLogger("pp_runsheet")
+
+
+def _unusable_reply_message(used_model: str, snippet: str, what: str) -> str:
+    """Explain that a model answered but not with a runsheet.
+
+    Names the model that actually replied and quotes it, because the two ways
+    this fails are indistinguishable otherwise: a model that simply isn't up to
+    the job, versus a router that happened to pick one that isn't. The router
+    case gets an extra line, since "it worked last time" is the confusing part
+    — `openrouter/free` chooses a different model on every request, so the same
+    settings genuinely do succeed and fail at random.
+    """
+    msg = f"The model '{used_model}' {what}"
+    if snippet:
+        msg += f' — it replied: "{snippet}"'
+    msg += ". "
+    if is_router(model_id=used_model):
+        msg += ("That id picks a different model at random each time, so it "
+                "will keep failing intermittently. ")
+    msg += "Open Settings and choose a model from the list."
+    return msg
 
 
 @bp.route("/api/upload_and_parse", methods=["POST"])
@@ -51,13 +73,33 @@ def api_upload_and_parse():
     # 3. Resolve API key + model (form values override saved settings)
     settings = load_settings()
     or_key = (request.form.get("or_key") or settings.get("or_key") or "").strip()
-    model = (request.form.get("or_model")
-             or settings.get("or_model")
-             or _default_settings()["or_model"]).strip()
+    configured = (request.form.get("or_model")
+                  or settings.get("or_model") or "").strip()
+    # Blank means "pick one for me". Also rescues installs still holding a
+    # model id that OpenRouter has since retired. The catalogue is cached for
+    # hours and the fetch fails soft, so this costs one HTTP round-trip on the
+    # first parse after launch and nothing afterwards.
+    model = resolve_model(configured, fetch_catalogue())
 
     if not or_key:
         tmp_path.unlink(missing_ok=True)
         return jsonify({"error": "OpenRouter API key required."}), 400
+
+    if not model:
+        tmp_path.unlink(missing_ok=True)
+        return jsonify({"error":
+            "No AI model is set, and the list of free models could not be "
+            "reached. Check your internet connection, or set a model "
+            "manually in Settings."}), 400
+
+    # Bound before the try so the error handlers can name the model that
+    # actually answered and quote what it said. `used_model` diverges from
+    # `model` whenever the operator points at a router id like
+    # `openrouter/free`, which dispatches to a different underlying model on
+    # every request — without this the logs only ever showed "openrouter/free"
+    # and a misbehaving model was impossible to identify.
+    used_model = model
+    content = ""
 
     try:
         # 4. Extract text from the PDF (always clean up the temp file)
@@ -155,8 +197,27 @@ def api_upload_and_parse():
 
         # 7. Parse the AI response — strips markdown fences, accepts either
         # {service_name, items} (preferred) or a bare items array.
-        content = resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        # OpenRouter echoes the model that actually served the request. For a
+        # plain model id it matches what we asked for; for a router it names
+        # the model the router chose.
+        used_model = body.get("model") or model
+        if used_model != model:
+            log.info(f"OpenRouter routed {model} -> {used_model}")
+        content = (body["choices"][0]["message"].get("content") or "")
         items, service_name = parse_ai_response(content)
+
+        # A reply can be perfectly valid JSON and still not be a runsheet —
+        # `{"safety": "safe"}` parses fine and yields zero items. Without this
+        # guard the route treated that as success and fell through to the
+        # Service Mate state seed below, which is an unconditional overwrite:
+        # a junk parse silently wiped the live clock state mid-service.
+        if not items:
+            snippet = content.strip().replace("\n", " ")[:160]
+            log.error(f"AI returned no runsheet items. model={used_model} "
+                      f"reply={snippet!r}")
+            return jsonify({"error": _unusable_reply_message(
+                used_model, snippet, "returned no runsheet items")}), 200
 
         # 8. If the AI didn't supply a service name, derive one from the filename
         if not service_name and pdf_file.filename:
@@ -223,9 +284,14 @@ def api_upload_and_parse():
             "suggested_name": service_name,
         })
 
-    except json.JSONDecodeError as e:
-        log.exception("AI returned invalid JSON")
-        return jsonify({"error": f"AI response was not valid JSON: {e}"}), 500
+    except json.JSONDecodeError:
+        # The operator used to see the raw decoder message here ("Expecting
+        # value: line 1 column 1 (char 0)"), which told them nothing. What
+        # they need is which model answered and what it actually said.
+        snippet = (content or "").strip().replace("\n", " ")[:160]
+        log.error(f"AI returned non-JSON. model={used_model} reply={snippet!r}")
+        return jsonify({"error": _unusable_reply_message(
+            used_model, snippet, "didn't return a runsheet")}), 200
     except req.exceptions.Timeout:
         return jsonify({"error":
             "OpenRouter request timed out. Try again, or pick a faster model."}), 200

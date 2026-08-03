@@ -374,9 +374,10 @@
       <section class="settings-section">
         <h3>OpenRouter AI</h3>
         <p class="settings-hint">
-          The model that parses your runsheet PDF into structured items.
-          A free model is selected by default. Find more at
-          <code>openrouter.ai/models</code>.
+          The model that reads your runsheet PDF. Leave this on
+          <strong>Automatic</strong> and the app picks a working free one for
+          you — the list comes from OpenRouter as you open this, so it never
+          goes stale.
         </p>
         <div class="field">
           <label for="or-key">API key</label>
@@ -384,8 +385,12 @@
         </div>
         <div class="field">
           <label for="or-model">Model</label>
-          <input id="or-model" type="text"
-                 placeholder="e.g. google/gemini-2.0-flash-exp:free">
+          <!-- Populated by loadModels() in app.js from /api/models. The empty
+               value means "automatic" and is what a fresh install saves. -->
+          <select id="or-model">
+            <option value="">Automatic (recommended)</option>
+          </select>
+          <p class="settings-hint" id="or-model-note"></p>
         </div>
       </section>
 
