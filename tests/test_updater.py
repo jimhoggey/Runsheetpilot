@@ -247,16 +247,47 @@ def test_default_spawn_relaunch_windows_writes_batch_and_launches_cmd(upd_env, m
     assert argv[0] == "cmd" and argv[1] == "/c" and argv[2].endswith("relaunch.bat")
 
 
-def test_plan_swap_mac_uses_open():
+def test_plan_swap_mac_hands_off_to_relaunch_script():
+    """Mac had the same race Windows had before v2.3.5: `open` fired while
+    the OLD process was still alive, so LaunchServices just activated the
+    dying instance instead of launching the new binary — the old process
+    then exited and the operator was left staring at nothing ("stuck at
+    the relaunch state"). Same medicine: a detached script that waits for
+    our pid to die before calling open."""
     app = Path("/Applications/Runsheet Pilot.app")
     new = Path("/tmp/updates/extracted/Runsheet Pilot.app")
     ops = updater.plan_swap(app, new, "darwin")
     assert ops == [
         ("rename", app, Path("/Applications/Runsheet Pilot.app.old")),
         ("move", new, app),
-        ("spawn_app", app),
+        ("relaunch_mac", app),
         ("exit",),
     ]
+
+
+def test_mac_relaunch_script_waits_for_pid_then_opens():
+    script = updater._mac_relaunch_script("/Applications/Runsheet Pilot.app",
+                                          pid=4242)
+    # spin until OUR pid is gone — kill -0 probes without signalling
+    assert "kill -0 4242" in script
+    assert "sleep" in script
+    # then launch the new bundle via LaunchServices
+    assert 'open "/Applications/Runsheet Pilot.app"' in script
+
+
+def test_default_spawn_relaunch_mac_detaches_a_shell(upd_env, monkeypatch):
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "Popen",
+                        lambda *a, **k: calls.append((a, k)) or object())
+    monkeypatch.setattr(updater.os, "getpid", lambda: 777)
+    app = Path("/Applications/Runsheet Pilot.app")
+    updater._default_spawn(("relaunch_mac", app))
+    argv, kwargs = calls[0][0][0], calls[0][1]
+    assert argv[0] == "/bin/sh" and argv[1] == "-c"
+    assert "kill -0 777" in argv[2]
+    assert f'open "{app}"' in argv[2]
+    # detached from our dying process group, or macOS reaps it with us
+    assert kwargs.get("start_new_session") is True
 
 
 def test_execute_swap_happy_path_filesystem_end_state(tmp_path):
@@ -275,7 +306,7 @@ def test_execute_swap_happy_path_filesystem_end_state(tmp_path):
     assert (installed / "Contents" / "new-marker").exists()
     old = installed.with_name(installed.name + ".old")
     assert (old / "Contents" / "old-marker").exists()
-    assert spawned == [("spawn_app", installed)]
+    assert spawned == [("relaunch_mac", installed)]
     assert exited == [0]
 
 

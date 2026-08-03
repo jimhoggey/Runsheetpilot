@@ -113,6 +113,30 @@ def _post_responses(client, responses, model="test/model:free", calls=None):
         requests.post = orig
 
 
+def _post_status(client, status, body_json, model="test/model:free"):
+    """Like _post, but OpenRouter answers with an error status + JSON body."""
+    import requests
+
+    class _ErrResp:
+        status_code = status
+        text = json.dumps(body_json)
+        def json(self):
+            return body_json
+        def raise_for_status(self):
+            raise requests.exceptions.HTTPError(f"{status} Client Error")
+
+    orig = requests.post
+    requests.post = lambda *a, **k: _ErrResp()
+    try:
+        return client.post(
+            "/api/upload_and_parse",
+            data={"pdf": (io.BytesIO(b"%PDF-1.4 fake"), "service.pdf"),
+                  "or_key": "sk-or-test", "or_model": model},
+            content_type="multipart/form-data")
+    finally:
+        requests.post = orig
+
+
 def _post(client, ai_reply, model="test/model:free"):
     return _post_responses(
         client, [_FakeResponse(ai_reply, model=model)], model=model)
@@ -325,6 +349,45 @@ def test_bare_401_with_unparseable_body_still_reports_a_key_problem(
     r = _post_responses(parse_client, [_FakeErrorResponse(401, body=None)])
     err = r.get_json()["error"]
     assert "rejected the API key" in err
+
+
+# ── OpenRouter account-level rate limits ─────────────────────────────────────
+
+def test_daily_rate_limit_gets_a_plain_english_message(parse_client,
+                                                       isolated_state):
+    """Confirmed live 2026-08-03: the free tier allows 50 free-model
+    requests per DAY per ACCOUNT; when spent, every completion 429s with
+    limit_source "openrouter_free_tier_daily" and no provider_name. The
+    app showed the raw "429 Client Error: Too Many Requests" — and since
+    the limit is account-wide, the operator trying a different API key
+    (same account) or a different model changes nothing. Say what
+    happened and what actually helps."""
+    body = {"error": {"code": 429, "message":
+            "Rate limit exceeded: free-models-per-day. Add 5 credits "
+            "to unlock 1000 free model requests per day",
+            "metadata": {"limit_source": "openrouter_free_tier_daily",
+                         "provider_name": None,
+                         "headers": {"X-RateLimit-Reset": "1785801600000"}}}}
+    r = _post_status(parse_client, 429, body)
+    out = r.get_json()
+    assert "error" in out
+    msg = out["error"]
+    assert "429 Client Error" not in msg
+    assert "free AI requests for today" in msg
+    assert "credit" in msg          # the permanent fix
+    assert "tomorrow" in msg or "resets" in msg
+
+
+def test_per_minute_rate_limit_says_wait_a_minute(parse_client,
+                                                  isolated_state):
+    body = {"error": {"code": 429, "message":
+            "Rate limit exceeded: free-models-per-min. ",
+            "metadata": {"limit_source": "openrouter_free_tier_minute",
+                         "provider_name": None}}}
+    r = _post_status(parse_client, 429, body)
+    msg = r.get_json()["error"]
+    assert "429 Client Error" not in msg
+    assert "minute" in msg
 
 
 # ── the happy path still works ───────────────────────────────────────────────

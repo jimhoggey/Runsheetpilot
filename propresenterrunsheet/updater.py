@@ -192,13 +192,28 @@ def plan_swap(install_path, new_payload, platform):
         # `old` so it can delete the previous binary once we're gone.
         relaunch = ("relaunch_windows", install_path, old)
     else:
-        relaunch = ("spawn_app", install_path)
+        # Same race as Windows pre-v2.3.5, mac flavour: `open` fired while
+        # the OLD process was still alive, so LaunchServices activated the
+        # dying instance instead of launching the new binary — it then
+        # exited and the operator was left with nothing ("stuck at the
+        # relaunch state"). The relaunch script waits for our pid first.
+        relaunch = ("relaunch_mac", install_path)
     return [
         ("rename", install_path, old),
         ("move", new_payload, install_path),
         relaunch,
         ("exit",),
     ]
+
+
+def _mac_relaunch_script(app_path, pid):
+    """Shell one-liner that waits for OUR pid to fully exit, then opens the
+    new bundle. `kill -0` probes liveness without signalling; once we're
+    gone, LaunchServices has no running instance to wrongly activate and
+    `open` genuinely launches the freshly-swapped .app. The .old bundle is
+    cleaned up by cleanup_leftovers() on the next boot, as before."""
+    return (f'while /bin/kill -0 {pid} 2>/dev/null; do sleep 0.2; done; '
+            f'/usr/bin/open "{app_path}"')
 
 
 def _windows_relaunch_script(exe_path, old_path, pid):
@@ -239,9 +254,15 @@ def _default_spawn(op):
                                                 os.getpid()))
         subprocess.Popen(["cmd", "/c", str(bat)],
                          creationflags=flags, close_fds=True)
+    elif kind == "relaunch_mac":
+        script = _mac_relaunch_script(str(target), os.getpid())
+        # start_new_session detaches the waiter from our dying process
+        # group so macOS doesn't reap it along with us.
+        subprocess.Popen(["/bin/sh", "-c", script],
+                         start_new_session=True, close_fds=True)
     elif kind == "spawn_exe":
         subprocess.Popen([str(target)], creationflags=flags, close_fds=True)
-    else:  # spawn_app (mac)
+    else:  # spawn_app (legacy mac path — superseded by relaunch_mac)
         subprocess.Popen(["open", str(target)])
 
 
@@ -261,7 +282,8 @@ def _execute_swap(ops, spawn=None, hard_exit=None):
             elif kind == "move":
                 shutil.move(str(op[1]), str(op[2]))
                 done.append(op)
-            elif kind in ("spawn_exe", "spawn_app", "relaunch_windows"):
+            elif kind in ("spawn_exe", "spawn_app", "relaunch_windows",
+                          "relaunch_mac"):
                 spawn(op)
             elif kind == "exit":
                 log.info("Update applied — restarting")
