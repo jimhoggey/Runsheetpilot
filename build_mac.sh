@@ -75,6 +75,7 @@ pyinstaller \
     --collect-all webview \
     --icon assets/icon.icns \
     --add-data "templates:templates" \
+    --add-data "assets:assets" \
     --add-data "static:static" \
     "$ENTRY"
 

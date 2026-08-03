@@ -116,6 +116,47 @@ def _provider_failure_message(model: str, failure: dict,
     return msg
 
 
+def _rate_limit_message(resp) -> str:
+    """Turn OpenRouter's 429 into instructions a volunteer can act on.
+
+    Measured live 2026-08-03: the free tier allows 50 free-model requests
+    per DAY per ACCOUNT (metadata.limit_source
+    "openrouter_free_tier_daily"). Because it is account-wide, swapping to
+    a different API key on the same account — the operator's natural first
+    move — changes nothing, and neither does picking a different free
+    model. The raw "429 Client Error" invited exactly that wasted effort.
+    """
+    import datetime as dt
+    limit_source, reset_ms = "", None
+    try:
+        meta = (resp.json().get("error") or {}).get("metadata") or {}
+        limit_source = meta.get("limit_source") or ""
+        reset_ms = int((meta.get("headers") or {}).get("X-RateLimit-Reset"))
+    except Exception:
+        pass
+    if "daily" in limit_source:
+        when = "tomorrow"
+        if reset_ms:
+            try:
+                when = dt.datetime.fromtimestamp(reset_ms / 1000).strftime(
+                    "%-I:%M %p tomorrow" if dt.datetime.fromtimestamp(
+                        reset_ms / 1000).date() != dt.date.today()
+                    else "%-I:%M %p today")
+            except Exception:
+                pass
+        return ("You've used all 50 free AI requests for today — OpenRouter's "
+                "free tier daily limit, shared across every "
+                "API key on your account, so a different key or model "
+                f"won't help. The counter resets at {when}. Adding about "
+                "$5 of credit at openrouter.ai raises this to 1,000 per "
+                "day permanently.")
+    if "min" in limit_source:
+        return ("OpenRouter is rate-limiting free models right now — "
+                "wait a minute, then click Parse again.")
+    return ("OpenRouter is receiving too many requests at the moment "
+            "(rate limited). Wait a little and try again.")
+
+
 @bp.route("/api/upload_and_parse", methods=["POST"])
 def api_upload_and_parse():
     import requests as req
@@ -276,6 +317,8 @@ def api_upload_and_parse():
             # produced the response.
             model = used_model = backup
 
+        if resp.status_code == 429:
+            return jsonify({"error": _rate_limit_message(resp)}), 200
         if resp.status_code == 401:
             return jsonify({"error":
                 "OpenRouter rejected the API key (401). "

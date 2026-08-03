@@ -34,6 +34,7 @@ See `_should_show_status_window()` for the routing rule.
 """
 
 import logging
+import os
 import socket
 import sys
 import threading
@@ -131,6 +132,34 @@ def _probe_webview() -> int:
         return 1
 
 
+def _mac_dock_fix() -> None:
+    """Give the frozen app a proper Dock presence + tile icon.
+
+    PyInstaller's one-file .app hands execution to an inner process that
+    macOS doesn't associate with the bundle, so the running app either
+    skipped the Dock entirely or sat there with a generic tile — the
+    reason the operator saw "no icon in the taskbar". Setting the
+    activation policy to Regular registers us with the Dock (and Cmd+Tab
+    and Force Quit), and setApplicationIconImage paints the real icon on
+    the tile. pyobjc ships with pywebview's cocoa backend, so AppKit is
+    importable exactly when this path runs; everything is best-effort —
+    a failure here must never cost the window itself."""
+    try:
+        from AppKit import NSApplication, NSImage
+        app_ns = NSApplication.sharedApplication()
+        app_ns.setActivationPolicy_(0)   # NSApplicationActivationPolicyRegular
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            icon_path = os.path.join(base, "assets", "icon_1024.png")
+            if os.path.exists(icon_path):
+                img = NSImage.alloc().initByReferencingFile_(icon_path)
+                if img:
+                    app_ns.setApplicationIconImage_(img)
+        app_ns.activateIgnoringOtherApps_(True)
+    except Exception as e:
+        log.warning(f"Dock registration skipped ({type(e).__name__}: {e})")
+
+
 def _run_native_window(port: int, webview_module=None) -> bool:
     """Open the UI in a native desktop window (pywebview). Blocks until
     the user closes the window. Returns False — without raising — when no
@@ -152,6 +181,8 @@ def _run_native_window(port: int, webview_module=None) -> bool:
         webview = webview_module
         if webview is None:
             import webview
+        if sys.platform == "darwin" and webview_module is None:
+            _mac_dock_fix()
         webview.create_window(
             APP_NAME, f"http://127.0.0.1:{port}",
             width=1280, height=860, min_size=(1000, 640))
