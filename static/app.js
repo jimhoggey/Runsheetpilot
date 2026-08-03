@@ -67,6 +67,60 @@ function setStepState(n, state) {
 }
 
 // ─── 2. Settings: load + auto-save ────────────────────────────────────────
+// Fill the Model dropdown from /api/models (OpenRouter's live catalogue,
+// filtered to free models that can return JSON) and select `saved`.
+//
+// A hardcoded list is what this replaces: the app used to ship
+// google/gemini-2.0-flash-exp:free as the default, OpenRouter retired it, and
+// every install that never changed the setting started failing with a 404
+// nobody could fix without a new release.
+//
+// Degrades quietly. If OpenRouter can't be reached we keep whatever is saved
+// as a single option so the user's choice survives and Settings still opens.
+async function loadModels(saved) {
+  const sel  = document.getElementById('or-model');
+  const note = document.getElementById('or-model-note');
+  if (!sel) return;
+  let data = {models: [], auto: null, available: false};
+  try {
+    data = await fetch('/api/models').then(r => r.json());
+  } catch (e) { /* offline — fall through to the degraded path below */ }
+
+  sel.innerHTML = '';
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = data.auto
+    ? `Automatic — currently ${data.auto}`
+    : 'Automatic (recommended)';
+  sel.appendChild(auto);
+
+  for (const m of data.models || []) {
+    const o = document.createElement('option');
+    o.value = m.id;
+    const k = Math.round((m.context_length || 0) / 1000);
+    o.textContent = k ? `${m.id} — ${k}k context` : m.id;
+    sel.appendChild(o);
+  }
+
+  // Keep a saved model selectable even when it isn't in the free list —
+  // it may be a paid model the user chose deliberately, or one that has since
+  // been retired. Silently dropping it would look like the app forgot.
+  if (saved && !Array.from(sel.options).some(o => o.value === saved)) {
+    const o = document.createElement('option');
+    o.value = saved;
+    o.textContent = data.available ? `${saved} — not in the free list` : saved;
+    sel.appendChild(o);
+  }
+  sel.value = saved || '';
+
+  if (note) {
+    note.textContent = data.available
+      ? ''
+      : 'Could not reach OpenRouter, so the model list is unavailable. '
+        + 'Your saved model still works.';
+  }
+}
+
 async function loadSettings() {
   const s = await fetch('/api/settings').then(r => r.json());
   document.getElementById('pp-host').value    = s.pp_host  || 'localhost';
@@ -74,7 +128,11 @@ async function loadSettings() {
   document.getElementById('pp-host2').value   = s.pp_host  || 'localhost';
   document.getElementById('pp-port2').value   = s.pp_port  || '50001';
   document.getElementById('or-key').value     = s.or_key   || '';
-  document.getElementById('or-model').value   = s.or_model || 'google/gemini-2.0-flash-exp:free';
+  // Populate the model dropdown from OpenRouter's live catalogue, then select
+  // whatever is saved. Empty = Automatic. Awaited so the saved value has an
+  // <option> to land on — otherwise assigning .value to a <select> that
+  // doesn't contain it silently selects nothing.
+  await loadModels(s.or_model || '');
   const lk = document.getElementById('license-key');
   if (lk) lk.value = s.license_key || '';
   // Service Mate licence/trial state (drives the Settings status line, the

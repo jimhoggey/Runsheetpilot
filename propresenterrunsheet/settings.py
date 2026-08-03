@@ -23,7 +23,13 @@ def _default_settings() -> dict:
         "pp_host":       "localhost",
         "pp_port":       "50001",
         "or_key":        "",
-        "or_model":      "google/gemini-2.0-flash-exp:free",
+        # Empty means "choose automatically" — resolved at parse time from
+        # OpenRouter's live catalogue (see parsing/models.py). This used to
+        # hardcode "google/gemini-2.0-flash-exp:free"; OpenRouter retired that
+        # model, so every install that never touched this setting began failing
+        # with a 404 that only a new release could fix. Naming any single model
+        # here would eventually repeat that.
+        "or_model":      "",
         "library_dir":   lib_dirs[0] if lib_dirs else "",
         "export_dir":    str(Path.home() / "Desktop"),
         "threshold":     0.55,
