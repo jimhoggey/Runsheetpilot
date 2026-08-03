@@ -68,6 +68,8 @@ pyinstaller ^
     --hidden-import pdfplumber ^
     --hidden-import tkinter ^
     --collect-all webview ^
+    --collect-all clr_loader ^
+    --collect-all pythonnet ^
     --icon assets\icon.ico ^
     --add-data "templates;templates" ^
     --add-data "static;static" ^

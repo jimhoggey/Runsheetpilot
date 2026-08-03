@@ -105,18 +105,29 @@ def _probe_webview() -> int:
     exe). Importing the platform backend triggers exactly those imports
     without needing a window or a display, so the release smoke test can
     catch it on the runner instead of on an operator's machine."""
+    import os
     import traceback
+
+    def _emit(text):
+        # A --windowed Windows exe has no console: print() is discarded.
+        # CI sets RUNSHEET_PILOT_PROBE_OUT to a file path and reads that.
+        print(text)
+        out = os.environ.get("RUNSHEET_PILOT_PROBE_OUT")
+        if out:
+            with open(out, "a", encoding="utf-8") as f:
+                f.write(text + "\n")
+
     try:
         import webview
         if sys.platform == "win32":
             import webview.platforms.edgechromium  # noqa: F401 — pulls clr
         elif sys.platform == "darwin":
             import webview.platforms.cocoa  # noqa: F401 — pulls pyobjc
-        print(f"webview OK ({getattr(webview, '__version__', '?')})")
+        _emit(f"webview OK ({getattr(webview, '__version__', '?')})")
         return 0
     except Exception:
-        traceback.print_exc()
-        print("webview UNAVAILABLE")
+        _emit(traceback.format_exc())
+        _emit("webview UNAVAILABLE")
         return 1
 
 
