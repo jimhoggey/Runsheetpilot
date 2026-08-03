@@ -126,7 +126,7 @@ def resolve_model(configured: str, catalogue: dict):
             return configured
         log.warning("Configured model %r is not in OpenRouter's catalogue "
                     "(retired?) — falling back to automatic selection",
-                    configured)
+                    str(configured).replace("\r", " ").replace("\n", " ")[:100])
     return pick_default_model(catalogue)
 
 

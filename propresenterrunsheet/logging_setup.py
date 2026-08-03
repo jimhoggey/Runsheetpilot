@@ -37,3 +37,17 @@ def setup_logging() -> logging.Logger:
 # `import logging; log = logging.getLogger("pp_runsheet")` after this gets
 # the configured logger automatically.
 log = setup_logging()
+
+
+def log_safe(value, limit: int = 200) -> str:
+    """Collapse a value to a single log-safe line.
+
+    Model output and request fields end up interpolated into log lines;
+    embedded newlines would let crafted content forge whole fake log
+    entries (CodeQL py/log-injection). Newlines/carriage returns become
+    spaces and the result is length-capped — logs stay one line per
+    event, greppable, and honest about their source.
+    """
+    s = str(value)
+    s = s.replace("\r", " ").replace("\n", " ")
+    return s[:limit]
