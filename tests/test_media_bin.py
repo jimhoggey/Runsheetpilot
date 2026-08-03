@@ -29,7 +29,10 @@ from propresenterrunsheet.propresenter.media_bin import (
 
 BIN = [
     {"uuid": "55C08096", "name": "Welcome"},
-    {"uuid": "AAA111",   "name": "Countdown"},   # note: no trailing space
+    # Trailing space preserved exactly as ProPresenter stores it — PP matches
+    # media by EXACT name, so the space is load-bearing. See
+    # test_bin_name_is_sent_verbatim_including_trailing_space.
+    {"uuid": "AAA111",   "name": "Countdown "},
 ]
 
 
@@ -48,6 +51,46 @@ def _matched_with_media(title, media_name, uuid="TPL-U", target="TPL-T",
 
 
 # ── fetch_media_bin ──────────────────────────────────────────────────────────
+
+def test_bin_name_is_sent_verbatim_including_trailing_space():
+    """The whole point: PP matches media by EXACT name and ignores the uuid.
+
+    Live probes against ProPresenter 7, same media item each time:
+        uuid + name "Countdown " (bin's exact name)  -> 204
+        uuid + name "Countdown"  (stripped)          -> 404
+        image's uuid + video's exact name            -> 204  (uuid ignored)
+        correct uuid + name with one extra space     -> 404
+
+    So the bin's name must reach PP byte-for-byte. Stripping it — which is
+    what shipped in v2.3.8 — silently 404s every media whose PP name has
+    stray whitespace, which is exactly the operator's "Countdown "."""
+    matched = [_matched_with_media("Countdown - Start 9:27am", "Countdown")]
+    unlinked = relink_media(matched, BIN)
+    assert unlinked == []
+    entry = matched[0]["parsed"]["library_match"]["items"][0]
+    assert entry["name"] == "Countdown ", \
+        "must send the bin's exact name, trailing space and all"
+
+
+def test_fetch_media_bin_preserves_exact_names():
+    """fetch_media_bin must not strip: the raw name is what PP matches on."""
+    class _R:
+        status_code = 200
+        def __init__(self, payload): self._p = payload
+        def raise_for_status(self): pass
+        def json(self): return self._p
+
+    def fake_get(url, timeout=0):
+        if url.endswith("/v1/media/playlists"):
+            return _R([{"id": {"uuid": "MP1", "name": "Playlist"}}])
+        return _R({"items": [
+            {"id": {"uuid": "AAA111", "name": "Countdown "}},
+            {"id": {"uuid": "  ", "name": "   "}},   # blank -> skipped
+        ]})
+
+    out = fetch_media_bin("http://pp", http_get=fake_get)
+    assert [(m["uuid"], m["name"]) for m in out] == [("AAA111", "Countdown ")]
+
 
 def test_fetch_media_bin_flattens_all_media_playlists():
     class _R:
@@ -95,14 +138,15 @@ def test_media_in_bin_is_swapped_to_bin_identity():
 
 
 def test_name_matching_forgives_trailing_space_and_case():
-    """PP stored the template item as "Countdown " (operator's stray
-    space); the bin asset is "Countdown". They must link."""
-    matched = [_matched_with_media("Countdown - Start 9:27am", "Countdown ")]
+    """FINDING the bin entry is whitespace/case-insensitive — the template
+    name and the bin name may differ in stray spaces. What gets SENT is
+    always the bin's exact name (see the verbatim test above)."""
+    matched = [_matched_with_media("Countdown - Start 9:27am", "countdown")]
     unlinked = relink_media(matched, BIN)
     assert unlinked == []
     entry = matched[0]["parsed"]["library_match"]["items"][0]
     assert entry["uuid"] == "AAA111"
-    assert entry["name"] == "Countdown"
+    assert entry["name"] == "Countdown "
 
 
 def test_media_missing_from_bin_is_dropped_and_reported():

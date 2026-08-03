@@ -53,9 +53,12 @@ def fetch_media_bin(base: str, http_get=None) -> list:
             r2.raise_for_status()
             for m in (r2.json() or {}).get("items") or []:
                 mid = m.get("id") or {}
+                # Keep the name EXACTLY as PP stores it — trailing spaces
+                # and all. PP matches media by byte-for-byte name, so
+                # stripping here silently 404s any media the operator
+                # named with stray whitespace (e.g. "Countdown ").
                 if mid.get("uuid") and (mid.get("name") or "").strip():
-                    out.append({"uuid": mid["uuid"],
-                                "name": mid["name"].strip()})
+                    out.append({"uuid": mid["uuid"], "name": mid["name"]})
     except Exception as e:
         log.warning("Could not read PP media bin (%s: %s) — media linking "
                     "will be skipped this run", type(e).__name__, e)
