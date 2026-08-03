@@ -1125,3 +1125,134 @@ button:focus-visible, .quit-btn:focus-visible {
 #update-banner[hidden] { display: none; }
 #update-banner-text { font-weight: 600; }
 #update-notes-link { color: var(--acc-2); font-size: 0.76rem; }
+
+/* ═══ v2.5 polish — version pill, orb loaders, premium micro-interactions ═══ */
+
+/* Version pill: hovering slides out a "Check for updates" tab. */
+.badge-wrap {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+.badge-check {
+  /* Rendered LEFT of the version pill (order:-1) so the tab grows into
+     the empty header space instead of shoving the Quit button. */
+  order: -1;
+  max-width: 0;
+  opacity: 0;
+  padding: 3px 0;
+  margin-left: 0;
+  white-space: nowrap;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: max-width .3s ease, opacity .25s ease, padding .3s ease,
+              margin .3s ease, color .15s, border-color .15s, background .15s;
+}
+.badge-wrap:hover .badge-check,
+.badge-check:focus-visible,
+.badge-check[data-state="available"] {
+  max-width: 200px;
+  opacity: 1;
+  padding: 3px 12px;
+  margin-right: 8px;
+}
+.badge-check:hover { color: var(--text); border-color: var(--border-3); }
+.badge-check.badge-check-available {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  box-shadow: 0 0 14px var(--acc-glow);
+}
+.badge-check.badge-check-available:hover { background: var(--acc-2); }
+
+/* Orb loaders (thinking-orbs) — centered, gentle entrance. */
+.orb-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 6px;
+  animation: orb-in .35s ease both;
+}
+.orb-loader[hidden] { display: none; }
+@keyframes orb-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.orb-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  animation: orb-label-pulse 2.4s ease-in-out infinite;
+}
+@keyframes orb-label-pulse {
+  0%, 100% { opacity: 0.65; }
+  50%      { opacity: 1; }
+}
+
+/* Toolbar row above the parsed-items table. */
+.results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 10px;
+}
+.results-toolbar-title {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── premium micro-interactions ─────────────────────────────────────── */
+
+/* The page settles in rather than popping. */
+body { animation: page-in .4s ease both; }
+@keyframes page-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Buttons press down, not just recolor. */
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+
+/* Keyboard users get the same quality of feedback as mouse users. */
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Frosted modal backdrop — depth instead of a flat dim. */
+.modal-backdrop { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+
+/* Result notices slide up into place. */
+.notice { animation: notice-in .3s ease both; }
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Drop zone invites on hover. */
+#drop-zone:hover {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 4px var(--acc-soft);
+}
+
+/* Slim, unobtrusive scrollbars everywhere (incl. the native window). */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-3);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+/* Respect users who prefer stillness. */
+@media (prefers-reduced-motion: reduce) {
+  body, .notice, .orb-loader, .orb-label { animation: none; }
+  .badge-check { transition: none; }
+}

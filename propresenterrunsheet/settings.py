@@ -57,6 +57,10 @@ def _default_settings() -> dict:
         # active use); empty means the trial hasn't started yet.
         "license_key":     "",
         "sm_trial_start":  "",
+        # Hide the Service Mate panel from the main screen entirely —
+        # for operators who don't own a GeekMagic clock. UI-only flag;
+        # the daemon's own enabled switch lives in clocks.json.
+        "sm_hide":         False,
     }
 
 

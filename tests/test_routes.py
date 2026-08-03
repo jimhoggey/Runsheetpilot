@@ -20,6 +20,13 @@ def test_health_returns_ok(client, app_module):
 
 # ── Runsheet state lifecycle ─────────────────────────────────────────────────
 
+def test_settings_include_sm_hide_default(client):
+    # The "Hide Service Mate" toggle must exist for fresh installs and
+    # default to visible — hiding a feature by default would look broken.
+    s = client.get("/api/settings").get_json()
+    assert s["sm_hide"] is False
+
+
 def test_runsheet_state_starts_empty(client):
     r = client.get("/api/runsheet/state")
     assert r.status_code == 200
