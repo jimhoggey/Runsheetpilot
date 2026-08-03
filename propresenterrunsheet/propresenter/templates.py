@@ -114,42 +114,100 @@ def playlist_to_sections(items: list) -> list:
                               "color": it.get("header_color") or {}},
                    "items": []}
         elif t in ("media", "presentation"):
-            # Capture every PP field the expander will need to faithfully
-            # reproduce the item in the new playlist. Three kinds of item
-            # the template can hold today:
-            #
-            #   media        video/image file. Asset UUID lives at the
-            #                top level as `target_uuid`.
-            #   presentation .pro file played once. Asset UUID lives inside
-            #                `presentation_info.presentation_uuid`.
-            #   loop         A presentation item that PP sets `duration`
-            #                on. Same shape as `presentation` plus the
-            #                duration value (in seconds) — that's the only
-            #                thing telling PP "loop this for N seconds".
-            #
-            # The asset-UUID location differs between media and presentation,
-            # so we capture both raw fields and let the expander pick.
-            cur["items"].append({
-                "name":               idd.get("name", "").strip(),
-                "uuid":               idd.get("uuid", ""),
-                "index":              idd.get("index", 0),
-                "type":               t,
-                "target_uuid":        it.get("target_uuid", ""),
-                # presentation_info carries the .pro UUID + arrangement
-                # name/UUID for presentation + loop items.
-                "presentation_info":  it.get("presentation_info") or {},
-                # `duration` is what makes a presentation item a "loop" —
-                # PP plays it for that many seconds on auto-advance.
-                # Non-loop items don't carry the field; we store None and
-                # the expander only emits it when it's set.
-                "duration":           it.get("duration"),
-                # `destination` ("presentation" / "audio" / "announcement"
-                # / ...) is per-item routing PP wants echoed back.
-                "destination":        it.get("destination") or "",
-            })
+            cur["items"].append(_capture_item(it))
     if cur["header"] or cur["items"]:
         sections.append(cur)
     return [s for s in sections if s["header"] and s["header"].get("name")]
+
+
+def _capture_item(it: dict) -> dict:
+    """Capture every PP field the expander needs to faithfully reproduce
+    a playlist item in the new playlist. Three kinds of item today:
+
+      media        video/image file. Asset UUID lives at the top level
+                   as `target_uuid`.
+      presentation .pro file played once. Asset UUID lives inside
+                   `presentation_info.presentation_uuid`.
+      loop         A media/presentation item PP sets `duration` on —
+                   the duration (seconds) is the only thing telling PP
+                   "loop this for N seconds".
+
+    The asset-UUID location differs between media and presentation, so
+    both raw fields are captured and the expander picks. `destination`
+    is per-item routing PP wants echoed back."""
+    idd = it.get("id") or {}
+    return {
+        "name":               (idd.get("name") or "").strip(),
+        "uuid":               idd.get("uuid", ""),
+        "index":              idd.get("index", 0),
+        "type":               (it.get("type") or "").lower(),
+        "target_uuid":        it.get("target_uuid", ""),
+        "presentation_info":  it.get("presentation_info") or {},
+        "duration":           it.get("duration"),
+        "destination":        it.get("destination") or "",
+    }
+
+
+def playlist_to_objects(items: list) -> list:
+    """Every named media/presentation item in the playlist, in order —
+    ignoring section structure entirely.
+
+    This is the item-level counterpart to playlist_to_sections, and it
+    exists because real operators build their template as a FLAT list
+    ("template SUNDAY": Welcome, Countdown, PRESERVICE LOOP, …) with no
+    headers at all. playlist_to_sections deliberately drops header-less
+    items, so a flat template yielded zero sections and nothing ever
+    matched. Objects don't need headers: each one is addressable by its
+    own name.
+
+    Unnamed entries are dropped — matching is by name, so a nameless
+    object can never be referenced."""
+    out = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        if (it.get("type") or "").lower() not in ("media", "presentation"):
+            continue
+        obj = _capture_item(it)
+        if obj["name"]:
+            out.append(obj)
+    return out
+
+
+def _title_tokens(text: str) -> set:
+    """Lowercased word tokens with punctuation stripped, for containment
+    matching. "Countdown - Start 9:27am" → {"countdown","start","9","27am"};
+    handles PP names saved with stray trailing spaces for free."""
+    cleaned = re.sub(r"[^\w\s]", " ", (text or "").lower())
+    return {w for w in cleaned.replace("_", " ").split() if w}
+
+
+def resolve_object(title: str, objects: list):
+    """Match a runsheet item title to a template object by name.
+
+    Rule: every word of the object's name must appear in the title
+    ("Welcome" ⊆ "Welcome and Connection Cards"; "Preach - Beyond" ⊆
+    "Preach - Beyond - Ps Cathie Green"). Requiring ALL of the object's
+    words keeps generic overlap from misfiring — "Post Service Media"
+    shares only "service" with "END SERVICE LOOP" and must not drag a
+    loop video into the playlist.
+
+    When several objects fit, the one whose name explains more of the
+    title wins ("Welcome Kids" beats "Welcome" for "Welcome Kids
+    Moment"); ties keep playlist order. Deliberately NOT an LLM call —
+    it's deterministic, instant, testable, and costs none of the
+    operator's free-tier request quota."""
+    title_tokens = _title_tokens(title)
+    if not title_tokens:
+        return None
+    best, best_size = None, 0
+    for obj in objects or []:
+        name_tokens = _title_tokens(obj.get("name", ""))
+        if not name_tokens or not name_tokens <= title_tokens:
+            continue
+        if len(name_tokens) > best_size:
+            best, best_size = obj, len(name_tokens)
+    return best
 
 
 def auto_detect_template_uuid(playlists: list,
