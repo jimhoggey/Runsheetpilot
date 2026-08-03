@@ -1289,12 +1289,34 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ─── 11. Self-update ───────────────────────────────────────────────────────
-// Banner appears when the background check (server-side, on launch) found
-// a newer GitHub release. "Update & Restart" downloads + verifies + swaps
-// the app; while the server restarts we poll until it answers again, then
-// reload the page into the new version.
+// ONE surface: the version pill in the header. The server checks GitHub in
+// the background at launch; if a release is newer the pill turns into a
+// persistent "⬆ Update to vX.Y.Z" button. Nothing is ever downloaded or
+// swapped until that button is clicked.
+//
+// There is deliberately no banner. Having a banner AND a pill meant two
+// competing entry points for one action, and the banner's "Later" implied
+// a decision the operator hadn't been asked to make.
 
-let _updateDismissed = false;
+// Every visual state the pill can hold, in one place — so "what does the
+// pill say right now" is never spread across four functions.
+function _setPill(text, opts) {
+  const tab = document.getElementById('badge-check-btn');
+  if (!tab) return;
+  opts = opts || {};
+  tab.textContent = text;
+  tab.disabled = !!opts.busy;
+  tab.dataset.state = opts.available ? 'available' : '';
+  tab.classList.toggle('badge-check-available', !!opts.available);
+}
+
+// Restore the resting label after a transient message ("Up to date ✓").
+function _resetPillSoon() {
+  setTimeout(() => {
+    const tab = document.getElementById('badge-check-btn');
+    if (tab && tab.dataset.state !== 'available') _setPill('Check for updates');
+  }, 2500);
+}
 
 async function loadUpdateState() {
   try {
@@ -1306,41 +1328,30 @@ async function loadUpdateState() {
 function renderUpdateState(st) {
   const cur = document.getElementById('update-current-version');
   if (cur && st.current) cur.textContent = st.current;
-  const banner = document.getElementById('update-banner');
-  if (!banner) return;
-  if (st.state === 'available' && !_updateDismissed) {
-    document.getElementById('update-banner-text').textContent =
-      '⬆ Version ' + st.latest + ' is available.';
-    const link = document.getElementById('update-notes-link');
-    if (st.notes_url) { link.href = st.notes_url; link.hidden = false; }
-    banner.hidden = false;
+
+  if (st.state === 'available') {
+    // Persistent and visible without hovering — this is the launch-check
+    // result surfacing. Still requires a click to do anything.
+    _setPill('⬆ Update to v' + st.latest, {available: true});
   } else if (st.state === 'error') {
-    document.getElementById('update-banner-text').textContent =
-      '⚠ Update failed: ' + (st.error || 'unknown error') + ' ';
-    const link = document.getElementById('update-notes-link');
-    link.textContent = 'Download manually';
-    link.href = 'https://github.com/jimhoggey/Runsheetpilot/releases/latest';
-    link.hidden = false;
-    const btn = document.getElementById('update-apply-btn');
-    btn.disabled = false;
-    btn.textContent = 'Try again';
-    banner.hidden = false;
+    _setPill('⚠ Update failed — retry', {available: true});
+    setStatus('Update failed: ' + (st.error || 'unknown error') +
+              ' — you can also download it manually from ' +
+              '<a href="https://github.com/jimhoggey/Runsheetpilot/releases/latest" ' +
+              'target="_blank" rel="noopener">the releases page</a>.', 'var(--org)');
   } else if (st.state !== 'downloading' && st.state !== 'verifying'
              && st.state !== 'applying') {
-    banner.hidden = true;
+    _setPill('Check for updates');
   }
 }
 
 async function applyUpdate() {
-  const btn = document.getElementById('update-apply-btn');
-  btn.disabled = true;
-  btn.textContent = 'Downloading…';
+  _setPill('Downloading…', {busy: true});
   try {
     const r = await fetch('/api/update/apply', {method: 'POST'});
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      btn.disabled = false;
-      btn.textContent = 'Update & Restart';
+      _setPill('⬆ Update — retry', {available: true});
       setStatus('Update could not start: ' + (body.error || r.status), 'var(--org)');
       return;
     }
@@ -1349,20 +1360,19 @@ async function applyUpdate() {
 }
 
 async function _pollUpdateProgress() {
-  const btn = document.getElementById('update-apply-btn');
   try {
     const st = await fetch('/api/update').then(r => r.json());
     if (st.state === 'error') { renderUpdateState(st); return; }
     if (st.state === 'downloading' || st.state === 'verifying') {
-      btn.textContent = 'Downloading…';
+      _setPill('Downloading…', {busy: true});
     } else if (st.state === 'applying') {
-      btn.textContent = 'Restarting…';
+      _setPill('Restarting…', {busy: true});
     }
     setTimeout(_pollUpdateProgress, 1000);
   } catch (e) {
     // Server went away — the swap + relaunch is happening. Reload until
     // the new version answers.
-    btn.textContent = 'Restarting…';
+    _setPill('Restarting…', {busy: true});
     _reloadWhenBack(20);
   }
 }
@@ -1382,14 +1392,9 @@ function _reloadWhenBack(attempts) {
   }, 1500);
 }
 
-function dismissUpdateBanner() {
-  _updateDismissed = true;
-  document.getElementById('update-banner').hidden = true;
-}
-
 async function checkForUpdatesNow() {
-  // Settings-modal variant: same check as the badge, but the Update
-  // button appears right here — no "close this, find the banner" detour.
+  // Settings-modal check. It reports inline AND arms the pill, so closing
+  // the modal doesn't lose the result — the pill is where updates live.
   const msg = document.getElementById('update-check-msg');
   msg.style.color = 'var(--muted)';
   msg.textContent = 'Checking…';
@@ -1401,8 +1406,7 @@ async function checkForUpdatesNow() {
       msg.style.color = 'var(--grn)';
       msg.innerHTML = 'Version ' + st.latest + ' is ready — ' +
         '<button class="btn btn-acc btn-sm" onclick="applyUpdate()">Update &amp; Restart</button>';
-      _updateDismissed = false;
-      renderUpdateState(st);   // banner shows too, for after the modal closes
+      renderUpdateState(st);
     } else {
       msg.style.color = 'var(--grn)';
       msg.textContent = 'You are up to date ✓';
@@ -1413,43 +1417,26 @@ async function checkForUpdatesNow() {
   }
 }
 
-// ─── Version-badge update flow ────────────────────────────────────────────
-// Hovering the version pill slides out a "Check for updates" tab. One
-// click checks GitHub; if a newer release exists the tab itself becomes
-// the Update button — the whole journey happens in one spot.
+// The pill's own click: check when idle, apply when an update is armed.
 async function badgeCheckUpdates() {
   const tab = document.getElementById('badge-check-btn');
-  if (tab.dataset.state === 'available') { badgeApplyUpdate(); return; }
-  tab.textContent = 'Checking…';
-  tab.disabled = true;
+  if (tab.dataset.state === 'available') { applyUpdate(); return; }
+  _setPill('Checking…', {busy: true});
   try {
     const st = await fetch('/api/update?refresh=1').then(r => r.json());
-    tab.disabled = false;
     if (st.state === 'available') {
-      tab.dataset.state = 'available';
-      tab.classList.add('badge-check-available');
-      tab.textContent = '⬆ Update to v' + st.latest;
-      _updateDismissed = false;
       renderUpdateState(st);
     } else if (st.state === 'dev') {
-      tab.textContent = 'Dev mode — no updates';
-      setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+      _setPill('Dev mode — no updates');
+      _resetPillSoon();
     } else {
-      tab.textContent = 'Up to date ✓';
-      setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+      _setPill('Up to date ✓');
+      _resetPillSoon();
     }
   } catch (e) {
-    tab.disabled = false;
-    tab.textContent = 'Offline — try again';
-    setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+    _setPill('Offline — try again');
+    _resetPillSoon();
   }
-}
-
-function badgeApplyUpdate() {
-  const tab = document.getElementById('badge-check-btn');
-  tab.textContent = 'Updating…';
-  tab.disabled = true;
-  applyUpdate();
 }
 
 loadUpdateState();

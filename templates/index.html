@@ -18,10 +18,13 @@
     <span class="brand-sub">for ProPresenter</span>
   </h1>
   <div class="header-right">
-    <!-- Version pill. Hovering slides out a "Check for updates" tab; one
-         click checks GitHub, and if a newer release exists the tab turns
-         into the Update button itself — no detour via Settings or the
-         banner. driven by badgeCheckUpdates()/badgeApplyUpdate() in app.js. -->
+    <!-- Version pill — the ONE place updates happen. The launch check
+         (server-side) surfaces here automatically as a persistent
+         "⬆ Update to vX.Y.Z" button; nothing downloads until it is
+         clicked. With no update pending the tab stays tucked away and
+         slides out on hover so it can be triggered manually. There is
+         deliberately no banner: two competing entry points for the same
+         action is what made this confusing. See app.js §11. -->
     <span class="badge-wrap" id="badge-wrap">
       <span class="badge" id="version-badge" onclick="bumpVersionTaps()" title="">v—</span>
       <button class="badge-check" id="badge-check-btn"
@@ -31,19 +34,6 @@
   </div>
 </header>
 
-<!-- Update banner — hidden unless the background check found a newer
-     release (state=available from /api/update). One click downloads,
-     verifies, swaps the app, and relaunches. Driven by app.js. -->
-<div id="update-banner" hidden>
-  <span id="update-banner-text">⬆ A new version is available.</span>
-  <a id="update-notes-link" href="#" target="_blank" rel="noopener">Release notes</a>
-  <span style="flex:1"></span>
-  <button class="btn btn-acc btn-sm" id="update-apply-btn" onclick="applyUpdate()">
-    Update &amp; Restart
-  </button>
-  <button class="btn btn-dim btn-sm" id="update-later-btn"
-          onclick="dismissUpdateBanner()" title="Hide until next launch">Later</button>
-</div>
 
 <div class="layout">
 
