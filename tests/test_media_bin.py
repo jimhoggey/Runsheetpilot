@@ -22,8 +22,6 @@ Consequences implemented here:
      the bin — reporting them so the UI can say, in plain words, "drag
      these into ProPresenter's Media area, then create again".
 """
-import pytest
-
 from propresenterrunsheet.propresenter.media_bin import (
     fetch_media_bin, relink_media,
 )
