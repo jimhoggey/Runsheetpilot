@@ -18,7 +18,15 @@
     <span class="brand-sub">for ProPresenter</span>
   </h1>
   <div class="header-right">
-    <span class="badge" id="version-badge" onclick="bumpVersionTaps()" title="">v—</span>
+    <!-- Version pill. Hovering slides out a "Check for updates" tab; one
+         click checks GitHub, and if a newer release exists the tab turns
+         into the Update button itself — no detour via Settings or the
+         banner. driven by badgeCheckUpdates()/badgeApplyUpdate() in app.js. -->
+    <span class="badge-wrap" id="badge-wrap">
+      <span class="badge" id="version-badge" onclick="bumpVersionTaps()" title="">v—</span>
+      <button class="badge-check" id="badge-check-btn"
+              onclick="badgeCheckUpdates()">Check for updates</button>
+    </span>
     <button class="quit-btn" onclick="quitApp()" title="Stop the app and close the browser tab">Quit</button>
   </div>
 </header>
@@ -144,6 +152,12 @@
       <button class="btn btn-acc btn-full btn-step" id="parse-btn" onclick="parseRunsheet()">
         🔍 Parse Runsheet
       </button>
+      <!-- Orb loader (thinking-orbs "solving") — swapped in for the button
+           while the AI reads the runsheet. Mounted by parseRunsheet(). -->
+      <div class="orb-loader" id="parse-loader" hidden>
+        <canvas id="parse-orb" width="64" height="64" role="img" aria-label="Solving…"></canvas>
+        <div class="orb-label" id="parse-orb-label">Reading your runsheet…</div>
+      </div>
     </div>
     <div class="step-locked-msg">Upload a PDF to unlock this step.</div>
   </div>
@@ -157,6 +171,17 @@
   <!-- Results table — populated after parse. Hidden until then so the
        empty state doesn't clutter Step 2/3. -->
   <div class="results-wrap" id="results-wrap" hidden>
+    <!-- The toolbar lives INSIDE results-wrap so its visibility comes for
+         free (results only exist after a parse) and — the lesson from the
+         first placement — so setStatus()'s innerHTML rewrites of the
+         status bar can never destroy the button. -->
+    <div class="results-toolbar">
+      <span class="results-toolbar-title">Parsed items</span>
+      <button class="btn btn-dim btn-sm" onclick="resetFlow()"
+              title="Clear the parsed runsheet and start again from Step 1">
+        ↺ Start over
+      </button>
+    </div>
     <table>
       <thead>
         <tr>
@@ -197,6 +222,12 @@
             ✓ Create Runsheet &amp; Export File
           </button>
         </div>
+      </div>
+      <!-- Orb loader (thinking-orbs "working") — shown while the playlist
+           is being built in ProPresenter. Mounted by createPlaylist(). -->
+      <div class="orb-loader" id="create-loader" hidden>
+        <canvas id="create-orb" width="64" height="64" role="img" aria-label="Working…"></canvas>
+        <div class="orb-label">Building the playlist in ProPresenter…</div>
       </div>
     </div>
     <div class="step-locked-msg">Parse the runsheet to unlock this step.</div>
@@ -394,35 +425,6 @@
         </div>
       </section>
 
-      <!-- SERVICE MATE LICENCE ─────────────────────────────────── -->
-      <!-- The clocks feature is a paid add-on with a 14-day free trial.
-           The status line + input are driven by /api/license (see
-           loadLicense() / activateLicense() in app.js). -->
-      <section class="settings-section">
-        <h3>Service Mate (paid add-on)</h3>
-        <p class="settings-hint">
-          Pushing live cues to GeekMagic clocks is a paid add-on with a
-          14-day free trial. The rest of Runsheet Pilot is free forever.
-        </p>
-        <div class="license-status" id="license-status">Checking…</div>
-        <div class="field" style="margin-top:10px">
-          <label for="license-key">Licence key</label>
-          <input id="license-key" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="RP1.…  (paste the key from your purchase email)">
-        </div>
-        <div class="row" style="gap:8px;align-items:center">
-          <button class="btn btn-acc btn-sm" id="license-activate-btn"
-                  onclick="activateLicense()">Activate</button>
-          <button class="btn btn-dim btn-sm" onclick="removeLicense()"
-                  title="Remove the key from this computer">Remove</button>
-          <span id="license-msg" style="font-size:.74rem"></span>
-        </div>
-        <p class="settings-hint" style="margin-top:8px">
-          Don't have a key yet? <a href="#" id="license-buy-link"
-          target="_blank" rel="noopener">Get Service Mate</a> — then paste
-          the key above.
-        </p>
-      </section>
 
       <!-- PLAYLIST OPTIONS ────────────────────────────────────── -->
       <section class="settings-section">
@@ -474,6 +476,45 @@
         </div>
       </section>
 
+      <!-- SERVICE MATE LICENCE ─────────────────────────────────── -->
+      <!-- The clocks feature is a paid add-on with a 14-day free trial.
+           The status line + input are driven by /api/license (see
+           loadLicense() / activateLicense() in app.js). -->
+      <section class="settings-section">
+        <h3>Service Mate (paid add-on)</h3>
+        <p class="settings-hint">
+          Pushing live cues to GeekMagic clocks is a paid add-on with a
+          14-day free trial. The rest of Runsheet Pilot is free forever.
+        </p>
+        <div class="license-status" id="license-status">Checking…</div>
+        <div class="field" style="margin-top:10px">
+          <label for="license-key">Licence key</label>
+          <input id="license-key" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="RP1.…  (paste the key from your purchase email)">
+        </div>
+        <div class="row" style="gap:8px;align-items:center">
+          <button class="btn btn-acc btn-sm" id="license-activate-btn"
+                  onclick="activateLicense()">Activate</button>
+          <button class="btn btn-dim btn-sm" onclick="removeLicense()"
+                  title="Remove the key from this computer">Remove</button>
+          <span id="license-msg" style="font-size:.74rem"></span>
+        </div>
+        <p class="settings-hint" style="margin-top:8px">
+          Don't have a key yet? <a href="#" id="license-buy-link"
+          target="_blank" rel="noopener">Get Service Mate</a> — then paste
+          the key above.
+        </p>
+        <label class="settings-check" style="margin-top:12px">
+          <input type="checkbox" id="sm-hide">
+          <span>Hide Service Mate</span>
+        </label>
+        <p class="settings-hint" style="margin-left:24px;margin-top:4px">
+          Removes the Service Mate Clocks panel from the main screen.
+          Turn this on if you don't own a GeekMagic clock — everything
+          else works exactly the same.
+        </p>
+      </section>
+
       <!-- HIDDEN: legacy mirrored host/port for the Library API fallback.
            The visible host/port in the sidebar (#pp-host2/#pp-port2) is
            the source of truth; these stay so the existing JS that reads
@@ -511,6 +552,7 @@
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='orbs.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

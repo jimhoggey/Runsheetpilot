@@ -19,7 +19,7 @@ let saveTimer = null;
 let suppressAutoSave = true; // suppress during initial loadSettings()
 
 const AUTOSAVE_FIELDS = [
-  'or-key', 'or-model', 'lib-dir', 'export-dir',
+  'or-key', 'or-model', 'lib-dir', 'export-dir', 'sm-hide',
   'pp-host', 'pp-port', 'pp-host2', 'pp-port2', 'threshold',
   'create-timers', 'template-playlist'
 ];
@@ -144,6 +144,13 @@ async function loadSettings() {
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
 
+  // Hide Service Mate entirely for operators who don't own a clock —
+  // removes the whole panel from the main screen, nothing else changes.
+  const smHide = document.getElementById('sm-hide');
+  smHide.checked = s.sm_hide === true;
+  applySmHidden(smHide.checked);
+  smHide.addEventListener('change', e => applySmHidden(e.target.checked));
+
   // Library source preference (auto / api / disk). Used by loadLibraryAuto
   // to constrain which source(s) it tries. Default "auto" matches the
   // old behaviour (try API, fall back to disk).
@@ -230,6 +237,7 @@ async function saveSettings() {
     threshold:               parseInt(document.getElementById('threshold').value) / 100,
     create_timers:           document.getElementById('create-timers').checked,
     template_playlist_uuid:  document.getElementById('template-playlist').value,
+    sm_hide:                 document.getElementById('sm-hide').checked,
   };
   try {
     await fetch('/api/settings', {method:'POST',
@@ -549,6 +557,38 @@ async function testConnection2() {
 }
 
 // ─── 6. Parse runsheet + render results table ─────────────────────────────
+function applySmHidden(hidden) {
+  const card = document.getElementById('sm-card');
+  if (card) card.style.display = hidden ? 'none' : '';
+}
+
+// ─── Start over — wipe the parsed state back to a fresh Step 1 ───────────
+function resetFlow() {
+  uploadedFile = null;
+  matchedItems = [];
+  document.getElementById('pdf-input').value = '';
+  const dz = document.getElementById('drop-zone');
+  dz.classList.remove('has-file');
+  dz.innerHTML = `
+    <div class="icon">☁️</div>
+    <div style="font-weight:600;margin-bottom:4px">Drop your PDF here, or click to browse</div>
+    <div class="hint">Runsheet · Order of Service · any PDF</div>`;
+  dz.onclick = () => document.getElementById('pdf-input').click();
+  document.getElementById('results-wrap').hidden = true;
+  document.getElementById('results-body').innerHTML = '';
+  document.getElementById('result-notice').innerHTML = '';
+  document.getElementById('step-1-meta').textContent = '';
+  document.getElementById('step-2-meta').textContent = '~12 seconds';
+  document.getElementById('step-3-meta').textContent = '';
+  const today = new Date().toLocaleDateString('en-AU',
+      {day:'2-digit', month:'short', year:'numeric'});
+  document.getElementById('playlist-name').value = 'Service ' + today;
+  setStepState(1, 'active');
+  setStepState(2, 'locked');
+  setStepState(3, 'locked');
+  setStatus('👋 Ready — drop a runsheet PDF on Step 1 to go again.');
+}
+
 async function parseRunsheet() {
   if (!uploadedFile) { setStatus('Upload a PDF first.', 'var(--red)'); return; }
   if (!document.getElementById('or-key').value.trim()) {
@@ -560,6 +600,10 @@ async function parseRunsheet() {
 
   const btn = document.getElementById('parse-btn');
   btn.disabled = true;
+  btn.hidden = true;
+  const loader = document.getElementById('parse-loader');
+  loader.hidden = false;
+  const orb = Orb.mount(document.getElementById('parse-orb'), 'solving');
   setStepState(2, 'busy');
   setLoading('Uploading PDF and sending to AI…');
 
@@ -605,6 +649,9 @@ async function parseRunsheet() {
     setStatus('❌ ' + e, 'var(--red)');
     setStepState(2, 'active');
   } finally {
+    orb.stop();
+    loader.hidden = true;
+    btn.hidden = false;
     btn.disabled = false;
   }
 }
@@ -731,6 +778,9 @@ async function createPlaylist() {
 
   const btn = document.getElementById('create-btn');
   btn.disabled = true;
+  const loader = document.getElementById('create-loader');
+  loader.hidden = false;
+  const orb = Orb.mount(document.getElementById('create-orb'), 'working');
   setStepState(3, 'busy');
   setLoading('Creating playlist in ProPresenter…');
 
@@ -806,6 +856,8 @@ async function createPlaylist() {
     setStatus('❌ ' + e, 'var(--red)');
     setStepState(3, 'active');
   } finally {
+    orb.stop();
+    loader.hidden = true;
     btn.disabled = false;
   }
 }
@@ -1336,6 +1388,8 @@ function dismissUpdateBanner() {
 }
 
 async function checkForUpdatesNow() {
+  // Settings-modal variant: same check as the badge, but the Update
+  // button appears right here — no "close this, find the banner" detour.
   const msg = document.getElementById('update-check-msg');
   msg.style.color = 'var(--muted)';
   msg.textContent = 'Checking…';
@@ -1345,17 +1399,57 @@ async function checkForUpdatesNow() {
       msg.textContent = 'Running from source — self-update is disabled.';
     } else if (st.state === 'available') {
       msg.style.color = 'var(--grn)';
-      msg.textContent = 'Version ' + st.latest + ' available — see the banner above.';
+      msg.innerHTML = 'Version ' + st.latest + ' is ready — ' +
+        '<button class="btn btn-acc btn-sm" onclick="applyUpdate()">Update &amp; Restart</button>';
       _updateDismissed = false;
-      renderUpdateState(st);
+      renderUpdateState(st);   // banner shows too, for after the modal closes
     } else {
       msg.style.color = 'var(--grn)';
-      msg.textContent = 'You are up to date.';
+      msg.textContent = 'You are up to date ✓';
     }
   } catch (e) {
     msg.style.color = 'var(--org)';
     msg.textContent = 'Could not reach GitHub — check your connection.';
   }
+}
+
+// ─── Version-badge update flow ────────────────────────────────────────────
+// Hovering the version pill slides out a "Check for updates" tab. One
+// click checks GitHub; if a newer release exists the tab itself becomes
+// the Update button — the whole journey happens in one spot.
+async function badgeCheckUpdates() {
+  const tab = document.getElementById('badge-check-btn');
+  if (tab.dataset.state === 'available') { badgeApplyUpdate(); return; }
+  tab.textContent = 'Checking…';
+  tab.disabled = true;
+  try {
+    const st = await fetch('/api/update?refresh=1').then(r => r.json());
+    tab.disabled = false;
+    if (st.state === 'available') {
+      tab.dataset.state = 'available';
+      tab.classList.add('badge-check-available');
+      tab.textContent = '⬆ Update to v' + st.latest;
+      _updateDismissed = false;
+      renderUpdateState(st);
+    } else if (st.state === 'dev') {
+      tab.textContent = 'Dev mode — no updates';
+      setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+    } else {
+      tab.textContent = 'Up to date ✓';
+      setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+    }
+  } catch (e) {
+    tab.disabled = false;
+    tab.textContent = 'Offline — try again';
+    setTimeout(() => { tab.textContent = 'Check for updates'; }, 2500);
+  }
+}
+
+function badgeApplyUpdate() {
+  const tab = document.getElementById('badge-check-btn');
+  tab.textContent = 'Updating…';
+  tab.disabled = true;
+  applyUpdate();
 }
 
 loadUpdateState();
