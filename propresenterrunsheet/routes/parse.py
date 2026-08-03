@@ -24,7 +24,7 @@ from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
 from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
-    playlist_to_sections, resolve_section,
+    playlist_to_objects, playlist_to_sections, resolve_object, resolve_section,
 )
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 from ..settings import _default_settings, load_settings
@@ -128,6 +128,7 @@ def api_upload_and_parse():
         # Best-effort: any failure here (PP not running, no playlists,
         # template gone) drops back to parse-without-template.
         sections: list = []
+        objects: list = []
         pp_host = (settings.get("pp_host") or "localhost").strip()
         pp_port = (settings.get("pp_port") or "50001").strip()
         base = f"http://{pp_host}:{pp_port}"
@@ -152,6 +153,12 @@ def api_upload_and_parse():
             try:
                 raw_items = fetch_pp_playlist_items(base, tmpl_uuid)
                 sections = playlist_to_sections(raw_items)
+                # Item-level repository view of the same playlist. Real
+                # operators often build the template FLAT — one named object
+                # per reusable thing (Welcome slide, Countdown loop) with no
+                # headers at all — which yields zero sections above. Objects
+                # are matched per runsheet item further down.
+                objects = playlist_to_objects(raw_items)
             except Exception:
                 log.exception("template playlist fetch failed; "
                               "continuing without template context")
@@ -231,6 +238,7 @@ def api_upload_and_parse():
         # template's slides. Hallucinated names (no section hit) get
         # dropped to None and the item falls back to existing paths.
         resolved_section_hits = 0
+        resolved_object_hits = 0
         for it in items:
             if not isinstance(it, dict):
                 continue
@@ -252,12 +260,35 @@ def api_upload_and_parse():
             if section:
                 it["library_match"] = section
                 resolved_section_hits += 1
+                continue
+            # Item-level fallback: match the runsheet title against the
+            # template's named objects ("Welcome and Connection Cards" →
+            # the "Welcome" slide). Wrapped in the SECTION shape — header
+            # + one item — because everything downstream (the /api/match
+            # passthrough, the ♻ render in the UI, build_playlist_payload's
+            # expander with its PP asset-UUID rules) already handles that
+            # shape; the generated playlist keeps the runsheet's own
+            # coloured header with the template object underneath.
+            # Songs are deliberately excluded: they belong to the
+            # fuzzy-match + Pick flow, and a template slide named
+            # "Worship" must not hijack a song titled "Worship Medley".
+            obj = (resolve_object(it.get("title", ""), objects)
+                   if it.get("type") != "song" else None)
+            if obj:
+                it["library_match"] = {
+                    "header": {"name": obj["name"], "uuid": obj["uuid"],
+                               "color": {}},
+                    "items":  [obj],
+                }
+                resolved_object_hits += 1
             else:
                 it["library_match"] = None
-        if sections:
+        if sections or objects:
             log.info(f"Template-context parse: "
-                     f"{resolved_section_hits}/{len(items)} items linked to "
-                     f"template sections (template has {len(sections)} sections)")
+                     f"{resolved_section_hits} section + "
+                     f"{resolved_object_hits} object links across "
+                     f"{len(items)} items (template: {len(sections)} "
+                     f"sections, {len(objects)} objects)")
 
         # Also seed the Service Mate runsheet state on parse — so the user can
         # test the clock cue flow without going through Create Playlist (which

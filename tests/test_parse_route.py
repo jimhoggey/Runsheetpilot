@@ -137,6 +137,78 @@ def test_empty_items_array_is_rejected(parse_client, isolated_state):
 
 # ── the happy path still works ───────────────────────────────────────────────
 
+def test_flat_template_objects_attach_to_matching_items(
+        parse_client, isolated_state, monkeypatch):
+    """The template-SUNDAY case: a FLAT template playlist (no section
+    headers) is a repository of named objects. "Countdown - Start 9:27am"
+    must come back wired to the template's "Countdown " loop (note PP's
+    trailing space), wrapped in the section shape the payload builder
+    already expands as header + item-underneath."""
+    from tests.test_template_objects import PP_ITEMS
+    import propresenterrunsheet.routes.parse as parse_mod
+
+    monkeypatch.setattr(parse_mod, "fetch_pp_playlists", lambda *_a, **_k:
+                        [{"name": "template SUNDAY", "uuid": "TPL", "index": 0}])
+    monkeypatch.setattr(parse_mod, "fetch_pp_playlist_items",
+                        lambda *_a, **_k: PP_ITEMS)
+
+    reply = json.dumps({"service_name": "Sunday", "items": [
+        {"type": "other",        "title": "Countdown - Start 9:27am"},
+        {"type": "announcement", "title": "Welcome and Connection Cards"},
+        {"type": "song",         "title": "Worship Medley"},
+        {"type": "other",        "title": "Go Live - Start Online Streaming"},
+    ]})
+    body = _post(parse_client, reply).get_json()
+    assert "error" not in body, body
+    items = body["items"]
+
+    countdown = items[0]["library_match"]
+    assert countdown and countdown["header"]["name"] == "Countdown"
+    assert len(countdown["items"]) == 1
+    assert countdown["items"][0]["target_uuid"] == "3914716D"
+    assert countdown["items"][0]["duration"] == 15
+
+    welcome = items[1]["library_match"]
+    assert welcome and welcome["header"]["name"] == "Welcome"
+
+    # Songs stay with the picker flow — the template's "Worship" slide
+    # must NOT hijack a song titled "Worship Medley".
+    assert not items[2].get("library_match")
+
+    # Nothing in the template explains this title — header only.
+    assert not items[3].get("library_match")
+
+
+def test_sectioned_template_still_wins_over_object_fallback(
+        parse_client, isolated_state, monkeypatch):
+    """Templates organised with headers keep the richer behaviour: an
+    LLM-tagged section (all its media) beats the one-object fallback."""
+    import propresenterrunsheet.routes.parse as parse_mod
+
+    sectioned = [
+        {"id": {"uuid": "H1", "name": "Culture", "index": 0},
+         "type": "header", "target_uuid": ""},
+        {"id": {"uuid": "M1", "name": "Culture Bumper", "index": 1},
+         "type": "media", "target_uuid": "A1", "destination": "presentation"},
+        {"id": {"uuid": "M2", "name": "Culture Lower Third", "index": 2},
+         "type": "media", "target_uuid": "A2", "destination": "presentation"},
+    ]
+    monkeypatch.setattr(parse_mod, "fetch_pp_playlists", lambda *_a, **_k:
+                        [{"name": "Sunday Library", "uuid": "TPL", "index": 0}])
+    monkeypatch.setattr(parse_mod, "fetch_pp_playlist_items",
+                        lambda *_a, **_k: sectioned)
+
+    reply = json.dumps({"service_name": "Sunday", "items": [
+        {"type": "announcement", "title": "Culture Moment",
+         "library_match": "Culture"},
+    ]})
+    body = _post(parse_client, reply).get_json()
+    lib = body["items"][0]["library_match"]
+    assert lib["header"]["name"] == "Culture"
+    assert len(lib["items"]) == 2, \
+        "the LLM-tagged section (2 slides) must win over a 1-object match"
+
+
 def test_valid_runsheet_still_parses_and_seeds_state(
         parse_client, isolated_state):
     reply = json.dumps({"service_name": "Sunday Morning",
