@@ -1,4 +1,13 @@
-"""Server bootstrap — port discovery, browser open, waitress, main().
+"""Server bootstrap — port discovery, native window, waitress, main().
+
+Since v2.4.0 the UI opens in a NATIVE desktop window (pywebview — WebKit
+on Mac, WebView2 on Windows) instead of the system browser, so the app
+looks and quits like a real desktop app. The pywebview loop must own the
+main thread — same constraint the old tkinter window had — so waitress
+serves from a daemon thread whenever a window is shown. Everything below
+about the tkinter status window still applies: it is the FALLBACK when
+pywebview cannot start (e.g. Windows 10 without the WebView2 runtime),
+paired with opening the UI in the system browser like pre-2.4 versions.
 
 Mac UX note: a pure-Flask backend has no native UI, so the OS gives it no
 Dock slot — the icon flickers once during PyInstaller's launcher hand-off
@@ -86,8 +95,68 @@ def _show_startup_error(title: str, message: str) -> None:
         pass
 
 
+def _probe_webview() -> int:
+    """Import pywebview AND its platform backend, print the verdict, and
+    return an exit code. `--probe-webview` runs this instead of the app.
+
+    Exists for CI: the classic pywebview packaging failure on Windows is a
+    bundle that builds clean but dies at runtime ("Failed to resolve
+    Python.Runtime" — the pythonnet/clr pieces didn't make it into the
+    exe). Importing the platform backend triggers exactly those imports
+    without needing a window or a display, so the release smoke test can
+    catch it on the runner instead of on an operator's machine."""
+    import traceback
+    try:
+        import webview
+        if sys.platform == "win32":
+            import webview.platforms.edgechromium  # noqa: F401 — pulls clr
+        elif sys.platform == "darwin":
+            import webview.platforms.cocoa  # noqa: F401 — pulls pyobjc
+        print(f"webview OK ({getattr(webview, '__version__', '?')})")
+        return 0
+    except Exception:
+        traceback.print_exc()
+        print("webview UNAVAILABLE")
+        return 1
+
+
+def _run_native_window(port: int, webview_module=None) -> bool:
+    """Open the UI in a native desktop window (pywebview). Blocks until
+    the user closes the window. Returns False — without raising — when no
+    usable webview backend exists, so main() can fall back to the old
+    tkinter-status-window + system-browser combination.
+
+    Must own the MAIN thread, same as the Tk window it replaces: Cocoa
+    (Mac) and the Win32 message pump both refuse to run a UI loop from a
+    background thread. That's why waitress is already in a daemon thread
+    on this path.
+
+    The URL uses 127.0.0.1, not localhost — managed Windows machines
+    route "localhost" through the system proxy (the CI smoke test hung on
+    exactly that until it switched).
+
+    `webview_module` is injectable for tests; None imports the real one.
+    """
+    try:
+        webview = webview_module
+        if webview is None:
+            import webview
+        webview.create_window(
+            APP_NAME, f"http://127.0.0.1:{port}",
+            width=1280, height=860, min_size=(1000, 640))
+        log.info("Native window open — close it to quit")
+        webview.start()
+        log.info("Native window closed — shutting down")
+        return True
+    except Exception as e:
+        log.warning(f"Native window unavailable ({type(e).__name__}: {e}) "
+                    "— falling back to status window + browser")
+        return False
+
+
 def _should_show_status_window() -> bool:
-    """Return True if we should spawn the Mac/Windows Dock status window.
+    """Return True if we should show a window (native, or the fallback
+    status window) on the main thread.
 
     Rules (kept simple deliberately — see history if you're tempted to add
     a runtime probe):
@@ -121,6 +190,10 @@ def _should_show_status_window() -> bool:
     """
     if "--headless" in sys.argv:
         return False
+    if "--window" in sys.argv:
+        # Developer override: see the native window from source without
+        # building a bundle. --headless above still wins (CI safety).
+        return True
     if getattr(sys, "frozen", False):
         return True
     return sys.platform == "win32"
@@ -259,6 +332,11 @@ def main(app=None) -> None:
     if app is None:
         from propresenter_app import app  # legacy / dev fallback
 
+    # CI diagnostic: verify the pywebview backend is actually inside the
+    # bundle, then exit. Never starts the server. See _probe_webview.
+    if "--probe-webview" in sys.argv:
+        sys.exit(_probe_webview())
+
     try:
         # Belt-and-braces diagnostic: log the routes Flask actually sees
         # so a future "URLs 404 in the bundle but not from source"
@@ -285,10 +363,9 @@ def main(app=None) -> None:
         print(f"  http://localhost:{port}")
         print(f"  Logs:     {LOG_FILE}")
         print(f"  Settings: {SETTINGS_FILE}")
-        print("  Close the status window or click Quit to shut down.")
+        print("  Close the app window to quit.")
         print(banner)
 
-        threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
         # Service Mate daemon — pushes 240×240 JPEGs to GeekMagic clocks on
         # the LAN. No-op if no clock IPs are configured. Internally spawns
         # its own daemon thread (idempotent).
@@ -303,18 +380,24 @@ def main(app=None) -> None:
         start_background_check()
 
         # Two-mode startup, gated by _should_show_status_window():
-        #   PyInstaller bundle + Windows from-source → waitress in daemon
-        #     thread, tkinter on main thread → app appears in Dock /
-        #     taskbar with a visible status window.
-        #   From-source on Mac/Linux → waitress on main thread, no window.
-        #     Devs have a terminal; we skip Tk entirely so we never trip
-        #     a broken /usr/bin/python3 Tk install and surface the
-        #     "Python quit unexpectedly" dialog.
+        #   PyInstaller bundle + Windows from-source (+ --window) →
+        #     waitress in a daemon thread, the UI in a NATIVE window on
+        #     the main thread. Closing the window quits the app. If
+        #     pywebview can't start (no WebView2 runtime on an old
+        #     Windows 10, broken backend), fall back to the pre-2.4 UX:
+        #     tkinter status window + the UI in the system browser.
+        #   From-source on Mac/Linux → waitress on main thread, no
+        #     window, browser opens — devs keep the old workflow.
         if _should_show_status_window():
             threading.Thread(target=_serve, args=(app, port),
                              daemon=True, name="waitress").start()
-            _run_status_window(port)  # blocks until user closes window
+            if not _run_native_window(port):     # blocks until closed
+                threading.Thread(target=_open_browser, args=(port,),
+                                 daemon=True).start()
+                _run_status_window(port)         # blocks until closed
         else:
+            threading.Thread(target=_open_browser, args=(port,),
+                             daemon=True).start()
             log.info("Running from source on %s — no status window. "
                      "Server at http://localhost:%d. "
                      "Quit with Ctrl+C or POST /api/quit.",

@@ -81,6 +81,8 @@ jobs:
             --hidden-import flask `
             --hidden-import pdfplumber `
             --hidden-import tkinter `
+            --collect-all webview `
+            --icon assets\icon.ico `
             --add-data "templates;templates" `
             --add-data "static;static" `
             propresenter_app.py
@@ -213,6 +215,20 @@ jobs:
                               -Method POST -TimeoutSec 5 -UseBasicParsing -NoProxy | Out-Null
           } catch {}
 
+      - name: Probe the webview backend inside the .exe
+        # The classic pywebview packaging failure on Windows is a bundle
+        # that builds clean but dies at runtime ("Failed to resolve
+        # Python.Runtime" — pythonnet/clr didn't make it into the exe).
+        # --probe-webview imports pywebview + the EdgeChromium backend
+        # inside the frozen bundle — no window, no display needed — and
+        # exits nonzero if anything is missing. Catches it on the runner
+        # instead of on an operator's machine.
+        shell: pwsh
+        run: |
+          $out = & "dist\Runsheet Pilot.exe" --probe-webview 2>&1
+          Write-Host ($out -join "`n")
+          if ($LASTEXITCODE -ne 0) { throw "webview backend missing from the exe" }
+
   # ─── Mac .dmg ──────────────────────────────────────────────────────────
   build-mac:
     name: Build macOS .dmg
@@ -262,6 +278,8 @@ jobs:
             --hidden-import flask \
             --hidden-import pdfplumber \
             --hidden-import tkinter \
+            --collect-all webview \
+            --icon assets/icon.icns \
             --add-data "templates:templates" \
             --add-data "static:static" \
             propresenter_app.py
@@ -305,6 +323,12 @@ jobs:
           fi
           echo "Smoke test passed."
           curl -s -X POST http://localhost:5757/api/quit >/dev/null || true
+
+      - name: Probe the webview backend inside the .app
+        # Same rationale as the Windows probe: import pywebview + the
+        # Cocoa backend inside the frozen bundle without opening a window.
+        run: |
+          "dist/Runsheet Pilot.app/Contents/MacOS/Runsheet Pilot" --probe-webview
 
       - uses: actions/upload-artifact@v7
         with:

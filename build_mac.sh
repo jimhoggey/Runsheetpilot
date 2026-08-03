@@ -72,6 +72,8 @@ pyinstaller \
     --hidden-import flask \
     --hidden-import pdfplumber \
     --hidden-import tkinter \
+    --collect-all webview \
+    --icon assets/icon.icns \
     --add-data "templates:templates" \
     --add-data "static:static" \
     "$ENTRY"
