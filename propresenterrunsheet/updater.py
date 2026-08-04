@@ -207,13 +207,30 @@ def plan_swap(install_path, new_payload, platform):
 
 
 def _mac_relaunch_script(app_path, pid):
-    """Shell one-liner that waits for OUR pid to fully exit, then opens the
-    new bundle. `kill -0` probes liveness without signalling; once we're
-    gone, LaunchServices has no running instance to wrongly activate and
-    `open` genuinely launches the freshly-swapped .app. The .old bundle is
-    cleaned up by cleanup_leftovers() on the next boot, as before."""
-    return (f'while /bin/kill -0 {pid} 2>/dev/null; do sleep 0.2; done; '
-            f'/usr/bin/open "{app_path}"')
+    """Shell that waits for OUR pid to exit, then execs the bundle's
+    binary DIRECTLY — deliberately not `open`.
+
+    Field evidence (2026-08-04 app.log): every `open`-based relaunch
+    "worked" but took 39-78 seconds. PyInstaller's outer bootloader
+    lingers after the inner process hard-exits, and it is the process
+    LaunchServices has registered for the bundle — so `open` activated
+    the dying registrant and macOS only launched a fresh instance after
+    its not-responding timeout. During that dead minute the Dock was
+    empty and the operator reasonably concluded the update had eaten the
+    app. Executing Contents/MacOS/<name> skips LaunchServices entirely:
+    instant relaunch, and the new process registers itself with the Dock
+    via _mac_dock_fix as usual.
+
+    Progress is appended to DATA_DIR/relaunch.log so the next field
+    report comes with breadcrumbs instead of guesswork. The .old bundle
+    is cleaned up by cleanup_leftovers() on the next boot, as before."""
+    app = Path(app_path)
+    binary = app / "Contents" / "MacOS" / app.stem
+    rlog = DATA_DIR / "relaunch.log"
+    return (f'echo "$(date) waiting for pid {pid}" >> "{rlog}"; '
+            f'while /bin/kill -0 {pid} 2>/dev/null; do sleep 0.2; done; '
+            f'echo "$(date) pid gone, launching" >> "{rlog}"; '
+            f'"{binary}" >> "{rlog}" 2>&1 &')
 
 
 def _windows_relaunch_script(exe_path, old_path, pid):

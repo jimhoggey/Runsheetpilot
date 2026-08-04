@@ -1269,3 +1269,55 @@ body { animation: page-in .4s ease both; }
 /* Start over sits in the header's top-right corner, after Quit — global
    scene controls live together up there, always at full brightness. */
 #reset-btn { flex-shrink: 0; white-space: nowrap; color: var(--text); }
+
+/* ═══ v2.4.6 delight ═══ */
+
+/* The idle greeter's waving hand + typing caret. */
+.wave {
+  display: inline-block;
+  transform-origin: 72% 72%;
+  animation: wave 2.4s ease-in-out infinite;
+}
+@keyframes wave {
+  0%, 58%, 100% { transform: rotate(0); }
+  8%  { transform: rotate(14deg); }
+  18% { transform: rotate(-8deg); }
+  28% { transform: rotate(12deg); }
+  38% { transform: rotate(-4deg); }
+  48% { transform: rotate(8deg); }
+}
+.type-caret {
+  display: inline-block;
+  width: 2px; height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--acc-2);
+  animation: caret-blink 0.9s steps(1) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* Parse completion: the orb takes a small spring bow out… */
+.orb-loader.orb-done {
+  animation: orb-bow .38s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes orb-bow {
+  0%   { transform: scale(1);    opacity: 1; }
+  45%  { transform: scale(1.1); }
+  100% { transform: scale(0.55); opacity: 0; }
+}
+
+/* …and the results spring in, with headroom for the smooth scroll. */
+.results-wrap { scroll-margin-top: 82px; }
+.results-wrap.spring-in {
+  animation: results-spring .6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes results-spring {
+  from { opacity: 0; transform: translateY(18px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wave, .type-caret, .orb-loader.orb-done, .results-wrap.spring-in {
+    animation: none;
+  }
+}

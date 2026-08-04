@@ -265,14 +265,26 @@ def test_plan_swap_mac_hands_off_to_relaunch_script():
     ]
 
 
-def test_mac_relaunch_script_waits_for_pid_then_opens():
+def test_mac_relaunch_script_waits_then_execs_the_binary_directly():
+    """Field evidence (2026-08-04 log): relaunches "worked" but took
+    39-78 seconds. Cause: `open` consults LaunchServices, which still had
+    the DYING instance registered (PyInstaller's outer bootloader lingers
+    after the inner process exits) — LS poked the corpse and only
+    launched fresh after its not-responding timeout. Executing the
+    bundle's binary directly skips LS entirely: relaunch is immediate,
+    and the operator never stares at an empty Dock wondering if the
+    update ate the app."""
     script = updater._mac_relaunch_script("/Applications/Runsheet Pilot.app",
                                           pid=4242)
     # spin until OUR pid is gone — kill -0 probes without signalling
     assert "kill -0 4242" in script
     assert "sleep" in script
-    # then launch the new bundle via LaunchServices
-    assert 'open "/Applications/Runsheet Pilot.app"' in script
+    # then exec the binary inside the bundle — NOT `open`
+    assert '"/Applications/Runsheet Pilot.app/Contents/MacOS/Runsheet Pilot"' \
+        in script
+    assert "open " not in script
+    # breadcrumbs for the next field investigation
+    assert "relaunch.log" in script
 
 
 def test_default_spawn_relaunch_mac_detaches_a_shell(upd_env, monkeypatch):
@@ -285,7 +297,7 @@ def test_default_spawn_relaunch_mac_detaches_a_shell(upd_env, monkeypatch):
     argv, kwargs = calls[0][0][0], calls[0][1]
     assert argv[0] == "/bin/sh" and argv[1] == "-c"
     assert "kill -0 777" in argv[2]
-    assert f'open "{app}"' in argv[2]
+    assert "Contents/MacOS" in argv[2]   # direct binary exec, not `open`
     # detached from our dying process group, or macOS reaps it with us
     assert kwargs.get("start_new_session") is True
 
