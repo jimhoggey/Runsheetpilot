@@ -643,6 +643,19 @@ async function testConnection2() {
 // The post-parse nudge: one line, pointing at the only thing left to do.
 // Picked at random per parse so repeat use stays light without churning
 // while the operator is mid-read.
+// Post-create line for the status bar. Same voice as the idle greeter —
+// warm, brief, and pointing at the one place to look next. The notice
+// below carries the numbers, so this never repeats them.
+const DONE_LINES = [
+  'Amazing — all done! Go check it in ProPresenter.',
+  'That was quick. Your playlist is waiting in ProPresenter.',
+  'All done! Pop over to ProPresenter and have a look.',
+  'Beautiful. ProPresenter has everything now.',
+  'Done and dusted — go take a look in ProPresenter.',
+  'Nice work. It\'s all sitting in ProPresenter for you.',
+  'That\'s Sunday sorted. Check it over in ProPresenter.',
+];
+
 const NEXT_STEP_LINES = [
   n => `${n} items ready. Step 3 does the actual work — hit Create and they land in ProPresenter.`,
   n => `Runsheet's built. One more click and ProPresenter has your ${n}-item playlist.`,
@@ -717,7 +730,13 @@ async function parseRunsheet() {
   const quips = ['Reading your runsheet…', 'Analyzing the speakers…',
                  'Praising the Lord…', 'Welcoming the guests…',
                  'Counting worship songs…', 'Timing the sermon…',
-                 'Cueing the countdown…', 'Handing out connect cards…'];
+                 'Cueing the countdown…', 'Handing out connect cards…',
+                 'Warming up the projector…', 'Checking mic levels…',
+                 'Dimming the house lights…', 'Consulting the roster…',
+                 'Untangling the cables…', 'Finding the offering bags…',
+                 'Saving seats for latecomers…', 'Rehearsing transitions…',
+                 'Locating the worship leader…', 'Putting the kettle on…',
+                 'Blessing the sound desk…', 'Counting in the band…'];
   const label = document.getElementById('parse-orb-label');
   let qi = 0;
   label.textContent = quips[0];
@@ -803,8 +822,13 @@ async function parseRunsheet() {
         wrap.hidden = false;
         wrap.classList.add('spring-in');
         setTimeout(() => wrap.classList.remove('spring-in'), 700);
-        wrap.scrollIntoView({behavior: 'smooth', block: 'start'});
-      }, 560);
+        // Scroll only AFTER the spring has played. Scrolling on the same
+        // tick moved the orb out of view mid-bow, so the finish animation
+        // was never actually seen — the whole point of it.
+        setTimeout(
+          () => wrap.scrollIntoView({behavior: 'smooth', block: 'start'}),
+          620);
+      }, 640);
     } else {
       orb.stop();
       loader.hidden = true;
@@ -968,11 +992,25 @@ async function createPlaylist() {
     setStepState(3, 'complete');
     document.getElementById('step-3-meta').textContent = `✓ "${name}"`;
 
+    // Count template slides reused — same rule renderResults() uses for
+    // the ♻ column, so the summary agrees with the table above it.
+    const reused = matchedItems.filter(mi => {
+      const m = mi.match;
+      return (mi.parsed || {}).type !== 'song' && m
+             && ((m.header && Array.isArray(m.items)) || m.uuid);
+    }).length;
+
+    // One scannable stat line — every number the operator cares about,
+    // no sentences repeating what the numbers already say.
+    const bits = [`${res.headers} section header${res.headers!==1?'s':''}`];
+    if (reused)     bits.push(`♻ ${reused} slide${reused!==1?'s':''} reused`);
+    if (res.songs)  bits.push(`${res.songs} song${res.songs!==1?'s':''} matched`);
+    if (res.needs_action) {
+      bits.push(`<span style="color:#fca5a5">⚠ ${res.needs_action} song${res.needs_action!==1?'s':''} to add by hand</span>`);
+    }
     let html = `<div class="notice notice-ok">
-      ✅ <strong>Playlist "${escapeHtml(name)}" created in ProPresenter!</strong><br>
-      ${res.songs} song${res.songs!==1?'s':''} added &nbsp;·&nbsp;
-      ${res.headers} section header${res.headers!==1?'s':''}`;
-    if (res.needs_action) html += ` &nbsp;·&nbsp; <span style="color:#fca5a5">⚠ ${res.needs_action} <strong>ACTION NEEDED</strong> placeholder${res.needs_action!==1?'s':''}</span> — open the playlist in ProPresenter and add the song${res.needs_action!==1?'s':''} manually.`;
+      ✅ <strong>Playlist "${escapeHtml(name)}" created in ProPresenter</strong><br>
+      ${bits.join(' &nbsp;·&nbsp; ')}`;
     if (res.unlinked && res.unlinked.length) {
       // Media that isn't in PP's Media area can't be attached over the
       // API at all (PP matches media by name against the Media bin).
@@ -987,11 +1025,10 @@ async function createPlaylist() {
         into <strong>Media</strong> in the left sidebar, then click
         <strong>Create Runsheet &amp; Export File</strong> again.`;
     }
-    if (res.timers_deleted) {
-      html += `<br>🧹 Cleared ${res.timers_deleted} previous <code>[RB]</code> timer${res.timers_deleted!==1?'s':''} from PP.`;
-    }
     if (res.timers_created) {
-      html += `<br>⏱ <strong>${res.timers_created} duration countdown timer${res.timers_created!==1?'s':''}</strong> created in PP (named with <code>[RB]</code> prefix, prefixed by sequence number for runsheet order) — open the Timer panel and start each one when its section begins.`;
+      const cleared = res.timers_deleted
+        ? `${res.timers_deleted} old cleared &nbsp;·&nbsp; ` : '';
+      html += `<br>⏱ ${cleared}<strong>${res.timers_created} countdown timer${res.timers_created!==1?'s':''}</strong> ready in PP's Timer panel.`;
     } else if (res.timers_total_items > 0 && res.timers_no_duration === res.timers_total_items) {
       html += `<br>⏱ <span style="color:#fbbf24">No timers created — none of the timeable items had a recognisable duration.</span> Make sure your runsheet shows minutes (e.g. <code>9:30 AM 20 Worship and Ministry Time</code> — the 20 is the duration).`;
     } else if (res.timers_no_duration > 0) {
@@ -1009,9 +1046,10 @@ async function createPlaylist() {
     }
     html += '</div>';
     notice.innerHTML = html;
-    const extra = res.needs_action ? `, ${res.needs_action} ACTION NEEDED` : '';
-    setStatus(`✅ Playlist "${name}" created — ${res.songs} songs, ${res.headers} headers${extra}.`,
-              res.needs_action ? 'var(--org)' : 'var(--grn)');
+    // Deliberately NOT a stat line — the notice below carries the
+    // numbers, and printing them twice made the screen feel noisy.
+    setStatus('✅ ' + DONE_LINES[Math.floor(Math.random() * DONE_LINES.length)],
+              'var(--grn)');
   } catch (e) {
     setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
     setStepState(3, 'active');
