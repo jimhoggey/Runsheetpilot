@@ -258,8 +258,6 @@ async function loadSettings() {
   document.getElementById('version-badge').textContent = 'v' + (s.version || '?');
   const sv = document.getElementById('settings-version');
   if (sv) sv.textContent = s.version || '?';
-  document.getElementById('footer-info').innerHTML =
-    `Settings: <code>${s.data_dir || ''}</code>`;
 
   const isMac = s.platform === 'darwin';
   document.getElementById('lib-dir').placeholder = isMac
