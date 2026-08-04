@@ -23,7 +23,7 @@ from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
-    playlist_to_sections,
+    playlist_to_objects, playlist_to_sections, resolve_object,
 )
 from ..propresenter.timers import _create_pp_timers
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
@@ -31,6 +31,67 @@ from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 
 bp = Blueprint("playlist", __name__)
 log = logging.getLogger("pp_runsheet")
+
+
+def _rematch_template(matched, base, tmpl_uuid):
+    """Re-run the deterministic template match for items that missed it.
+
+    Template links are normally attached at PARSE time — but if
+    ProPresenter wasn't running then, that lookup failed silently and the
+    parsed items arrived here without a single library_match. The old
+    behaviour was to build exactly what it was given: a headers-only
+    playlist, even though PP was up by the time the operator clicked
+    Create (their exact report). Clicking "Refresh playlists" couldn't
+    help — it only refills the dropdown.
+
+    So the same title-vs-template-object rule from parse (every word of
+    the object's name in the item's title; sections win over single
+    objects) runs again HERE, but only when at least one non-song item
+    is unmatched — a fully-matched parse costs nothing extra. Best-effort
+    throughout: template still unreachable -> unchanged behaviour."""
+    needs = [mi for mi in matched
+             if isinstance(mi.get("parsed"), dict)
+             and mi["parsed"].get("type") != "song"
+             and not mi["parsed"].get("library_match")]
+    if not needs:
+        return
+    try:
+        if not tmpl_uuid:
+            hint = " ".join((mi["parsed"].get("title") or "")
+                            for mi in needs)
+            tmpl_uuid = auto_detect_template_uuid(
+                fetch_pp_playlists(base), hint=hint) or ""
+        if not tmpl_uuid:
+            return
+        raw = fetch_pp_playlist_items(base, tmpl_uuid)
+        sections = playlist_to_sections(raw)
+        objects = playlist_to_objects(raw)
+        # Section headers as matchable pseudo-objects: a title hit on the
+        # header name expands the whole section, same as parse time.
+        headers = [{"name": s_["header"]["name"], "_section": s_}
+                   for s_ in sections]
+        hits = 0
+        for mi in needs:
+            parsed = mi["parsed"]
+            title = parsed.get("title") or ""
+            hdr = resolve_object(title, headers)
+            if hdr:
+                parsed["library_match"] = hdr["_section"]
+                hits += 1
+                continue
+            obj = resolve_object(title, objects)
+            if obj:
+                parsed["library_match"] = {
+                    "header": {"name": obj["name"], "uuid": obj["uuid"],
+                               "color": {}},
+                    "items": [obj],
+                }
+                hits += 1
+        if hits:
+            log.info("Create-time template re-match linked %d item(s) "
+                     "the parse missed (PP was likely closed then)", hits)
+    except Exception:
+        log.exception("Create-time template re-match failed; continuing")
 
 
 @bp.route("/api/create_playlist", methods=["POST"])
@@ -64,6 +125,12 @@ def api_create_playlist():
         # skipped rather than applied — applying it against [] would drop
         # every linked slide on a blip. If PP then refuses the template
         # identities, the safe-mode retry below still saves the create.
+        # 0a. Items may have arrived unmatched because PP was closed at
+        # parse time — re-run the deterministic template match now that
+        # PP is (presumably) up. No-op when everything already matched.
+        _rematch_template(matched, base,
+                          (body.get("template_playlist_uuid") or "").strip())
+
         bin_items = fetch_media_bin(base)
         unlinked = relink_media(matched, bin_items) if bin_items else []
         if unlinked:
@@ -224,6 +291,12 @@ def api_test_connection():
         libs = r.json()
         return jsonify({"ok": True,
                         "count": len(libs) if hasattr(libs, "__len__") else 0})
+    except req.exceptions.ConnectionError:
+        # The raw requests error ("HTTPConnectionPool… Max retries exceeded
+        # … Errno 61") reads like a stack trace to a volunteer. Say only
+        # what happened and what to do.
+        return jsonify({"ok": False, "error":
+            f"Can't reach ProPresenter at {host}:{port}."})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 

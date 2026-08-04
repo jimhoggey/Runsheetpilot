@@ -744,18 +744,7 @@ button:focus-visible, .quit-btn:focus-visible {
   border-color: var(--acc);
   position: relative;
 }
-.step-card.state-busy .step-badge .step-num { visibility: hidden; }
-.step-card.state-busy .step-badge::after {
-  content: '';
-  position: absolute;
-  top: 50%; left: 50%;
-  margin: -8px 0 0 -8px;
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,0.35);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
+
 
 /* The primary button in each step gets a touch more weight. */
 .btn-step {
@@ -1244,3 +1233,40 @@ body { animation: page-in .4s ease both; }
   body, .notice, .orb-loader, .orb-label { animation: none; }
   .badge-check { transition: none; }
 }
+
+/* ═══ v2.4.5 flow polish ═══ */
+
+/* Finished steps recede so the eye lands on what's next. Hover restores
+   full strength — receded, not locked. */
+.step-card.state-complete { opacity: 0.55; }
+.step-card.state-complete:hover { opacity: 1; }
+
+/* Slim learned-estimate progress bar under the parse orb. The fill's
+   transition duration is set inline by JS to the rolling average of real
+   parse times; it stops at 92% until the response actually lands. */
+.orb-progress {
+  width: 220px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border-2);
+  overflow: hidden;
+}
+.orb-progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--acc), var(--acc-2));
+}
+
+/* After a file is chosen the drop zone is display-only — Start over is
+   the one way back, so the state story has a single door. */
+#drop-zone.has-file { cursor: default; }
+
+/* Step 1's header gains a fourth column for the Start-over button —
+   badge · title · meta · button, button pinned to the card's right edge.
+   (The base header grid is 3 columns; without this the button wrapped
+   onto its own row.) */
+#step-card-1 .step-header {
+  grid-template-columns: 40px 1fr auto auto;
+}
+#reset-btn { justify-self: end; white-space: nowrap; }

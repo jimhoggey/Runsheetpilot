@@ -374,7 +374,8 @@ def test_daily_rate_limit_gets_a_plain_english_message(parse_client,
     msg = out["error"]
     assert "429 Client Error" not in msg
     assert "free AI requests for today" in msg
-    assert "credit" in msg          # the permanent fix
+    # deliberately NOT a sales pitch — the credit upsell line was removed
+    assert "credit" not in msg
     assert "tomorrow" in msg or "resets" in msg
 
 
