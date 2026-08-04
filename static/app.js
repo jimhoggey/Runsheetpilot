@@ -68,10 +68,63 @@ function switchTab(t) {
 
 function setStatus(html, color) {
   // Writes ONLY the text span — the Start-over button shares this bar
-  // and must survive every status update.
+  // and must survive every status update. Any real status silences the
+  // idle greeter until the next reset.
+  _stopIdleGreeter();
   const bar = document.getElementById('status-bar');
   document.getElementById('status-text').innerHTML = html;
   bar.style.color = color || 'var(--muted)';
+}
+
+// ─── Idle greeter — the app feels alive while it waits ────────────────────
+// A waving hand and a slowly typed rotation of welcomes/encouragements,
+// shown only in the idle state (fresh launch, or after Start over). The
+// first real status message stops it. Reduced-motion users get a static
+// line — no typing, no waving.
+const IDLE_GREETINGS = [
+  'Welcome — drop a runsheet PDF on Step 1 to begin.',
+  'Welcome to efficiency.',
+  'Thanks for everything you do — I\'m just here to help.',
+  'Sunday\'s coming. Let\'s get the runsheet sorted.',
+  'One PDF in, one ProPresenter playlist out.',
+  'You bring the service. I\'ll bring the slides.',
+];
+let _greetTimers = [];
+function _stopIdleGreeter() {
+  _greetTimers.forEach(clearTimeout);
+  _greetTimers = [];
+}
+function _startIdleGreeter() {
+  _stopIdleGreeter();
+  const el = document.getElementById('status-text');
+  const bar = document.getElementById('status-bar');
+  if (!el) return;
+  bar.style.color = 'var(--muted)';
+  const reduced = window.matchMedia
+    && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    el.innerHTML = '👋 ' + IDLE_GREETINGS[0];
+    return;
+  }
+  let gi = 0;
+  const showNext = () => {
+    const text = IDLE_GREETINGS[gi];
+    gi = (gi + 1) % IDLE_GREETINGS.length;
+    let i = 0;
+    const type = () => {
+      el.innerHTML = '<span class="wave">👋</span> ' +
+        escapeHtml(text.slice(0, i)) +
+        (i < text.length ? '<span class="type-caret"></span>' : '');
+      if (i < text.length) {
+        i++;
+        _greetTimers.push(setTimeout(type, 26));
+      } else {
+        _greetTimers.push(setTimeout(showNext, 7000));
+      }
+    };
+    type();
+  };
+  showNext();
 }
 function setLoading(msg) {
   // Text only — no spinner. Whatever is loading shows exactly ONE loader
@@ -619,7 +672,7 @@ function resetFlow() {
   setStepState(1, 'active');
   setStepState(2, 'locked');
   setStepState(3, 'locked');
-  setStatus('👋 Ready — drop a runsheet PDF on Step 1 to go again.');
+  _startIdleGreeter();
 }
 
 async function parseRunsheet() {
@@ -662,6 +715,7 @@ async function parseRunsheet() {
   fill.style.width = '92%';
 
   const t0 = performance.now();
+  let parseSucceeded = false;
   setStepState(2, 'busy');
   setLoading('Uploading PDF and sending to AI…');
 
@@ -695,8 +749,7 @@ async function parseRunsheet() {
 
     matchedItems = matchRes.items;
     renderResults();
-    // Reveal the results table (it's hidden by default before parse).
-    document.getElementById('results-wrap').hidden = false;
+    parseSucceeded = true;
     // Mark step 2 complete + unlock step 3 so the operator's eye goes to
     // the Create button.
     setStepState(2, 'complete');
@@ -711,12 +764,30 @@ async function parseRunsheet() {
     clearInterval(quipTimer);
     fill.style.transition = 'width .25s ease';
     fill.style.width = '100%';
-    setTimeout(() => {
+    if (parseSucceeded) {
+      // Completion choreography: bar snaps full, the orb takes a small
+      // spring bow out, then the results spring in and the page glides
+      // down to them. ~0.8s end to end.
+      label.textContent = 'Done!';
+      setTimeout(() => loader.classList.add('orb-done'), 220);
+      setTimeout(() => {
+        orb.stop();
+        loader.hidden = true;
+        loader.classList.remove('orb-done');
+        btn.hidden = false;
+        btn.disabled = false;
+        const wrap = document.getElementById('results-wrap');
+        wrap.hidden = false;
+        wrap.classList.add('spring-in');
+        setTimeout(() => wrap.classList.remove('spring-in'), 700);
+        wrap.scrollIntoView({behavior: 'smooth', block: 'start'});
+      }, 560);
+    } else {
       orb.stop();
       loader.hidden = true;
       btn.hidden = false;
       btn.disabled = false;
-    }, 260);
+    }
   }
 }
 
@@ -1506,3 +1577,4 @@ async function badgeCheckUpdates() {
 
 loadUpdateState();
 setInterval(loadUpdateState, 60 * 60 * 1000);   // re-render if a check lands later
+_startIdleGreeter();   // the app says hello until real work starts
