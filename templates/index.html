@@ -31,6 +31,10 @@
               onclick="badgeCheckUpdates()">Check for updates</button>
     </span>
     <button class="quit-btn" onclick="quitApp()" title="Stop the app and close the browser tab">Quit</button>
+    <button class="btn btn-dim btn-sm" id="reset-btn" hidden onclick="resetFlow()"
+            title="Clear everything and start again from a fresh upload">
+      ↺ Start over
+    </button>
   </div>
 </header>
 
@@ -157,10 +161,6 @@
        messages and the post-parse summary ("10 items parsed · 3/3 matched"). -->
   <div id="status-bar">
     <span id="status-text">👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
-    <button class="btn btn-dim btn-sm" id="reset-btn" hidden onclick="resetFlow()"
-            title="Clear everything and start again from a fresh upload">
-      ↺ Start over
-    </button>
   </div>
 
   <!-- Results table — populated after parse. Hidden until then so the

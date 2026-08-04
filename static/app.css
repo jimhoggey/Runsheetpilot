@@ -1266,9 +1266,6 @@ body { animation: page-in .4s ease both; }
    badge · title · meta · button, button pinned to the card's right edge.
    (The base header grid is 3 columns; without this the button wrapped
    onto its own row.) */
-/* Status bar: narration on the left, the always-available Start-over
-   button on the right. The bar never dims, unlike the completed step
-   cards — a reset control must never look disabled. */
-#status-bar { display: flex; align-items: center; gap: 12px; }
-#status-text { flex: 1; min-width: 0; }
+/* Start over sits in the header's top-right corner, after Quit — global
+   scene controls live together up there, always at full brightness. */
 #reset-btn { flex-shrink: 0; white-space: nowrap; color: var(--text); }

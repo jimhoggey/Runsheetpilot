@@ -674,7 +674,7 @@ async function parseRunsheet() {
     const res = await fetch('/api/upload_and_parse', {method:'POST', body: form})
       .then(r => r.json());
     if (res.error) {
-      setStatus('❌ ' + res.error, 'var(--red)');
+      setStatus('❌ ' + escapeHtml(res.error), 'var(--red)');
       setStepState(2, 'active');     // back to active so they can retry
       return;
     }
@@ -705,7 +705,7 @@ async function parseRunsheet() {
       `${matchedItems.length} items`;
     _recordParseTime((performance.now() - t0) / 1000);
   } catch (e) {
-    setStatus('❌ ' + e, 'var(--red)');
+    setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
     setStepState(2, 'active');
   } finally {
     clearInterval(quipTimer);
@@ -918,7 +918,7 @@ async function createPlaylist() {
     setStatus(`✅ Playlist "${name}" created — ${res.songs} songs, ${res.headers} headers${extra}.`,
               res.needs_action ? 'var(--org)' : 'var(--grn)');
   } catch (e) {
-    setStatus('❌ ' + e, 'var(--red)');
+    setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
     setStepState(3, 'active');
   } finally {
     orb.stop();
@@ -1400,7 +1400,7 @@ function renderUpdateState(st) {
     _setPill('⬆ Update to v' + st.latest, {available: true});
   } else if (st.state === 'error') {
     _setPill('⚠ Update failed — retry', {available: true});
-    setStatus('Update failed: ' + (st.error || 'unknown error') +
+    setStatus('Update failed: ' + escapeHtml(st.error || 'unknown error') +
               ' — you can also download it manually from ' +
               '<a href="https://github.com/jimhoggey/Runsheetpilot/releases/latest" ' +
               'target="_blank" rel="noopener">the releases page</a>.', 'var(--org)');
@@ -1417,7 +1417,7 @@ async function applyUpdate() {
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       _setPill('⬆ Update — retry', {available: true});
-      setStatus('Update could not start: ' + (body.error || r.status), 'var(--org)');
+      setStatus('Update could not start: ' + escapeHtml(String(body.error || r.status)), 'var(--org)');
       return;
     }
   } catch (e) { /* fall through to polling — server may already be swapping */ }
