@@ -1321,3 +1321,45 @@ body { animation: page-in .4s ease both; }
     animation: none;
   }
 }
+
+/* ═══ v2.5 guidance ═══ */
+
+/* The status bar is the app's voice — give it presence now that it sits
+   at the top of the flow, without shouting over the step cards. */
+#status-bar {
+  border-left: 3px solid var(--acc);
+  font-size: 0.88rem;
+  padding: 12px var(--s-4);
+}
+
+/* Post-parse nudge: a soft accent callout that points at Step 3. */
+#next-step-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 -4px;
+  padding: 11px 16px;
+  border: 1px solid var(--acc-soft);
+  border-radius: var(--r-2);
+  background: linear-gradient(90deg, var(--acc-soft), transparent 70%);
+  color: var(--text);
+  font-size: 0.86rem;
+  animation: hint-in .45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+#next-step-hint[hidden] { display: none; }
+.next-step-icon {
+  font-size: 1.05rem;
+  animation: hint-nudge 2.2s ease-in-out infinite;
+}
+@keyframes hint-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes hint-nudge {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #next-step-hint, .next-step-icon { animation: none; }
+}
