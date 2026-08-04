@@ -31,7 +31,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import requests
 
@@ -224,7 +224,12 @@ def _mac_relaunch_script(app_path, pid):
     Progress is appended to DATA_DIR/relaunch.log so the next field
     report comes with breadcrumbs instead of guesswork. The .old bundle
     is cleaned up by cleanup_leftovers() on the next boot, as before."""
-    app = Path(app_path)
+    # PurePosixPath, not Path: this script only ever runs on macOS, but
+    # the string gets BUILT wherever the code runs — including the
+    # Windows CI test gate, where Path would stringify with backslashes
+    # and corrupt the command. (Same cross-platform trap as v2.3.4's
+    # path-separator test failure.)
+    app = PurePosixPath(str(app_path))
     binary = app / "Contents" / "MacOS" / app.stem
     rlog = DATA_DIR / "relaunch.log"
     return (f'echo "$(date) waiting for pid {pid}" >> "{rlog}"; '
