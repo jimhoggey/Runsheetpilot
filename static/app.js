@@ -640,6 +640,29 @@ async function testConnection2() {
 }
 
 // ─── 6. Parse runsheet + render results table ─────────────────────────────
+// The post-parse nudge: one line, pointing at the only thing left to do.
+// Picked at random per parse so repeat use stays light without churning
+// while the operator is mid-read.
+const NEXT_STEP_LINES = [
+  n => `${n} items ready. Step 3 does the actual work — hit Create and they land in ProPresenter.`,
+  n => `Runsheet's built. One more click and ProPresenter has your ${n}-item playlist.`,
+  n => `Looking good. Create Runsheet &amp; Export sends all ${n} items to ProPresenter.`,
+  n => `${n} items lined up and nowhere to go — until you hit Create below.`,
+  n => `That's the hard part done. Step 3 puts these ${n} items into ProPresenter.`,
+];
+function _showNextStepHint(count) {
+  const hint = document.getElementById('next-step-hint');
+  const text = document.getElementById('next-step-text');
+  if (!hint || !text) return;
+  const pick = NEXT_STEP_LINES[Math.floor(Math.random() * NEXT_STEP_LINES.length)];
+  text.innerHTML = pick(count);
+  hint.hidden = false;
+}
+function _hideNextStepHint() {
+  const hint = document.getElementById('next-step-hint');
+  if (hint) hint.hidden = true;
+}
+
 function applySmHidden(hidden) {
   const card = document.getElementById('sm-card');
   if (card) card.style.display = hidden ? 'none' : '';
@@ -660,6 +683,7 @@ function resetFlow() {
   document.getElementById('reset-btn').hidden = true;
   document.getElementById('results-wrap').hidden = true;
   document.getElementById('results-body').innerHTML = '';
+  _hideNextStepHint();
   document.getElementById('result-notice').innerHTML = '';
   document.getElementById('step-1-meta').textContent = '';
   _renderParseEstimate();
@@ -747,6 +771,7 @@ async function parseRunsheet() {
 
     matchedItems = matchRes.items;
     renderResults();
+    _showNextStepHint(matchedItems.length);
     parseSucceeded = true;
     // Mark step 2 complete + unlock step 3 so the operator's eye goes to
     // the Create button.
@@ -938,7 +963,8 @@ async function createPlaylist() {
       setStepState(3, 'active');
       return;
     }
-    // Step 3 done — show the green check on the badge.
+    // Step 3 done — the nudge has served its purpose.
+    _hideNextStepHint();
     setStepState(3, 'complete');
     document.getElementById('step-3-meta').textContent = `✓ "${name}"`;
 

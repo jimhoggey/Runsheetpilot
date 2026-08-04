@@ -127,6 +127,14 @@
     </div>
   </div>
 
+  <!-- Status bar — the app's running commentary: the idle greeter, live
+       "uploading…" messages, and the post-parse summary. Sits directly
+       under Step 1 so guidance appears where the operator is already
+       looking, instead of below the fold between Parse and Create. -->
+  <div id="status-bar">
+    <span id="status-text">👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
+  </div>
+
   <!-- ── STEP 2 — PARSE ──────────────────────────────────────────── -->
   <div class="step-card state-locked" id="step-card-2">
     <div class="step-header">
@@ -153,12 +161,6 @@
     <div class="step-locked-msg">Upload a PDF to unlock this step.</div>
   </div>
 
-  <!-- Status bar — sits between Parse and Create. Used for live "uploading…"
-       messages and the post-parse summary ("10 items parsed · 3/3 matched"). -->
-  <div id="status-bar">
-    <span id="status-text">👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
-  </div>
-
   <!-- Results table — populated after parse. Hidden until then so the
        empty state doesn't clutter Step 2/3. -->
   <div class="results-wrap" id="results-wrap" hidden>
@@ -181,6 +183,13 @@
       </thead>
       <tbody id="results-body"></tbody>
     </table>
+  </div>
+
+  <!-- Post-parse nudge — appears only once items are on screen, pointing
+       at the one thing left to do. Copy is picked per parse in app.js. -->
+  <div id="next-step-hint" hidden>
+    <span class="next-step-icon">✨</span>
+    <span id="next-step-text"></span>
   </div>
 
   <!-- ── STEP 3 — CREATE ──────────────────────────────────────────── -->
