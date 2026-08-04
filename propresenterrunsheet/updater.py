@@ -52,6 +52,14 @@ ASSET_WIN = "Runsheet-Pilot-windows.exe"
 SUMS_ASSET = "SHA256SUMS.txt"
 UPDATES_DIR = DATA_DIR / "updates"
 
+# Environment the PyInstaller bootloader reads (names lifted from the
+# shipped bootloader binary). A relaunched child MUST NOT inherit these:
+# they point at the dying parent's extraction dir. See
+# _mac_relaunch_script for the failure this caused.
+_PYI_ENV_VARS = ("_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                 "_PYI_PARENT_PROCESS_LEVEL", "_PYI_SPLASH_IPC",
+                 "_MEIPASS", "_MEIPASS2")
+
 # UI-visible state machine:
 #   idle -> available -> downloading -> verifying -> applying   (then the
 # process restarts) with `error` reachable from any active step. Guarded
@@ -232,10 +240,18 @@ def _mac_relaunch_script(app_path, pid):
     app = PurePosixPath(str(app_path))
     binary = app / "Contents" / "MacOS" / app.stem
     rlog = DATA_DIR / "relaunch.log"
+    # Strip PyInstaller's bootloader env before exec'ing. The child would
+    # otherwise inherit _PYI_APPLICATION_HOME_DIR pointing at the DYING
+    # parent's onefile extraction dir, skip its own extraction, and then
+    # die when the parent deletes that dir — the exact failure captured in
+    # relaunch.log on 2026-08-04 ("Failed to load Python shared library
+    # …/_MEIvGBlib/Python"). `open` never hit this because LaunchServices
+    # launches with a clean environment; going direct made it our problem.
+    clean = " ".join(f"-u {v}" for v in _PYI_ENV_VARS)
     return (f'echo "$(date) waiting for pid {pid}" >> "{rlog}"; '
             f'while /bin/kill -0 {pid} 2>/dev/null; do sleep 0.2; done; '
             f'echo "$(date) pid gone, launching" >> "{rlog}"; '
-            f'"{binary}" >> "{rlog}" 2>&1 &')
+            f'/usr/bin/env {clean} "{binary}" >> "{rlog}" 2>&1 &')
 
 
 def _windows_relaunch_script(exe_path, old_path, pid):
@@ -257,6 +273,9 @@ def _windows_relaunch_script(exe_path, old_path, pid):
         "  ping -n 2 127.0.0.1 >nul\r\n"
         "  goto wait\r\n"
         ")\r\n"
+        # Same inheritance hazard as mac (see _mac_relaunch_script): the
+        # new exe must not adopt the dying parent's extraction dir.
+        + "".join(f'set "{v}="\r\n' for v in _PYI_ENV_VARS) +
         f'start "" "{exe_path}"\r\n'
         f'del "{old_path}" 2>nul\r\n'
         '(goto) 2>nul & del "%~f0"\r\n'

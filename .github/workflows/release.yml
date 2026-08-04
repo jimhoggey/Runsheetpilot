@@ -282,7 +282,7 @@ jobs:
 
           pyinstaller \
             --name "${APP_NAME}" \
-            --windowed --onefile --noconfirm --clean \
+            --windowed --onedir --noconfirm --clean \
             --osx-bundle-identifier "org.church.runsheetPilot" \
             --collect-submodules pdfplumber \
             --collect-submodules waitress \

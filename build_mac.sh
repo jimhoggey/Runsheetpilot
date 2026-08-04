@@ -61,7 +61,7 @@ echo "Running PyInstaller ..."
 pyinstaller \
     --name "${APP_NAME}" \
     --windowed \
-    --onefile \
+    --onedir \
     --noconfirm \
     --clean \
     --osx-bundle-identifier "org.church.runsheetPilot" \

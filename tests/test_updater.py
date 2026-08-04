@@ -285,6 +285,17 @@ def test_mac_relaunch_script_waits_then_execs_the_binary_directly():
     assert "open " not in script
     # breadcrumbs for the next field investigation
     assert "relaunch.log" in script
+    # …and with PyInstaller's env stripped. Field evidence (relaunch.log,
+    # 2026-08-04 11:38): the relaunch fired in 1s but the new process died
+    # with "Failed to load Python shared library …/_MEIvGBlib/Python".
+    # The child inherited _PYI_APPLICATION_HOME_DIR pointing at the DYING
+    # parent's onefile extraction dir, so it skipped its own extraction —
+    # then the parent deleted that dir on exit. `open` never hit this
+    # because LaunchServices launches with a clean environment.
+    for var in ("_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                "_PYI_PARENT_PROCESS_LEVEL", "_PYI_SPLASH_IPC",
+                "_MEIPASS2"):
+        assert f"-u {var}" in script, f"{var} must be stripped"
 
 
 def test_default_spawn_relaunch_mac_detaches_a_shell(upd_env, monkeypatch):
