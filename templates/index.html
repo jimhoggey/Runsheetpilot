@@ -94,9 +94,6 @@
     <button class="btn btn-dim btn-full" onclick="openSettingsModal()">
       ⚙ Settings
     </button>
-    <button class="btn btn-dim btn-full" onclick="openPromptModal()">
-      📝 Edit AI prompt
-    </button>
   </div>
 
   <!-- Sidebar footer: library status + the data dir path. Library status
@@ -104,7 +101,6 @@
        songs aren't matching. -->
   <div class="footer-info">
     <div id="library-footer-status">♪ Loading library…</div>
-    <div id="footer-info" style="margin-top:6px;color:var(--dim)">—</div>
   </div>
 
 </aside>
@@ -414,6 +410,14 @@
           </select>
           <p class="settings-hint" id="or-model-note"></p>
         </div>
+        <button class="btn btn-dim btn-sm" style="margin-top:4px"
+                onclick="closeSettingsModal(); openPromptModal()">
+          📝 Edit AI prompt
+        </button>
+        <p class="settings-hint" style="margin-top:6px">
+          The instructions the AI follows when reading your runsheet.
+          Most operators never need to touch this.
+        </p>
       </section>
 
 
