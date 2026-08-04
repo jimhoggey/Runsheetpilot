@@ -24,6 +24,28 @@ const AUTOSAVE_FIELDS = [
   'create-timers', 'template-playlist'
 ];
 
+// Rolling record of real parse durations (seconds), persisted in
+// settings. The step-2 estimate and the orb progress bar both run off
+// its average, so the "how long will this take" answer is learned from
+// this operator's actual PDFs and model, not a hardcoded guess.
+let _parseTimes = [];
+function _parseAvgSecs() {
+  if (!_parseTimes.length) return 15;
+  return _parseTimes.reduce((a, b) => a + b, 0) / _parseTimes.length;
+}
+function _renderParseEstimate() {
+  document.getElementById('step-2-meta').textContent =
+    '~' + Math.round(_parseAvgSecs()) + ' seconds';
+}
+function _recordParseTime(secs) {
+  _parseTimes = _parseTimes.slice(-9).concat(Math.round(secs * 10) / 10);
+  _renderParseEstimate();
+  // save_settings merges partial posts, so this can't clobber anything.
+  fetch('/api/settings', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({parse_times: _parseTimes})}).catch(() => {});
+}
+
 // Cached library source mode ('auto'|'api'|'disk') from settings. Updated
 // by the radio buttons in the Settings modal; read by loadLibraryAuto so
 // each refresh respects the operator's preference.
@@ -45,12 +67,16 @@ function switchTab(t) {
 }
 
 function setStatus(html, color) {
+  // Writes ONLY the text span — the Start-over button shares this bar
+  // and must survive every status update.
   const bar = document.getElementById('status-bar');
-  bar.innerHTML = html;
+  document.getElementById('status-text').innerHTML = html;
   bar.style.color = color || 'var(--muted)';
 }
 function setLoading(msg) {
-  setStatus(`<div class="spinner"></div>${msg}`);
+  // Text only — no spinner. Whatever is loading shows exactly ONE loader
+  // (the orb); the status bar narrates, it doesn't compete.
+  setStatus(msg);
 }
 
 // Toggle the visual state of a numbered step card (1, 2, 3).
@@ -143,6 +169,8 @@ async function loadSettings() {
   document.getElementById('threshold').value  = Math.round((s.threshold || .55) * 100);
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
+  _parseTimes = Array.isArray(s.parse_times) ? s.parse_times.slice(-10) : [];
+  _renderParseEstimate();
 
   // Hide Service Mate entirely for operators who don't own a clock —
   // removes the whole panel from the main screen, nothing else changes.
@@ -270,8 +298,12 @@ function handleFileSelect(file) {
   dz.innerHTML = `
     <div style="font-size:1.8rem;margin-bottom:6px">✅</div>
     <div style="font-weight:700;color:var(--grn)">${file.name}</div>
-    <div class="hint">${(file.size/1024).toFixed(0)} KB — click to change</div>`;
-  dz.onclick = () => document.getElementById('pdf-input').click();
+    <div class="hint">${(file.size/1024).toFixed(0)} KB</div>`;
+  // From here, "Start over" is the ONE way to change course — a second
+  // hidden path (clicking the zone to swap files) made the state model
+  // ambiguous. The button lives right beside this card's title.
+  dz.onclick = null;
+  document.getElementById('reset-btn').hidden = false;
   // Show the filename + size beside the step 1 title for at-a-glance state.
   document.getElementById('step-1-meta').textContent =
     `${file.name} · ${(file.size/1024).toFixed(0)} KB`;
@@ -545,7 +577,7 @@ async function testConnection() {
     document.getElementById('pp-port').value);
   alert(res.ok
     ? `✅ Connected — ${res.count} library/libraries found.`
-    : `❌ Failed:\n${res.error}\n\nEnable Network in ProPresenter → Preferences → Integrations.`);
+    : `❌ ${res.error}\nOpen ProPresenter and turn on Network (Preferences → Integrations), then try again.`);
 }
 async function testConnection2() {
   const res = await _runTest(
@@ -553,7 +585,7 @@ async function testConnection2() {
     document.getElementById('pp-port2').value);
   alert(res.ok
     ? `✅ Connected — ProPresenter is ready.`
-    : `❌ Failed:\n${res.error}\n\nMake sure ProPresenter is running and Network is enabled.`);
+    : `❌ ${res.error}\nOpen ProPresenter and turn on Network (Preferences → Integrations), then try again.`);
 }
 
 // ─── 6. Parse runsheet + render results table ─────────────────────────────
@@ -574,11 +606,12 @@ function resetFlow() {
     <div style="font-weight:600;margin-bottom:4px">Drop your PDF here, or click to browse</div>
     <div class="hint">Runsheet · Order of Service · any PDF</div>`;
   dz.onclick = () => document.getElementById('pdf-input').click();
+  document.getElementById('reset-btn').hidden = true;
   document.getElementById('results-wrap').hidden = true;
   document.getElementById('results-body').innerHTML = '';
   document.getElementById('result-notice').innerHTML = '';
   document.getElementById('step-1-meta').textContent = '';
-  document.getElementById('step-2-meta').textContent = '~12 seconds';
+  _renderParseEstimate();
   document.getElementById('step-3-meta').textContent = '';
   const today = new Date().toLocaleDateString('en-AU',
       {day:'2-digit', month:'short', year:'numeric'});
@@ -604,6 +637,31 @@ async function parseRunsheet() {
   const loader = document.getElementById('parse-loader');
   loader.hidden = false;
   const orb = Orb.mount(document.getElementById('parse-orb'), 'solving');
+
+  // The label keeps the wait human — church-flavoured, gently silly.
+  const quips = ['Reading your runsheet…', 'Analyzing the speakers…',
+                 'Praising the Lord…', 'Welcoming the guests…',
+                 'Counting worship songs…', 'Timing the sermon…',
+                 'Cueing the countdown…', 'Handing out connect cards…'];
+  const label = document.getElementById('parse-orb-label');
+  let qi = 0;
+  label.textContent = quips[0];
+  const quipTimer = setInterval(() => {
+    qi = (qi + 1) % quips.length;
+    label.textContent = quips[qi];
+  }, 2600);
+
+  // Progress bar paced by the learned average: fills to 92% over avg
+  // seconds, holds there until the response truly lands, then snaps
+  // full. Honest about being an estimate, useful as an indication.
+  const fill = document.getElementById('parse-progress');
+  fill.style.transition = 'none';
+  fill.style.width = '0';
+  void fill.offsetWidth;   // commit the reset before animating
+  fill.style.transition = `width ${_parseAvgSecs()}s linear`;
+  fill.style.width = '92%';
+
+  const t0 = performance.now();
   setStepState(2, 'busy');
   setLoading('Uploading PDF and sending to AI…');
 
@@ -616,7 +674,7 @@ async function parseRunsheet() {
     const res = await fetch('/api/upload_and_parse', {method:'POST', body: form})
       .then(r => r.json());
     if (res.error) {
-      setStatus('❌ ' + res.error, 'var(--red)');
+      setStatus('❌ ' + escapeHtml(res.error), 'var(--red)');
       setStepState(2, 'active');     // back to active so they can retry
       return;
     }
@@ -645,14 +703,20 @@ async function parseRunsheet() {
     setStepState(3, 'active');
     document.getElementById('step-2-meta').textContent =
       `${matchedItems.length} items`;
+    _recordParseTime((performance.now() - t0) / 1000);
   } catch (e) {
-    setStatus('❌ ' + e, 'var(--red)');
+    setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
     setStepState(2, 'active');
   } finally {
-    orb.stop();
-    loader.hidden = true;
-    btn.hidden = false;
-    btn.disabled = false;
+    clearInterval(quipTimer);
+    fill.style.transition = 'width .25s ease';
+    fill.style.width = '100%';
+    setTimeout(() => {
+      orb.stop();
+      loader.hidden = true;
+      btn.hidden = false;
+      btn.disabled = false;
+    }, 260);
   }
 }
 
@@ -794,6 +858,7 @@ async function createPlaylist() {
         matched:       matchedItems,
         export_dir:    document.getElementById('export-dir').value,
         create_timers: document.getElementById('create-timers').checked,
+        template_playlist_uuid: document.getElementById('template-playlist').value,
       })
     }).then(r => r.json());
 
@@ -853,7 +918,7 @@ async function createPlaylist() {
     setStatus(`✅ Playlist "${name}" created — ${res.songs} songs, ${res.headers} headers${extra}.`,
               res.needs_action ? 'var(--org)' : 'var(--grn)');
   } catch (e) {
-    setStatus('❌ ' + e, 'var(--red)');
+    setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
     setStepState(3, 'active');
   } finally {
     orb.stop();
@@ -1335,7 +1400,7 @@ function renderUpdateState(st) {
     _setPill('⬆ Update to v' + st.latest, {available: true});
   } else if (st.state === 'error') {
     _setPill('⚠ Update failed — retry', {available: true});
-    setStatus('Update failed: ' + (st.error || 'unknown error') +
+    setStatus('Update failed: ' + escapeHtml(st.error || 'unknown error') +
               ' — you can also download it manually from ' +
               '<a href="https://github.com/jimhoggey/Runsheetpilot/releases/latest" ' +
               'target="_blank" rel="noopener">the releases page</a>.', 'var(--org)');
@@ -1352,7 +1417,7 @@ async function applyUpdate() {
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       _setPill('⬆ Update — retry', {available: true});
-      setStatus('Update could not start: ' + (body.error || r.status), 'var(--org)');
+      setStatus('Update could not start: ' + escapeHtml(String(body.error || r.status)), 'var(--org)');
       return;
     }
   } catch (e) { /* fall through to polling — server may already be swapping */ }

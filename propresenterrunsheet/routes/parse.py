@@ -147,9 +147,7 @@ def _rate_limit_message(resp) -> str:
         return ("You've used all 50 free AI requests for today — OpenRouter's "
                 "free tier daily limit, shared across every "
                 "API key on your account, so a different key or model "
-                f"won't help. The counter resets at {when}. Adding about "
-                "$5 of credit at openrouter.ai raises this to 1,000 per "
-                "day permanently.")
+                f"won't help. The counter resets at {when}.")
     if "min" in limit_source:
         return ("OpenRouter is rate-limiting free models right now — "
                 "wait a minute, then click Parse again.")

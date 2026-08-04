@@ -131,6 +131,45 @@ def test_double_failure_message_has_no_jargon(client, pp):
     assert "ProPresenter" in body["error"]
 
 
+def test_template_matching_reruns_at_create_when_parse_missed_it(
+        client, pp, monkeypatch):
+    """PP closed during parse -> parse-time template matching silently
+    found nothing -> Create built headers only, even after the operator
+    opened PP and hit "Refresh playlists". The template link now re-runs
+    at create time for items that missed it, so the order of operations
+    stops mattering."""
+    monkeypatch.setattr(playlist_mod, "fetch_pp_playlist_items",
+        lambda *_a, **_k: [
+            {"id": {"uuid": "T1", "name": "Welcome", "index": 0},
+             "type": "media", "target_uuid": "TW",
+             "destination": "presentation"}])
+    matched = [{"parsed": {"type": "other",
+                           "title": "Welcome and Connection Cards",
+                           "library_match": None}, "match": None}]
+    body = client.post("/api/create_playlist", json={
+        "host": "localhost", "port": "1", "name": "Test",
+        "template_playlist_uuid": "TPL", "matched": matched,
+        "create_timers": False}).get_json()
+    assert body.get("ok") is True, body
+    media = [e for e in pp["puts"][0] if e["type"] == "media"]
+    assert len(media) == 1, "create-time re-match must attach the slide"
+    assert media[0]["id"]["uuid"] == "BIN-WELCOME"   # bin-resolved too
+
+
+def test_create_still_succeeds_when_template_unreachable(client, pp,
+                                                         monkeypatch):
+    monkeypatch.setattr(playlist_mod, "fetch_pp_playlist_items",
+                        lambda *_a, **_k: [])
+    matched = [{"parsed": {"type": "other", "title": "Welcome",
+                           "library_match": None}, "match": None}]
+    body = client.post("/api/create_playlist", json={
+        "host": "localhost", "port": "1", "name": "Test",
+        "template_playlist_uuid": "TPL", "matched": matched,
+        "create_timers": False}).get_json()
+    assert body.get("ok") is True, body
+    assert [e["type"] for e in pp["puts"][0]] == ["header"]
+
+
 def test_bin_fetch_failure_still_creates_with_old_style_payload(
         client, pp, monkeypatch):
     """fetch_media_bin returns [] on any failure, and an empty result is
