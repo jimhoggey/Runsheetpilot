@@ -67,8 +67,10 @@ function switchTab(t) {
 }
 
 function setStatus(html, color) {
+  // Writes ONLY the text span — the Start-over button shares this bar
+  // and must survive every status update.
   const bar = document.getElementById('status-bar');
-  bar.innerHTML = html;
+  document.getElementById('status-text').innerHTML = html;
   bar.style.color = color || 'var(--muted)';
 }
 function setLoading(msg) {

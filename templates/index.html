@@ -113,10 +113,6 @@
       <div class="step-badge"><span class="step-num">1</span></div>
       <div class="step-title">Upload Runsheet</div>
       <div class="step-meta" id="step-1-meta"></div>
-      <button class="btn btn-dim btn-sm" id="reset-btn" hidden onclick="resetFlow()"
-              title="Clear everything and start again from a fresh upload">
-        ↺ Start over
-      </button>
     </div>
     <div class="step-body">
       <div id="drop-zone" onclick="document.getElementById('pdf-input').click()"
@@ -160,7 +156,11 @@
   <!-- Status bar — sits between Parse and Create. Used for live "uploading…"
        messages and the post-parse summary ("10 items parsed · 3/3 matched"). -->
   <div id="status-bar">
-    <span>👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
+    <span id="status-text">👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
+    <button class="btn btn-dim btn-sm" id="reset-btn" hidden onclick="resetFlow()"
+            title="Clear everything and start again from a fresh upload">
+      ↺ Start over
+    </button>
   </div>
 
   <!-- Results table — populated after parse. Hidden until then so the
