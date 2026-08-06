@@ -170,6 +170,13 @@
          status bar can never destroy the button. -->
     <div class="results-toolbar">
       <span class="results-toolbar-title">Parsed items</span>
+      <!-- Re-link the SAME parsed runsheet against ProPresenter as it is
+           now — after renaming a slide, adding media, or editing the
+           template. Costs no AI request; the runsheet text is unchanged. -->
+      <button class="btn btn-dim btn-sm" id="rematch-btn" onclick="rematchNow()"
+              title="Re-link these items to ProPresenter — use after changing names or media in PP. Does not re-run the AI.">
+        ↻ Re-match with ProPresenter
+      </button>
     </div>
     <table>
       <thead>
@@ -429,6 +436,20 @@
         </p>
       </section>
 
+
+      <!-- TEMPLATE LINKS ─────────────────────────────────────── -->
+      <section class="settings-section">
+        <h3>Template links</h3>
+        <p class="settings-hint">
+          Runsheet Pilot matches a runsheet line to a template slide when
+          the slide's name appears in the line — "Welcome and Connection
+          Cards" finds the <strong>Welcome</strong> slide. When the two
+          share no words (runsheet says <em>Youth Arrival + Hangout</em>,
+          the slide is called <em>PreLoop Youth</em>), teach it here once.
+        </p>
+        <div id="alias-rows"></div>
+        <button class="btn btn-dim btn-sm" onclick="addAliasRow()">+ Add a link</button>
+      </section>
 
       <!-- PLAYLIST OPTIONS ────────────────────────────────────── -->
       <section class="settings-section">

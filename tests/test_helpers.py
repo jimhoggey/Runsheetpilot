@@ -838,3 +838,31 @@ def test_maybe_advance_signal_3_still_fires_without_active_playlist(app_module, 
     state = app_module._maybe_advance_from_pp(state)
     assert state["current_index"] == 1
     assert state.get("pp_source") == "presentation"
+
+
+# ── every runsheet item gets a header (2026-08-04 field report) ──────────────
+# The operator's rule: "every item needs a header, and then the matched or
+# reused section is if we can populate that header or not." A matched song
+# used to REPLACE its header with the presentation, so the song appeared in
+# PP with no labelled slot — and a whole "Praise and Worship" section showed
+# up headerless.
+
+def test_matched_song_keeps_its_own_header(app_module):
+    matched = [{"parsed": {"type": "song", "title": "Make Room",
+                           "notes": "9:35 AM"},
+                "match": {"uuid": "PRES-1", "name": "Make Room", "index": 0}}]
+    items = app_module.build_playlist_payload(matched)
+    assert [i["type"] for i in items] == ["header", "presentation"], \
+        "a matched song must get a header AND the presentation under it"
+    assert "Make Room" in items[0]["id"]["name"]
+    assert items[1]["id"]["uuid"] == "PRES-1"
+
+
+def test_unmatched_song_still_uses_the_single_red_header(app_module):
+    """The ACTION NEEDED placeholder IS that item's header — don't stack a
+    second one on top of it."""
+    matched = [{"parsed": {"type": "song", "title": "Thank God I'm Free"},
+                "match": None}]
+    items = app_module.build_playlist_payload(matched)
+    assert len(items) == 1 and items[0]["type"] == "header"
+    assert "ACTION NEEDED" in items[0]["id"]["name"]

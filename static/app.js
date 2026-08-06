@@ -222,6 +222,8 @@ async function loadSettings() {
   document.getElementById('threshold').value  = Math.round((s.threshold || .55) * 100);
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
+  _aliases = Array.isArray(s.template_aliases) ? s.template_aliases : [];
+  renderAliasRows();
   _parseTimes = Array.isArray(s.parse_times) ? s.parse_times.slice(-10) : [];
   _renderParseEstimate();
 
@@ -317,6 +319,9 @@ async function saveSettings() {
     create_timers:           document.getElementById('create-timers').checked,
     template_playlist_uuid:  document.getElementById('template-playlist').value,
     sm_hide:                 document.getElementById('sm-hide').checked,
+    // Drop half-typed rows so a blank pair can't shadow a real match.
+    template_aliases:        _aliases.filter(a => (a.match || '').trim()
+                                              && (a.template || '').trim()),
   };
   try {
     await fetch('/api/settings', {method:'POST',
@@ -676,9 +681,75 @@ function _hideNextStepHint() {
   if (hint) hint.hidden = true;
 }
 
+// ─── Template links (operator-taught aliases) ─────────────────────────────
+// Each row is "when the runsheet says X → use template slide Y". Saved as
+// template_aliases and applied at parse AND create time, so a link taught
+// once keeps working even when the runsheet's wording drifts.
+let _aliases = [];
+
+function renderAliasRows() {
+  const box = document.getElementById('alias-rows');
+  if (!box) return;
+  box.innerHTML = _aliases.map((a, i) => `
+    <div class="row alias-row" style="gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" placeholder="When the runsheet says…"
+             value="${escapeHtml(a.match || '')}" style="flex:1;margin:0"
+             oninput="updateAlias(${i}, 'match', this.value)">
+      <span style="color:var(--muted)">→</span>
+      <input type="text" placeholder="use this template slide"
+             value="${escapeHtml(a.template || '')}" style="flex:1;margin:0"
+             oninput="updateAlias(${i}, 'template', this.value)">
+      <button class="btn btn-dim btn-sm" onclick="removeAlias(${i})"
+              title="Remove this link">✕</button>
+    </div>`).join('');
+}
+function addAliasRow() { _aliases.push({match: '', template: ''}); renderAliasRows(); }
+function removeAlias(i) { _aliases.splice(i, 1); renderAliasRows(); saveAliases(); }
+function updateAlias(i, field, value) {
+  if (_aliases[i]) { _aliases[i][field] = value; autoSaveDebounced(); }
+}
+function saveAliases() { autoSaveDebounced(); }
+
 function applySmHidden(hidden) {
   const card = document.getElementById('sm-card');
   if (card) card.style.display = hidden ? 'none' : '';
+}
+
+// ─── Re-match — relink the existing parse to ProPresenter as it is now ──
+// The runsheet text never changes once parsed, but ProPresenter does:
+// slides get renamed, media gets added, the template gets edited. This
+// recomputes ONLY the links — no AI request, so it costs nothing against
+// the daily free-tier cap and is instant.
+async function rematchNow() {
+  if (!matchedItems.length) return;
+  const btn = document.getElementById('rematch-btn');
+  btn.disabled = true;
+  btn.textContent = '↻ Re-matching…';
+  try {
+    await loadLibraryAuto();          // fresh songs straight from PP
+    const parsed = matchedItems.map(mi => mi.parsed);
+    const res = await fetch('/api/match', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        parsed, library: libraryItems,
+        threshold: parseInt(document.getElementById('threshold').value) / 100,
+        rematch_template: true,
+        host: document.getElementById('pp-host2').value,
+        port: document.getElementById('pp-port2').value,
+        template_playlist_uuid: document.getElementById('template-playlist').value,
+      })
+    }).then(r => r.json());
+    matchedItems = res.items;
+    renderResults();
+    const linked = matchedItems.filter(mi => mi.match).length;
+    setStatus(`↻ Re-matched against ProPresenter — ${linked} of ` +
+              `${matchedItems.length} items linked.`, 'var(--grn)');
+  } catch (e) {
+    setStatus('Could not re-match: ' + escapeHtml(String(e)), 'var(--org)');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↻ Re-match with ProPresenter';
+  }
 }
 
 // ─── Start over — wipe the parsed state back to a fresh Step 1 ───────────

@@ -24,6 +24,7 @@ from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
     playlist_to_objects, playlist_to_sections, resolve_object,
+    resolve_with_aliases,
 )
 from ..propresenter.timers import _create_pp_timers
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
@@ -33,7 +34,7 @@ bp = Blueprint("playlist", __name__)
 log = logging.getLogger("pp_runsheet")
 
 
-def _rematch_template(matched, base, tmpl_uuid):
+def _rematch_template(matched, base, tmpl_uuid, aliases=None):
     """Re-run the deterministic template match for items that missed it.
 
     Template links are normally attached at PARSE time — but if
@@ -79,7 +80,7 @@ def _rematch_template(matched, base, tmpl_uuid):
                 parsed["library_match"] = hdr["_section"]
                 hits += 1
                 continue
-            obj = resolve_object(title, objects)
+            obj = resolve_with_aliases(title, objects, aliases)
             if obj:
                 parsed["library_match"] = {
                     "header": {"name": obj["name"], "uuid": obj["uuid"],
@@ -128,8 +129,10 @@ def api_create_playlist():
         # 0a. Items may have arrived unmatched because PP was closed at
         # parse time — re-run the deterministic template match now that
         # PP is (presumably) up. No-op when everything already matched.
+        from ..settings import load_settings as _ls
         _rematch_template(matched, base,
-                          (body.get("template_playlist_uuid") or "").strip())
+                          (body.get("template_playlist_uuid") or "").strip(),
+                          (_ls() or {}).get("template_aliases"))
 
         bin_items = fetch_media_bin(base)
         unlinked = relink_media(matched, bin_items) if bin_items else []

@@ -63,17 +63,26 @@ DEFAULT_PROMPT = """\
 You are analysing a church service runsheet (order of service).
 
 ## WHAT TO SKIP
-Most runsheets have a "rostering" section at the very top that lists who
-is doing each role (lines like "Pre Service Prayer: Taylor, Jordan",
-"Worship Leader: Rivera, Sam", "Speaker: Walker, Alex", "ML Open: ...").
-This is just credits — IGNORE IT COMPLETELY.
+Some runsheets open with a "rostering" block that lists who is doing each
+role, as bare name lines with NO time and NO duration ("Pre Service
+Prayer: Taylor, Jordan", "Worship Leader: Rivera, Sam", "ML Open: ...").
+That is just credits — IGNORE IT.
 
-The actual service begins at the FIRST item that has a specific time-of-day
-(e.g. "9:24 AM"). Start extracting from THAT item onward.
+## WHAT TO KEEP — every timed row, from the very first one
+⚠ If a row starts with a time-of-day, it IS a service item. Output it.
+That includes the early setup and prep rows before doors open:
 
-Also IGNORE any footer sections that come AFTER the last service item —
-typically things like "Rehearsal Times", "Songs", "Tech Notes", lists of
-upcoming dates that aren't part of the service flow, etc.
+    5:00 PM  30  Team Setup + Band practice
+    5:30 PM  30  Team prayer + Meeting
+    6:00 PM  20  Youth Arrival + Hangout
+
+All three are items. Do NOT skip a row because it happens before the
+service "properly" starts, because it looks like preparation, or because
+its notes list volunteer names — the operator runs timers and clock cues
+off these rows, and a dropped row is a missing section in ProPresenter.
+
+Do IGNORE any footer that comes AFTER the last timed row (rehearsal
+times, song lists for other weeks, tech notes, upcoming dates).
 
 ## RETURN FORMAT — JSON object only, no markdown:
 
@@ -99,11 +108,66 @@ creation in ProPresenter.
 ## song, mc_on_stage, announcement, sermon, prayer_and_ministry, other
 ## NEVER invent a new type. NEVER use the item's title as its type.
 
-- song          ONLY actual sung worship songs the band/team performs.
-                Examples: "Amazing Grace", "Alleluia", "The King Is In The
-                Room". Often listed back-to-back with short or zero duration.
+- song          ONLY the TITLE OF AN ACTUAL SUNG SONG.
+                Examples: "Amazing Grace", "Make Room", "Thank God I'm
+                Free", "The King Is In The Room".
+                ⚠ NEVER use "song" for a section heading that merely
+                describes singing. "Praise and Worship", "Worship",
+                "Worship Set", "Praise Time" are SECTIONS, not songs —
+                type them prayer_and_ministry. Emitting them as songs
+                makes the app hunt the library for a song called
+                "Praise and Worship" and match the wrong file.
                 ⚠ DO NOT use "song" for items that mention a person's name —
                 those are MC moments, not songs.
+
+## SONGS HIDDEN IN A SECTION'S NOTES  ← read this carefully
+Many runsheets do NOT list songs as their own rows. Instead ONE row names
+the worship block and the actual song titles sit underneath it, in that
+row's notes / comments column — very often after a "Songs:" label, one
+per line:
+
+    7:05 PM  25  Praise/worship
+                 Songs:
+                 Thank God I'm Free
+                 Make Room
+
+They can also be comma-separated on one line:
+
+    6:35 PM  15  Praise and Worship    Thank God I'm Free, Make Room
+
+In BOTH cases you MUST output the block row AND one separate `song` item
+for EACH title, in order:
+
+    {"type":"prayer_and_ministry","title":"Praise/worship",
+     "notes":"7:05 PM","duration_min":25},
+    {"type":"song","title":"Thank God I'm Free","notes":"","duration_min":0},
+    {"type":"song","title":"Make Room","notes":"","duration_min":0}
+
+Titles may be separated by new lines, commas, slashes or semicolons, and
+are often preceded by a "Songs:" / "Song list:" label — drop the label,
+keep the titles. Copy each title EXACTLY as written. Do not merge them,
+do not summarise them, and do not leave them buried in `notes`: the app
+matches these titles against the ProPresenter song library, so a title
+left in the notes is a song missing on Sunday.
+
+⚠ The block row itself ("Praise/worship", "Praise and Worship",
+"Worship", "Worship Set") is NEVER type "song" — it is the section.
+Typing it as a song makes the app search the library for a song by that
+name and attach the wrong file.
+
+## THE OTHER LAYOUT — songs already on their own rows
+Many runsheets (typically Sunday services) list each song as its own
+timed row, with no worship-block row at all:
+
+    9:50 AM  0  The Lord Is Here
+    9:50 AM  0  Our God Reigns
+    9:50 AM  0  Holy Forever
+
+Those are already `song` items — output them exactly as they appear, one
+per row. Nothing extra to extract, and do NOT invent a wrapper section
+for them. Both layouts appear in the wild, sometimes in the same church;
+handle whichever the runsheet in front of you uses, and never emit the
+same song twice.
 
 - mc_on_stage   An MC / host on stage: landing worship, welcome and
                 connection cards, culture moments, interviews, transitions.

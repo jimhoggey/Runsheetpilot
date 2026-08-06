@@ -27,9 +27,11 @@ from ..parsing.models import (
 )
 from ..parsing.pdf import extract_pdf_text
 from ..propresenter.library import fuzzy_match
+from ..propresenter.net import pp_base
 from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
-    playlist_to_objects, playlist_to_sections, resolve_object, resolve_section,
+    link_items_to_template, playlist_to_objects, playlist_to_sections,
+    resolve_object, resolve_section, resolve_with_aliases,
 )
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 from ..logging_setup import log_safe
@@ -410,7 +412,8 @@ def api_upload_and_parse():
             # Songs are deliberately excluded: they belong to the
             # fuzzy-match + Pick flow, and a template slide named
             # "Worship" must not hijack a song titled "Worship Medley".
-            obj = (resolve_object(it.get("title", ""), objects)
+            obj = (resolve_with_aliases(it.get("title", ""), objects,
+                                        settings.get("template_aliases"))
                    if it.get("type") != "song" else None)
             if obj:
                 it["library_match"] = {
@@ -476,6 +479,33 @@ def api_match():
     parsed = body.get("parsed", [])
     library = body.get("library", [])
     threshold = float(body.get("threshold", 0.55))
+
+    # Re-match: recompute template links against ProPresenter as it is
+    # RIGHT NOW, without re-parsing. The operator renamed a slide and
+    # wants the links refreshed; the runsheet text hasn't changed, and a
+    # free-tier account only gets 50 AI parses a day, so spending one to
+    # pick up a rename in PP would be the wrong trade.
+    if body.get("rematch_template"):
+        settings = load_settings()
+        base = pp_base(body.get("host") or settings.get("pp_host"),
+                       body.get("port") or settings.get("pp_port"))
+        tmpl = (body.get("template_playlist_uuid")
+                or settings.get("template_playlist_uuid") or "").strip()
+        if not tmpl:
+            # "Auto" — pick the template the same way parse does, from
+            # the runsheet's own wording.
+            hint = " ".join((it.get("title") or "") for it in parsed)
+            try:
+                tmpl = auto_detect_template_uuid(fetch_pp_playlists(base),
+                                                 hint=hint) or ""
+            except Exception:
+                tmpl = ""
+        n = link_items_to_template(parsed, base, tmpl,
+                                   aliases=settings.get("template_aliases"),
+                                   force=True)
+        log.info("Re-match: %d/%d items linked to the template", n,
+                 len(parsed))
+
     results = []
     for item in parsed:
         # Priority 1: the parse step already linked this item to a template
