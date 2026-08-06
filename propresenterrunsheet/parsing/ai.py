@@ -155,6 +155,20 @@ left in the notes is a song missing on Sunday.
 Typing it as a song makes the app search the library for a song by that
 name and attach the wrong file.
 
+## THE OTHER LAYOUT — songs already on their own rows
+Many runsheets (typically Sunday services) list each song as its own
+timed row, with no worship-block row at all:
+
+    9:50 AM  0  The Lord Is Here
+    9:50 AM  0  Our God Reigns
+    9:50 AM  0  Holy Forever
+
+Those are already `song` items — output them exactly as they appear, one
+per row. Nothing extra to extract, and do NOT invent a wrapper section
+for them. Both layouts appear in the wild, sometimes in the same church;
+handle whichever the runsheet in front of you uses, and never emit the
+same song twice.
+
 - mc_on_stage   An MC / host on stage: landing worship, welcome and
                 connection cards, culture moments, interviews, transitions.
                 Often has a person's name with a dash.
