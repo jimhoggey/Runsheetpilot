@@ -715,6 +715,43 @@ function applySmHidden(hidden) {
   if (card) card.style.display = hidden ? 'none' : '';
 }
 
+// ─── Re-match — relink the existing parse to ProPresenter as it is now ──
+// The runsheet text never changes once parsed, but ProPresenter does:
+// slides get renamed, media gets added, the template gets edited. This
+// recomputes ONLY the links — no AI request, so it costs nothing against
+// the daily free-tier cap and is instant.
+async function rematchNow() {
+  if (!matchedItems.length) return;
+  const btn = document.getElementById('rematch-btn');
+  btn.disabled = true;
+  btn.textContent = '↻ Re-matching…';
+  try {
+    await loadLibraryAuto();          // fresh songs straight from PP
+    const parsed = matchedItems.map(mi => mi.parsed);
+    const res = await fetch('/api/match', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        parsed, library: libraryItems,
+        threshold: parseInt(document.getElementById('threshold').value) / 100,
+        rematch_template: true,
+        host: document.getElementById('pp-host2').value,
+        port: document.getElementById('pp-port2').value,
+        template_playlist_uuid: document.getElementById('template-playlist').value,
+      })
+    }).then(r => r.json());
+    matchedItems = res.items;
+    renderResults();
+    const linked = matchedItems.filter(mi => mi.match).length;
+    setStatus(`↻ Re-matched against ProPresenter — ${linked} of ` +
+              `${matchedItems.length} items linked.`, 'var(--grn)');
+  } catch (e) {
+    setStatus('Could not re-match: ' + escapeHtml(String(e)), 'var(--org)');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↻ Re-match with ProPresenter';
+  }
+}
+
 // ─── Start over — wipe the parsed state back to a fresh Step 1 ───────────
 function resetFlow() {
   uploadedFile = null;

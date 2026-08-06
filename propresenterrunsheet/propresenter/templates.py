@@ -241,6 +241,69 @@ def resolve_with_aliases(title: str, objects: list, aliases=None):
     return resolve_object(title, objects)
 
 
+def link_items_to_template(parsed_items, base, tmpl_uuid, aliases=None,
+                           force=False, fetch=None) -> int:
+    """Attach `library_match` to parsed runsheet items from a template
+    playlist. Returns how many items were linked.
+
+    The single engine behind three callers:
+
+      • parse time — first pass, right after the AI returns.
+      • create time — rescues items that missed because ProPresenter was
+        closed during the parse.
+      • the Re-match button (`force=True`) — the operator renamed
+        something in PP and wants the links recomputed WITHOUT spending
+        another AI parse. The runsheet text hasn't changed; only PP has.
+
+    With `force`, every non-song item is recomputed from scratch and a
+    link that no longer matches is CLEARED — otherwise a rename would
+    leave a stale slide attached, which is worse than no link at all.
+
+    Songs are never touched: they belong to the library fuzzy-match +
+    Pick flow, and a template slide named "Welcome" must not hijack a
+    song called "Welcome Home".
+
+    `fetch` is injectable for tests; None uses the live PP API. Never
+    raises — a template that can't be read simply links nothing."""
+    candidates = [it for it in parsed_items or []
+                  if isinstance(it, dict) and it.get("type") != "song"
+                  and (force or not it.get("library_match"))]
+    if not candidates or not tmpl_uuid:
+        return 0
+    try:
+        raw = (fetch or fetch_pp_playlist_items)(base, tmpl_uuid)
+        sections = playlist_to_sections(raw)
+        objects = playlist_to_objects(raw)
+        # Section header names double as matchable objects: a title hit on
+        # the header expands that whole section, exactly as at parse time.
+        headers = [{"name": s_["header"]["name"], "_section": s_}
+                   for s_ in sections]
+        hits = 0
+        for it in candidates:
+            title = it.get("title") or ""
+            hdr = resolve_with_aliases(title, headers, aliases)
+            if hdr and hdr.get("_section"):
+                it["library_match"] = hdr["_section"]
+                hits += 1
+                continue
+            obj = resolve_with_aliases(title, objects, aliases)
+            if obj:
+                it["library_match"] = {
+                    "header": {"name": obj["name"], "uuid": obj["uuid"],
+                               "color": {}},
+                    "items": [obj],
+                }
+                hits += 1
+            elif force:
+                # Recomputed and found nothing — drop the old link rather
+                # than leave a slide that no longer corresponds.
+                it["library_match"] = None
+        return hits
+    except Exception:
+        log.exception("link_items_to_template failed; leaving items as-is")
+        return 0
+
+
 def auto_detect_template_uuid(playlists: list,
                               hint: str = "") -> Optional[str]:
     """Pick a template playlist UUID when the operator hasn't set one
