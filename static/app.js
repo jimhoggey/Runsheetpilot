@@ -222,6 +222,8 @@ async function loadSettings() {
   document.getElementById('threshold').value  = Math.round((s.threshold || .55) * 100);
   document.getElementById('thresh-val').textContent = document.getElementById('threshold').value + '%';
   document.getElementById('create-timers').checked = s.create_timers !== false;
+  _aliases = Array.isArray(s.template_aliases) ? s.template_aliases : [];
+  renderAliasRows();
   _parseTimes = Array.isArray(s.parse_times) ? s.parse_times.slice(-10) : [];
   _renderParseEstimate();
 
@@ -317,6 +319,9 @@ async function saveSettings() {
     create_timers:           document.getElementById('create-timers').checked,
     template_playlist_uuid:  document.getElementById('template-playlist').value,
     sm_hide:                 document.getElementById('sm-hide').checked,
+    // Drop half-typed rows so a blank pair can't shadow a real match.
+    template_aliases:        _aliases.filter(a => (a.match || '').trim()
+                                              && (a.template || '').trim()),
   };
   try {
     await fetch('/api/settings', {method:'POST',
@@ -675,6 +680,35 @@ function _hideNextStepHint() {
   const hint = document.getElementById('next-step-hint');
   if (hint) hint.hidden = true;
 }
+
+// ─── Template links (operator-taught aliases) ─────────────────────────────
+// Each row is "when the runsheet says X → use template slide Y". Saved as
+// template_aliases and applied at parse AND create time, so a link taught
+// once keeps working even when the runsheet's wording drifts.
+let _aliases = [];
+
+function renderAliasRows() {
+  const box = document.getElementById('alias-rows');
+  if (!box) return;
+  box.innerHTML = _aliases.map((a, i) => `
+    <div class="row alias-row" style="gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" placeholder="When the runsheet says…"
+             value="${escapeHtml(a.match || '')}" style="flex:1;margin:0"
+             oninput="updateAlias(${i}, 'match', this.value)">
+      <span style="color:var(--muted)">→</span>
+      <input type="text" placeholder="use this template slide"
+             value="${escapeHtml(a.template || '')}" style="flex:1;margin:0"
+             oninput="updateAlias(${i}, 'template', this.value)">
+      <button class="btn btn-dim btn-sm" onclick="removeAlias(${i})"
+              title="Remove this link">✕</button>
+    </div>`).join('');
+}
+function addAliasRow() { _aliases.push({match: '', template: ''}); renderAliasRows(); }
+function removeAlias(i) { _aliases.splice(i, 1); renderAliasRows(); saveAliases(); }
+function updateAlias(i, field, value) {
+  if (_aliases[i]) { _aliases[i][field] = value; autoSaveDebounced(); }
+}
+function saveAliases() { autoSaveDebounced(); }
 
 function applySmHidden(hidden) {
   const card = document.getElementById('sm-card');

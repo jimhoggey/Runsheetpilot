@@ -99,11 +99,38 @@ creation in ProPresenter.
 ## song, mc_on_stage, announcement, sermon, prayer_and_ministry, other
 ## NEVER invent a new type. NEVER use the item's title as its type.
 
-- song          ONLY actual sung worship songs the band/team performs.
-                Examples: "Amazing Grace", "Alleluia", "The King Is In The
-                Room". Often listed back-to-back with short or zero duration.
+- song          ONLY the TITLE OF AN ACTUAL SUNG SONG.
+                Examples: "Amazing Grace", "Make Room", "Thank God I'm
+                Free", "The King Is In The Room".
+                ⚠ NEVER use "song" for a section heading that merely
+                describes singing. "Praise and Worship", "Worship",
+                "Worship Set", "Praise Time" are SECTIONS, not songs —
+                type them prayer_and_ministry. Emitting them as songs
+                makes the app hunt the library for a song called
+                "Praise and Worship" and match the wrong file.
                 ⚠ DO NOT use "song" for items that mention a person's name —
                 those are MC moments, not songs.
+
+## SONGS HIDDEN IN A SECTION'S NOTES  ← read this carefully
+Many runsheets do NOT list songs as their own rows. Instead one row says
+something like "Praise and Worship" and the actual song titles sit in
+that row's notes / comments / description column:
+
+    6:35 PM  15  Praise and Worship   Thank God I'm Free, Make Room
+
+When that happens you MUST output the section row AND one separate
+`song` item for EACH song title found in its notes, in order:
+
+    {"type":"prayer_and_ministry","title":"Praise and Worship",
+     "notes":"6:35 PM","duration_min":15},
+    {"type":"song","title":"Thank God I'm Free","notes":"","duration_min":0},
+    {"type":"song","title":"Make Room","notes":"","duration_min":0}
+
+Song titles in notes are usually separated by commas, slashes, semicolons
+or new lines. Copy each title EXACTLY as written — do not merge them, do
+not summarise them, and do not leave them buried in `notes`. The app
+matches these titles against the ProPresenter song library, so a missed
+title means a missing song on Sunday.
 
 - mc_on_stage   An MC / host on stage: landing worship, welcome and
                 connection cards, culture moments, interviews, transitions.

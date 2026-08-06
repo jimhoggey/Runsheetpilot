@@ -61,6 +61,11 @@ def _default_settings() -> dict:
         # for operators who don't own a GeekMagic clock. UI-only flag;
         # the daemon's own enabled switch lives in clocks.json.
         "sm_hide":         False,
+        # Operator-taught links from a runsheet phrase to a template
+        # object name, e.g. {"match": "Youth Arrival",
+        # "template": "PreLoop Youth"} — for pairs that share no words
+        # and so can never match by rule alone.
+        "template_aliases": [],
     }
 
 

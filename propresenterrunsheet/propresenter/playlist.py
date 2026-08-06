@@ -171,6 +171,14 @@ def build_playlist_payload(matched: list) -> list:
             eff = None
 
         if eff:
+            # Header FIRST, then the content under it. Every runsheet item
+            # gets a labelled slot in PP — a matched song used to replace
+            # its header with the bare presentation, so the operator lost
+            # the runsheet's own wording, timing and colour for that line.
+            # (Field report 2026-08-04: "every item needs a header, and
+            # then the matched or reused section is if we can populate
+            # that header or not.")
+            items.append(_coloured_header_for(p))
             pres_uuid = eff.get("uuid", "")
             # is_hidden / is_pco are required by the PP API. We never produce
             # hidden items and don't integrate with Planning Center Online —

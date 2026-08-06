@@ -15,13 +15,18 @@ from propresenterrunsheet.propresenter.playlist import (
 )
 
 
-def test_matched_song_becomes_presentation_item():
+def test_matched_song_becomes_header_plus_presentation_item():
+    """Since 2026-08-04 every runsheet item gets its own header and the
+    matched content sits UNDER it — the operator's rule, so a song still
+    shows the runsheet's wording/timing/colour in PP instead of being
+    replaced by a bare presentation."""
     payload = build_playlist_payload([{
         "parsed": {"type": "song", "title": "Build My Life"},
         "match":  {"uuid": "abc-123", "name": "Build My Life", "index": 5},
     }])
-    assert len(payload) == 1
-    item = payload[0]
+    assert len(payload) == 2
+    assert payload[0]["type"] == "header"
+    item = payload[1]
     assert item["type"] == "presentation"
     assert item["target_uuid"] == "abc-123"
     assert item["id"] == {"uuid": "abc-123", "name": "Build My Life", "index": 5}
@@ -91,7 +96,8 @@ def test_preserves_runsheet_order():
         {"parsed": {"type": "sermon", "title": "C"}, "match": None},
     ]
     payload = build_playlist_payload(matched)
-    assert [it["id"]["name"] for it in payload] == ["A", "B", "C"]
+    # B is a matched song: header "B" then the presentation "B" under it.
+    assert [it["id"]["name"] for it in payload] == ["A", "B", "B", "C"]
 
 
 def test_header_colour_helpers():
@@ -128,7 +134,7 @@ def test_library_match_on_non_song_becomes_presentation_item():
         },
         "match": None,
     }])
-    item = payload[0]
+    item = payload[1]                       # [0] is the item's own header
     assert item["type"] == "presentation"
     assert item["target_uuid"] == "lib-culture-uuid"
     assert item["id"] == {"uuid": "lib-culture-uuid", "name": "Culture",
@@ -150,7 +156,7 @@ def test_library_match_preempts_song_fuzzy_match():
         # A different fuzzy hit that should be ignored
         "match": {"uuid": "fuzz-bml", "name": "Build My Life", "index": 3},
     }])
-    item = payload[0]
+    item = payload[1]                       # [0] is the item's own header
     assert item["target_uuid"] == "lib-bml"
     assert item["id"]["name"] == "Build My Life (Acoustic)"
 
@@ -167,7 +173,7 @@ def test_library_match_with_no_uuid_falls_through_to_song_fuzzy_match():
         },
         "match": {"uuid": "fuzz-bml", "name": "Build My Life", "index": 3},
     }])
-    item = payload[0]
+    item = payload[1]                       # [0] is the item's own header
     assert item["target_uuid"] == "fuzz-bml"
 
 
@@ -194,9 +200,10 @@ def test_library_match_missing_field_keeps_existing_behaviour():
          "match":  {"uuid": "u-old", "name": "Old", "index": 0}},
         {"parsed": {"type": "sermon", "title": "Older"}, "match": None},
     ])
-    assert payload[0]["type"] == "presentation"
-    assert payload[0]["target_uuid"] == "u-old"
-    assert payload[1]["type"] == "header"
+    # header + presentation for the matched song, then the sermon header
+    assert [it["type"] for it in payload] == [
+        "header", "presentation", "header"]
+    assert payload[1]["target_uuid"] == "u-old"
 
 
 # ─── Section expansion: when `library_match` is a section dict from the

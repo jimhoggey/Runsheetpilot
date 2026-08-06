@@ -156,3 +156,55 @@ def test_empty_inputs_never_match(objects):
     # An object whose name normalises to nothing must not match everything.
     weird = playlist_to_objects([_media("—", uuid="X", target="XT")])
     assert resolve_object("Anything at all", weird) is None
+
+
+# ── operator-taught aliases (2026-08-04 field report) ────────────────────────
+# Real case: the youth runsheet says "Youth Arrival + Hangout" and the
+# template slide is called "PreLoop Youth". No word overlap, so nothing
+# matches — the operator's workaround was renaming the template header to
+# copy the runsheet's wording, which breaks as soon as the wording changes.
+# An alias teaches the link once: runsheet phrase → template object name.
+
+from propresenterrunsheet.propresenter.templates import resolve_with_aliases
+
+
+def _objs():
+    return playlist_to_objects([
+        _media("PreLoop Youth", uuid="PLY", target="PLYT"),
+        _media("Welcome", uuid="W", target="WT"),
+    ])
+
+
+def test_alias_links_a_runsheet_phrase_to_a_template_object():
+    aliases = [{"match": "Youth Arrival", "template": "PreLoop Youth"}]
+    hit = resolve_with_aliases("Youth Arrival + Hangout", _objs(), aliases)
+    assert hit and hit["name"] == "PreLoop Youth"
+
+
+def test_alias_matching_ignores_case_and_surrounding_words():
+    aliases = [{"match": "youth arrival", "template": "PreLoop Youth"}]
+    hit = resolve_with_aliases("6:00 PM YOUTH ARRIVAL and hangout",
+                               _objs(), aliases)
+    assert hit and hit["name"] == "PreLoop Youth"
+
+
+def test_alias_wins_over_the_word_rule():
+    """An explicit teaching beats the generic matcher — that's the point."""
+    aliases = [{"match": "Welcome", "template": "PreLoop Youth"}]
+    hit = resolve_with_aliases("Welcome and Connection Cards", _objs(),
+                               aliases)
+    assert hit and hit["name"] == "PreLoop Youth"
+
+
+def test_alias_naming_a_missing_object_falls_back_to_the_word_rule():
+    aliases = [{"match": "Welcome", "template": "Does Not Exist"}]
+    hit = resolve_with_aliases("Welcome and Connection Cards", _objs(),
+                               aliases)
+    assert hit and hit["name"] == "Welcome"
+
+
+def test_no_aliases_behaves_exactly_like_resolve_object():
+    for aliases in (None, [], [{"match": "", "template": ""}]):
+        hit = resolve_with_aliases("Welcome and Cards", _objs(), aliases)
+        assert hit and hit["name"] == "Welcome"
+    assert resolve_with_aliases("Nothing here", _objs(), []) is None

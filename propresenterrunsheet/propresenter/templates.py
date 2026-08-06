@@ -210,6 +210,37 @@ def resolve_object(title: str, objects: list):
     return best
 
 
+def resolve_with_aliases(title: str, objects: list, aliases=None):
+    """resolve_object, but operator-taught aliases win first.
+
+    The word rule (every word of the object's name appears in the title)
+    cannot bridge names that share no words — the real case being a youth
+    runsheet line "Youth Arrival + Hangout" whose slide is called "PreLoop
+    Youth". The operator's workaround was renaming the template header to
+    copy the runsheet's wording, which silently breaks the moment the
+    wording changes.
+
+    An alias is `{"match": <phrase found in the runsheet line>,
+                  "template": <exact template object name>}`. If the phrase
+    appears anywhere in the title (case-insensitive) and an object by that
+    name exists, it wins outright. Otherwise — including when the alias
+    names an object that isn't in this template — we fall through to the
+    normal rule, so a stale alias degrades instead of blocking.
+    """
+    t = (title or "").casefold()
+    for a in aliases or []:
+        if not isinstance(a, dict):
+            continue
+        phrase = (a.get("match") or "").strip().casefold()
+        target = (a.get("template") or "").strip().casefold()
+        if not phrase or not target or phrase not in t:
+            continue
+        for obj in objects or []:
+            if (obj.get("name") or "").strip().casefold() == target:
+                return obj
+    return resolve_object(title, objects)
+
+
 def auto_detect_template_uuid(playlists: list,
                               hint: str = "") -> Optional[str]:
     """Pick a template playlist UUID when the operator hasn't set one
