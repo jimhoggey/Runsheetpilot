@@ -17,6 +17,7 @@ operator gets to correct a misread BEFORE spending an OpenRouter request
 — which matters because a free account has 50 a day.
 """
 import io
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +127,72 @@ def test_engine_crash_does_not_leak_a_stack_trace(extract_client, monkeypatch):
     r = _extract(extract_client, "runsheet.png")
     assert r.status_code == 400
     assert "Vision framework exploded" not in r.get_json()["error"]
+
+
+def test_a_library_valueerror_is_not_echoed_to_the_operator(extract_client,
+                                                            monkeypatch):
+    """ocrmac raises ValueError('Invalid image format…') for input it
+    dislikes. Catching bare ValueError would forward that text straight
+    to the UI — internals the operator can do nothing with. Only our own
+    UploadError messages are passed through."""
+    import propresenterrunsheet.routes.parse as parse_mod
+
+    def boom(*_a, **_k):
+        raise ValueError("Invalid image format. Image must be a path or PIL")
+    monkeypatch.setattr(parse_mod, "image_to_text", boom)
+    err = _extract(extract_client, "runsheet.png").get_json()["error"]
+    assert "Invalid image format" not in err
+    assert "PNG" in err
+
+
+# ── the filename must never reach the filesystem path ────────────────────
+
+@pytest.mark.parametrize("evil", [
+    "../../../../etc/passwd.png",
+    "runsheet.png/../../../../tmp/pwned.png",
+    "..\\..\\windows\\system32\\evil.png",
+    "runsheet\x00.png",
+])
+def test_a_hostile_filename_cannot_steer_the_temp_path(extract_client,
+                                                       monkeypatch, evil):
+    """The upload's extension is concatenated into a temp path. Slicing
+    it out of the user's string is a path-injection hole, so the value
+    used is always a literal from ALLOWED_EXTS."""
+    import propresenterrunsheet.routes.parse as parse_mod
+    from propresenterrunsheet.config import UPLOAD_FOLDER
+    seen = {}
+
+    def capture(path, **_k):
+        seen["path"] = path
+        return "6:30pm    Youth Arrival"
+    monkeypatch.setattr(parse_mod, "image_to_text", capture)
+
+    _extract(extract_client, evil)
+    written = Path(seen["path"]).resolve()
+    assert written.parent == Path(UPLOAD_FOLDER).resolve()
+    assert written.name.startswith("runsheet_")
+    assert written.suffix == ".png"
+
+
+def test_safe_ext_only_ever_returns_a_whitelisted_literal():
+    from propresenterrunsheet.routes.parse import _safe_ext, ALLOWED_EXTS
+    assert _safe_ext("a.PNG") == ".png"
+    assert _safe_ext("../evil.pdf") == ".pdf"
+    assert _safe_ext("noext") == ""
+    assert _safe_ext("runsheet.docx") == ""
+    assert _safe_ext(None) == ""
+    for name in ("x.png", "x.jpg", "x.jpeg", "x.pdf"):
+        assert _safe_ext(name) in ALLOWED_EXTS
+
+
+def test_the_rejected_extension_is_sanitised_before_being_quoted_back():
+    """The error message echoes the extension, so it must not carry
+    whatever the caller put in the filename."""
+    from propresenterrunsheet.routes.parse import _display_ext
+    assert _display_ext("x.docx") == ".docx"
+    assert _display_ext("x.<script>alert(1)</script>") == ".scriptalert1scr"[:11]
+    assert "/" not in _display_ext("x.pd/../../etc")
+    assert _display_ext("noext") == ""
 
 
 # ── the temp file must not survive ───────────────────────────────────────

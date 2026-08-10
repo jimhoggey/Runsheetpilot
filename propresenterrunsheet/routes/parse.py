@@ -52,6 +52,38 @@ log = logging.getLogger("pp_runsheet")
 # for a case screenshots already cover.
 PDF_EXTS = (".pdf",)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg")
+ALLOWED_EXTS = PDF_EXTS + IMAGE_EXTS
+
+
+class UploadError(ValueError):
+    """A failure whose message was written FOR the operator.
+
+    Exists so `_extracted_or_error` can tell OUR messages apart from a
+    third-party library's. ocrmac raises ValueError too ("Invalid image
+    format…"), and passing that straight to the UI leaks internals while
+    telling the operator nothing they can act on.
+    """
+
+
+def _safe_ext(filename: str) -> str:
+    """Return the whitelisted extension this filename ends with, or "".
+
+    The return value is always a literal from `ALLOWED_EXTS` — never a
+    slice of the caller's string. That matters because it is concatenated
+    into a temp-file path: deriving it from user input is a path-injection
+    hole, and the whitelist check alone leaves the safety implicit.
+    """
+    lowered = (filename or "").lower()
+    for ext in ALLOWED_EXTS:
+        if lowered.endswith(ext):
+            return ext
+    return ""
+
+
+def _display_ext(filename: str) -> str:
+    """A sanitised extension to quote back in an error message."""
+    tail = (filename or "").rsplit(".", 1)[-1] if "." in (filename or "") else ""
+    return "." + re.sub(r"[^A-Za-z0-9]", "", tail)[:10] if tail else ""
 
 
 def _upload_to_text(upload):
@@ -65,12 +97,11 @@ def _upload_to_text(upload):
     Raises ValueError with an operator-facing message for anything that
     cannot be read, and OCRUnavailable on a platform with no OS engine.
     """
-    name = upload.filename or ""
-    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
-    if ext not in PDF_EXTS + IMAGE_EXTS:
-        raise ValueError(
-            f"{ext or 'That file'} isn't supported. Upload a PDF, or a PNG "
-            "or JPG screenshot of the runsheet.")
+    ext = _safe_ext(upload.filename)
+    if not ext:
+        raise UploadError(
+            f"{_display_ext(upload.filename) or 'That file'} isn't supported. "
+            "Upload a PDF, or a PNG or JPG screenshot of the runsheet.")
 
     # Keep the real extension: ocrmac opens by path, and a .pdf suffix on
     # a PNG is a trap for whoever debugs this next.
@@ -87,7 +118,7 @@ def _upload_to_text(upload):
             if (text or "").strip():
                 return text, "pdf"
             if not pages:
-                raise ValueError(
+                raise UploadError(
                     "Couldn't read any text from that PDF. If it's a scan, "
                     "try a clearer copy or upload a screenshot instead.")
             return images_to_text(pages), "ocr"
@@ -105,12 +136,15 @@ def _extracted_or_error(upload):
     """
     try:
         text, source = _upload_to_text(upload)
-    except OCRUnavailable as e:
-        return "", "", str(e)
-    except ValueError as e:
+    except (OCRUnavailable, UploadError) as e:
+        # Both carry messages we wrote for this exact moment.
         return "", "", str(e)
     except Exception:
-        log.exception("extraction failed for %s", upload.filename)
+        # Everything else — including a bare ValueError from ocrmac or
+        # Pillow — is logged in full and replaced. Library text is not
+        # actionable at 9am on a Sunday, and echoing it back leaks
+        # internals to whoever can reach the port.
+        log.exception("extraction failed for %s", log_safe(upload.filename))
         return "", "", ("Something went wrong reading that file. Try a PDF, "
                         "or a PNG screenshot of the runsheet.")
     if not (text or "").strip():

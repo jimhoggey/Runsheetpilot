@@ -10,8 +10,6 @@ pdfplumber found nothing.** A PDF that yields text never touches
 pypdfium2 or the OCR reconstruction code, so neither can regress the
 Sunday-morning path.
 """
-import pytest
-
 from propresenterrunsheet.parsing.pdf import (
     extract_pdf_text, pdf_text_or_images, MAX_OCR_PAGES,
 )

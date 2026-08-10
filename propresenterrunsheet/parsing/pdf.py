@@ -16,6 +16,8 @@ yields text never reaches the rasteriser or the OCR code.
 
 import logging
 
+from ..logging_setup import log_safe
+
 log = logging.getLogger("pp_runsheet")
 
 # Enough for any real order of service, and low enough that a mistakenly
@@ -64,7 +66,10 @@ def pdf_text_or_images(path: str, extract=None, render=None):
     except Exception:
         # Some real-world PDFs break pdfplumber but render fine in
         # pdfium. Falling through to OCR beats a 500.
-        log.exception("pdfplumber failed on %s — trying rasterise", path)
+        # log_safe: `path` carries the operator's filename, so a crafted
+        # name could otherwise forge log lines.
+        log.exception("pdfplumber failed on %s — trying rasterise",
+                      log_safe(path))
         text = ""
 
     if (text or "").strip():
@@ -73,5 +78,5 @@ def pdf_text_or_images(path: str, extract=None, render=None):
     try:
         return "", render(path, max_pages=MAX_OCR_PAGES)
     except Exception:
-        log.exception("could not rasterise %s for OCR", path)
+        log.exception("could not rasterise %s for OCR", log_safe(path))
         return "", []
