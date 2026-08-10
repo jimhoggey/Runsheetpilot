@@ -53,6 +53,13 @@ if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
 del /q *.spec >nul 2>&1
 
+REM winocr statically imports four winrt submodules, each shipped by a
+REM SEPARATE distribution into the shared `winrt` namespace package.
+REM Namespace packages are exactly what PyInstaller's import analysis
+REM misses, and the failure mode is silent: the exe builds fine and
+REM screenshots break at runtime on the operator's machine. They are named
+REM explicitly below so that cannot happen. A redundant hidden-import
+REM costs nothing; a missing one costs a Sunday morning.
 echo Running PyInstaller ...
 pyinstaller ^
     --name "%APP_NAME%" ^
@@ -73,6 +80,12 @@ pyinstaller ^
     --collect-all winocr ^
     --collect-all winrt ^
     --collect-all pypdfium2 ^
+    --hidden-import winrt.windows.media.ocr ^
+    --hidden-import winrt.windows.globalization ^
+    --hidden-import winrt.windows.storage.streams ^
+    --hidden-import winrt.windows.graphics.imaging ^
+    --hidden-import winrt.windows.foundation ^
+    --hidden-import winrt.windows.foundation.collections ^
     --icon assets\icon.ico ^
     --add-data "templates;templates" ^
     --add-data "static;static" ^

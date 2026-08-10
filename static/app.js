@@ -466,8 +466,7 @@ function onMatchToggle() {
   const status = document.getElementById('template-status');
   if (status) {
     status.innerHTML = on
-      ? '<strong>Auto</strong> routes by runsheet content. Override here to ' +
-        'lock a specific template.'
+      ? '<strong>Auto</strong> routes by runsheet content.'
       : 'Off — you\'ll get coloured headers and timers only, no songs or ' +
         'template media. Resets on each new runsheet.';
   }

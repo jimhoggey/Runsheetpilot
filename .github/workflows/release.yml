@@ -212,6 +212,54 @@ jobs:
           }
 
           Write-Host "Smoke test passed."
+
+          # OCR inside the frozen exe. BLOCKING, and it has to live here
+          # rather than in pytest: the suite injects fake backends because
+          # Linux runners have no OCR engine at all, so nothing else in CI
+          # ever exercises the real Windows.Media.Ocr path. The failure
+          # this catches is a bundle that builds and launches cleanly but
+          # cannot import the winrt namespace submodules — silent until an
+          # operator drops a screenshot mid-service.
+          $png = "$env:RUNNER_TEMP\ocr-probe.png"
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 900, 220
+          $g   = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::White)
+          $font = New-Object System.Drawing.Font "Arial", 28
+          $blk  = [System.Drawing.Brushes]::Black
+          $g.DrawString("6:30pm", $font, $blk, 20, 20)
+          $g.DrawString("Youth Arrival", $font, $blk, 220, 20)
+          $g.DrawString("7:05pm", $font, $blk, 20, 110)
+          $g.DrawString("Welcome", $font, $blk, 220, 110)
+          $g.Dispose()
+          $bmp.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+          $bmp.Dispose()
+
+          try {
+            $ocr = Invoke-WebRequest -Uri http://127.0.0.1:5757/api/extract_text `
+                     -Method POST -Form @{ file = Get-Item $png } `
+                     -TimeoutSec 45 -UseBasicParsing -SkipHttpErrorCheck -NoProxy
+            Write-Host "OCR probe -> HTTP $($ocr.StatusCode): $($ocr.Content)"
+            if ($ocr.StatusCode -ne 200) {
+              throw "OCR probe failed: the frozen exe could not read a PNG. Body: $($ocr.Content)"
+            }
+            $parsed = $ocr.Content | ConvertFrom-Json
+            if ($parsed.source -ne "ocr") {
+              throw "OCR probe returned source='$($parsed.source)', expected 'ocr'"
+            }
+            # Assert on the CONTENT, not just a 200 — a wired-up-but-broken
+            # engine can return an empty string with a cheerful status.
+            if ($parsed.text -notmatch "6:30" -or $parsed.text -notmatch "(?i)youth") {
+              throw "OCR probe read nothing useful. Got: '$($parsed.text)'"
+            }
+            Write-Host "OCR probe passed — the frozen exe read the screenshot."
+          } catch {
+            Write-Host "=== app.log ==="
+            $probeLog = Join-Path $env:APPDATA "Runsheet Pilot\app.log"
+            if (Test-Path $probeLog) { Get-Content $probeLog -Tail 60 }
+            throw
+          }
+
           try {
             Invoke-WebRequest -Uri http://127.0.0.1:5757/api/quit `
                               -Method POST -TimeoutSec 5 -UseBasicParsing -NoProxy | Out-Null
