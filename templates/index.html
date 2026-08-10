@@ -80,6 +80,19 @@
     </div>
     <button class="btn btn-dim btn-sm btn-full" onclick="loadTemplatePlaylists()"
             style="margin-bottom:6px">↻ Refresh playlists from PP</button>
+
+    <!-- The one control in this sidebar that does NOT persist. Every
+         other field here auto-saves to settings.json; this resets to ON
+         with each new runsheet, because a matching switch left off would
+         silently produce a bare playlist next Sunday. The hint line says
+         so out loud — see resetMatchToggle() in app.js. -->
+    <label id="match-toggle-row"
+           style="display:flex;align-items:center;gap:8px;cursor:pointer;
+                  margin:10px 0 4px;font-size:.78rem;font-weight:600">
+      <input type="checkbox" id="match-toggle" checked
+             onchange="onMatchToggle()" style="margin:0;flex:none">
+      <span>Populate with media from PP</span>
+    </label>
     <div id="template-status" style="font-size:.72rem;color:var(--muted);line-height:1.5">
       <strong>Auto</strong> routes by runsheet content. Override here to
       lock a specific template.
@@ -119,10 +132,10 @@
            ondragover="handleDragOver(event)" ondrop="handleDrop(event)"
            ondragleave="this.classList.remove('drag-over')">
         <div class="icon">☁️</div>
-        <div style="font-weight:600;margin-bottom:4px">Drop your PDF here, or click to browse</div>
-        <div class="hint">Runsheet · Order of Service · any PDF</div>
+        <div style="font-weight:600;margin-bottom:4px">Drop your runsheet here, or click to browse</div>
+        <div class="hint">PDF · or a PNG/JPG screenshot</div>
       </div>
-      <input id="pdf-input" type="file" accept=".pdf" style="display:none"
+      <input id="pdf-input" type="file" accept=".pdf,.png,.jpg,.jpeg" style="display:none"
              onchange="handleFileSelect(this.files[0])">
     </div>
   </div>
@@ -132,7 +145,7 @@
        under Step 1 so guidance appears where the operator is already
        looking, instead of below the fold between Parse and Create. -->
   <div id="status-bar">
-    <span id="status-text">👋 Welcome — start by dropping a runsheet PDF on Step 1 above.</span>
+    <span id="status-text">👋 Welcome — start by dropping a runsheet on Step 1 above.</span>
   </div>
 
   <!-- ── STEP 2 — PARSE ──────────────────────────────────────────── -->
@@ -144,9 +157,32 @@
     </div>
     <div class="step-body">
       <p class="step-desc">
-        We send the PDF to OpenRouter and extract the service items
+        We send the runsheet text to OpenRouter and extract the service items
         (songs, MC moments, sermon, etc.) into a structured list.
       </p>
+
+      <!-- OCR review — shown ONLY for screenshots and scanned PDFs, where
+           the text came from the OS text-recognition engine and may have
+           misread something. A text PDF is exact, so this stays hidden and
+           the path every Sunday runsheet takes gains no extra click.
+           Editing here costs a keystroke; parsing a garbled read costs one
+           of a free OpenRouter account's 50 daily requests. -->
+      <div id="ocr-review" hidden style="margin-bottom:12px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <label for="ocr-text" style="font-size:.78rem;font-weight:600">
+            📝 Read from your image — check it before parsing
+          </label>
+          <span id="ocr-review-meta" style="font-size:.7rem;color:var(--muted)"></span>
+        </div>
+        <textarea id="ocr-text" rows="10" spellcheck="false"
+                  style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+                         font-size:.74rem;line-height:1.55;white-space:pre;overflow-wrap:normal;
+                         overflow-x:auto"></textarea>
+        <div class="hint" style="margin-top:4px">
+          Fix any garbled titles or times. This text is what gets parsed.
+        </div>
+      </div>
+
       <button class="btn btn-acc btn-full btn-step" id="parse-btn" onclick="parseRunsheet()">
         🔍 Parse Runsheet
       </button>
@@ -158,7 +194,7 @@
         <div class="orb-progress"><div class="orb-progress-fill" id="parse-progress"></div></div>
       </div>
     </div>
-    <div class="step-locked-msg">Upload a PDF to unlock this step.</div>
+    <div class="step-locked-msg">Upload a runsheet to unlock this step.</div>
   </div>
 
   <!-- Results table — populated after parse. Hidden until then so the

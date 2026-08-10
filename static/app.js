@@ -82,12 +82,13 @@ function setStatus(html, color) {
 // first real status message stops it. Reduced-motion users get a static
 // line — no typing, no waving.
 const IDLE_GREETINGS = [
-  'Welcome — drop a runsheet PDF on Step 1 to begin.',
+  'Welcome — drop a runsheet on Step 1 to begin.',
   'Welcome to efficiency.',
   'Thanks for everything you do — I\'m just here to help.',
   'Sunday\'s coming. Let\'s get the runsheet sorted.',
-  'One PDF in, one ProPresenter playlist out.',
+  'One runsheet in, one ProPresenter playlist out.',
   'You bring the service. I\'ll bring the slides.',
+  'PDF, or just a screenshot — either works.',
 ];
 let _greetTimers = [];
 function _stopIdleGreeter() {
@@ -334,7 +335,18 @@ async function saveSettings() {
   }
 }
 
-// ─── 3. PDF upload + drag-and-drop ────────────────────────────────────────
+// ─── 3. Runsheet upload + drag-and-drop ───────────────────────────────────
+// PDFs and screenshots. Images are OCR'd locally (see parsing/ocr.py) and
+// only ever TEXT goes to OpenRouter — of the free models exactly one
+// accepts images, so an image pathway would shrink the operator's model
+// pool to a single provider.
+const ACCEPTED_EXTS = ['.pdf', '.png', '.jpg', '.jpeg'];
+
+function _isAccepted(name) {
+  const n = (name || '').toLowerCase();
+  return ACCEPTED_EXTS.some(ext => n.endsWith(ext));
+}
+
 function handleDragOver(e) {
   e.preventDefault();
   document.getElementById('drop-zone').classList.add('drag-over');
@@ -343,12 +355,16 @@ function handleDrop(e) {
   e.preventDefault();
   document.getElementById('drop-zone').classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
-  if (file && file.name.toLowerCase().endsWith('.pdf')) handleFileSelect(file);
-  else setStatus('Only .pdf files are supported.', 'var(--red)');
+  if (file && _isAccepted(file.name)) handleFileSelect(file);
+  else setStatus('Drop a PDF, or a PNG/JPG screenshot of the runsheet.',
+                 'var(--red)');
 }
 function handleFileSelect(file) {
   if (!file) return;
   uploadedFile = file;
+  // Every new runsheet starts with matching ON. See resetMatchToggle().
+  resetMatchToggle();
+  _hideOcrReview();
   const dz = document.getElementById('drop-zone');
   dz.classList.add('has-file');
   dz.innerHTML = `
@@ -363,13 +379,98 @@ function handleFileSelect(file) {
   // Show the filename + size beside the step 1 title for at-a-glance state.
   document.getElementById('step-1-meta').textContent =
     `${file.name} · ${(file.size/1024).toFixed(0)} KB`;
-  setStatus(`PDF loaded — click <strong>🔍 Parse Runsheet</strong> on Step 2.`);
   // Advance the step flow: step 1 done, step 2 unlocked, step 3 still locked.
   setStepState(1, 'complete');
   setStepState(2, 'active');
   // Silent library refresh — picks up any songs the operator added in PP
   // since the app launched, so the upcoming match table is current.
   loadLibraryAuto();
+  // Read the file NOW rather than at Parse. For a screenshot this is where
+  // the operator finds out whether OCR could read it — before they commit
+  // one of a free account's 50 daily OpenRouter requests to it.
+  extractText(file);
+}
+
+// ─── OCR review panel ─────────────────────────────────────────────────────
+// Shown only when the text came from OCR. A text PDF is exact, so the path
+// every Sunday runsheet takes gains no extra step.
+function _hideOcrReview() {
+  const box = document.getElementById('ocr-review');
+  if (box) { box.hidden = true; document.getElementById('ocr-text').value = ''; }
+}
+
+function _showOcrReview(text) {
+  const box = document.getElementById('ocr-review');
+  document.getElementById('ocr-text').value = text;
+  document.getElementById('ocr-review-meta').textContent =
+    `${text.split('\n').length} lines read`;
+  box.hidden = false;
+}
+
+async function extractText(file) {
+  setLoading('Reading your runsheet…');
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const res = await fetch('/api/extract_text', {method: 'POST', body: form})
+      .then(r => r.json());
+    if (res.error) {
+      // The file is unusable, so don't leave Step 2 looking ready.
+      setStatus('❌ ' + escapeHtml(res.error), 'var(--red)');
+      setStepState(1, 'active');
+      setStepState(2, 'locked');
+      uploadedFile = null;
+      return;
+    }
+    if (res.needs_review) {
+      _showOcrReview(res.text);
+      setStatus('📝 Read your screenshot — check the text on Step 2, ' +
+                'fix anything odd, then <strong>🔍 Parse Runsheet</strong>.');
+    } else {
+      setStatus('Runsheet loaded — click <strong>🔍 Parse Runsheet</strong> ' +
+                'on Step 2.');
+    }
+  } catch (e) {
+    setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');
+  }
+}
+
+// ─── "Populate with media from PP" toggle ────────────────────────────────
+// Lives in the sidebar under the template picker it governs. Unlike every
+// other sidebar control it does NOT persist to settings.json — it resets
+// to on with each new runsheet, because a matching switch silently left
+// off would produce a bare playlist next Sunday.
+function matchingOn() {
+  const el = document.getElementById('match-toggle');
+  return !el || el.checked;
+}
+
+function resetMatchToggle() {
+  const el = document.getElementById('match-toggle');
+  if (el && !el.checked) { el.checked = true; onMatchToggle(); }
+}
+
+function onMatchToggle() {
+  // Grey out the template picker and its refresh button when matching is
+  // off — with nothing to match against, they'd be live controls that do
+  // nothing, which reads as a bug.
+  const on = matchingOn();
+  const sel = document.getElementById('template-playlist');
+  const refresh = document.querySelector(
+    '[onclick="loadTemplatePlaylists()"]');
+  [sel, refresh].forEach(el => {
+    if (!el) return;
+    el.disabled = !on;
+    el.style.opacity = on ? '' : '.45';
+  });
+  const status = document.getElementById('template-status');
+  if (status) {
+    status.innerHTML = on
+      ? '<strong>Auto</strong> routes by runsheet content. Override here to ' +
+        'lock a specific template.'
+      : 'Off — you\'ll get coloured headers and timers only, no songs or ' +
+        'template media. Resets on each new runsheet.';
+  }
 }
 
 // ─── Template playlist dropdown ───────────────────────────────────────────
@@ -722,6 +823,10 @@ function applySmHidden(hidden) {
 // the daily free-tier cap and is instant.
 async function rematchNow() {
   if (!matchedItems.length) return;
+  // Pressing Re-match IS a request to match, so it turns the toggle back
+  // on rather than silently contradicting it. Create later reads the
+  // toggle, so leaving it off here would throw the new links away.
+  resetMatchToggle();
   const btn = document.getElementById('rematch-btn');
   btn.disabled = true;
   btn.textContent = '↻ Re-matching…';
@@ -757,12 +862,14 @@ function resetFlow() {
   uploadedFile = null;
   matchedItems = [];
   document.getElementById('pdf-input').value = '';
+  resetMatchToggle();
+  _hideOcrReview();
   const dz = document.getElementById('drop-zone');
   dz.classList.remove('has-file');
   dz.innerHTML = `
     <div class="icon">☁️</div>
-    <div style="font-weight:600;margin-bottom:4px">Drop your PDF here, or click to browse</div>
-    <div class="hint">Runsheet · Order of Service · any PDF</div>`;
+    <div style="font-weight:600;margin-bottom:4px">Drop your runsheet here, or click to browse</div>
+    <div class="hint">PDF · or a PNG/JPG screenshot</div>`;
   dz.onclick = () => document.getElementById('pdf-input').click();
   document.getElementById('reset-btn').hidden = true;
   document.getElementById('results-wrap').hidden = true;
@@ -782,7 +889,7 @@ function resetFlow() {
 }
 
 async function parseRunsheet() {
-  if (!uploadedFile) { setStatus('Upload a PDF first.', 'var(--red)'); return; }
+  if (!uploadedFile) { setStatus('Upload a runsheet first.', 'var(--red)'); return; }
   if (!document.getElementById('or-key').value.trim()) {
     setStatus('Enter your OpenRouter API key in <strong>⚙ Settings</strong>.',
               'var(--red)');
@@ -829,10 +936,20 @@ async function parseRunsheet() {
   const t0 = performance.now();
   let parseSucceeded = false;
   setStepState(2, 'busy');
-  setLoading('Uploading PDF and sending to AI…');
+  setLoading('Sending your runsheet to the AI…');
 
   const form = new FormData();
-  form.append('pdf',      uploadedFile);
+  // If the operator reviewed OCR text, THAT is the runsheet — it's the
+  // corrected version of the file, so it wins over re-reading the image.
+  const reviewed = document.getElementById('ocr-review').hidden
+    ? '' : document.getElementById('ocr-text').value;
+  if (reviewed.trim()) {
+    form.append('runsheet_text', reviewed);
+    form.append('filename',      uploadedFile.name);
+  } else {
+    form.append('pdf', uploadedFile);
+  }
+  form.append('matching', matchingOn() ? 'on' : 'off');
   form.append('or_key',   document.getElementById('or-key').value.trim());
   form.append('or_model', document.getElementById('or-model').value.trim());
 
@@ -851,12 +968,15 @@ async function parseRunsheet() {
       document.getElementById('playlist-name').value = res.suggested_name;
     }
 
-    setLoading(`AI found ${res.items.length} items — matching to library…`);
+    setLoading(matchingOn()
+      ? `AI found ${res.items.length} items — matching to library…`
+      : `AI found ${res.items.length} items — building headers…`);
 
     const threshold = parseInt(document.getElementById('threshold').value) / 100;
     const matchRes = await fetch('/api/match', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({parsed: res.items, library: libraryItems, threshold})
+      body: JSON.stringify({parsed: res.items, library: libraryItems, threshold,
+                            matching: matchingOn()})
     }).then(r => r.json());
 
     matchedItems = matchRes.items;
@@ -1048,6 +1168,10 @@ async function createPlaylist() {
         export_dir:    document.getElementById('export-dir').value,
         create_timers: document.getElementById('create-timers').checked,
         template_playlist_uuid: document.getElementById('template-playlist').value,
+        // Carried through so create skips the template rescue and the
+        // media-bin walk too — otherwise turning matching off at parse
+        // would quietly come back at build time.
+        matching:      matchingOn(),
       })
     }).then(r => r.json());
 
