@@ -70,6 +70,9 @@ pyinstaller ^
     --collect-all webview ^
     --collect-all clr_loader ^
     --collect-all pythonnet ^
+    --collect-all winocr ^
+    --collect-all winrt ^
+    --collect-all pypdfium2 ^
     --icon assets\icon.ico ^
     --add-data "templates;templates" ^
     --add-data "static;static" ^
