@@ -73,6 +73,10 @@ pyinstaller \
     --hidden-import pdfplumber \
     --hidden-import tkinter \
     --collect-all webview \
+    --collect-all ocrmac \
+    --collect-all pypdfium2 \
+    --hidden-import Vision \
+    --hidden-import CoreML \
     --icon assets/icon.icns \
     --add-data "templates:templates" \
     --add-data "assets:assets" \

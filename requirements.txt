@@ -4,3 +4,20 @@ requests>=2.34.2
 waitress>=3.0.2
 Pillow>=12.3.0
 pywebview>=6.0
+
+# Reading screenshots and scanned runsheets. The OCR engines are the
+# operating system's own — Apple Vision and Windows.Media.Ocr — so these
+# are thin wrappers, not bundled ML runtimes. Measured: the whole winrt
+# stack is ~1MB (winocr 0.0.15 dropped the 12MB monolithic winsdk for
+# granular winrt-* packages), and on Mac pywebview already pulls pyobjc
+# for WebKit. An ONNX engine would have added 60-100MB, which on the
+# Windows --onefile build means slower launches.
+#
+# Neither exists on Linux: parsing/ocr.py raises OCRUnavailable there and
+# the tests inject fake backends, so CI never needs a real engine.
+ocrmac>=1.0.1; sys_platform == "darwin"
+winocr>=0.0.15; sys_platform == "win32"
+
+# Rasterises image-only PDFs so OCR can read them. Only reached when
+# pdfplumber finds no embedded text.
+pypdfium2>=5.12.1

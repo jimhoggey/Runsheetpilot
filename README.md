@@ -1,7 +1,7 @@
 # Runsheet Pilot
 Project Demo on youtube: https://youtu.be/nfgaohhkAkc?si=DgqxRt6pJfySOcf_ 
 
-A local web app that turns a church service runsheet PDF into a ProPresenter playlist. It reads the PDF, uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
+A local web app that turns a church service runsheet into a ProPresenter playlist. It reads the runsheet — a PDF, or a PNG/JPG screenshot read by your operating system's own text recognition — uses an OpenRouter AI model to parse it into structured items, fuzzy-matches songs against your local ProPresenter library, and creates the playlist via ProPresenter's REST API. Optionally creates countdown timers for each section.
 
 Runs on macOS and Windows. Opens at `http://localhost:5757` in your browser.
 
@@ -88,11 +88,21 @@ when the previous is done, so it's hard to do them out of order.
 2. Start the app — the library is fetched silently in the background.
 3. On first run, open **⚙ Settings** and paste your OpenRouter API key
    + model (e.g. `openai/gpt-oss-20b:free`). Auto-saves.
-4. **Step 1 — Upload Runsheet:** drop the PDF on the upload card.
+4. **Step 1 — Upload Runsheet:** drop a PDF, or a PNG/JPG screenshot, on
+   the upload card. Screenshots (and scanned PDFs with no embedded text)
+   are read locally by your operating system's own text recognition —
+   Apple Vision on Mac, Windows.Media.Ocr on Windows — and the text is
+   shown for you to correct before parsing. Only text is ever sent to
+   OpenRouter.
 5. **Step 2 — Parse with AI:** click *Parse Runsheet*. The AI extracts
    items; songs are fuzzy-matched against your library; non-song items
    that match a section in your **Template Playlist** (see below) get
    their slides reused automatically.
+
+   Turn **Populate with media from PP** off in the sidebar for a one-off
+   event with no template and no reusable media — you get coloured
+   headers and timers only, and the parse makes no ProPresenter calls at
+   all. It switches itself back on with every new runsheet.
 6. Review matches; override any wrong song matches via the **Pick** button.
 7. **Step 3 — Create Runsheet & Export:** click *Create Runsheet &
    Export File*. The playlist appears in ProPresenter; if an export

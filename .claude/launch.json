@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "runsheet-pilot",
+      "runtimeExecutable": "/tmp/rpvenv/bin/python",
+      "runtimeArgs": ["propresenter_app.py", "--headless"],
+      "port": 5757
+    }
+  ]
+}
