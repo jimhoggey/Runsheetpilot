@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from .flags import matching_enabled
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
 from ..propresenter.net import pp_base
@@ -104,6 +105,7 @@ def api_create_playlist():
     base = pp_base(host, port)
     name = (body.get("name") or "").strip()
     matched = body.get("matched") or []
+    do_matching = matching_enabled(body)
     before = time.time()
 
     if not name:
@@ -129,13 +131,23 @@ def api_create_playlist():
         # 0a. Items may have arrived unmatched because PP was closed at
         # parse time — re-run the deterministic template match now that
         # PP is (presumably) up. No-op when everything already matched.
-        from ..settings import load_settings as _ls
-        _rematch_template(matched, base,
-                          (body.get("template_playlist_uuid") or "").strip(),
-                          (_ls() or {}).get("template_aliases"))
+        #
+        # Both steps are skipped when "Populate with media from PP" is
+        # off. The rescue especially: it exists to recover links the
+        # operator wanted and didn't get, so firing it here would hand
+        # back exactly what they just turned off. With no links there is
+        # also no media to relink, but the bin fetch is skipped explicitly
+        # rather than left to be a harmless no-op — on the production
+        # machine that call walks a 1,261-item library.
+        unlinked = []
+        if do_matching:
+            from ..settings import load_settings as _ls
+            _rematch_template(matched, base,
+                              (body.get("template_playlist_uuid") or "").strip(),
+                              (_ls() or {}).get("template_aliases"))
 
-        bin_items = fetch_media_bin(base)
-        unlinked = relink_media(matched, bin_items) if bin_items else []
+            bin_items = fetch_media_bin(base)
+            unlinked = relink_media(matched, bin_items) if bin_items else []
         if unlinked:
             log.info("Media not in PP's Media bin, left as headers: %s",
                      log_safe(", ".join(u["media_name"] for u in unlinked)))

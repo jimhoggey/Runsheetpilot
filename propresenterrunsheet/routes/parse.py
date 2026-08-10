@@ -25,7 +25,11 @@ from ..parsing.ai import (
 from ..parsing.models import (
     fetch_catalogue, is_router, next_usable_model, resolve_model,
 )
-from ..parsing.pdf import extract_pdf_text
+from .flags import matching_enabled
+from ..parsing.ocr import (
+    OCRUnavailable, image_to_text, images_to_text,
+)
+from ..parsing.pdf import extract_pdf_text, pdf_text_or_images, render_pdf_pages
 from ..propresenter.library import fuzzy_match
 from ..propresenter.net import pp_base
 from ..propresenter.templates import (
@@ -40,6 +44,109 @@ from ..settings import load_settings
 
 bp = Blueprint("parse", __name__)
 log = logging.getLogger("pp_runsheet")
+
+# What the upload accepts. PDFs go through pdfplumber; images (and PDFs
+# pdfplumber can't read) go through local OCR. Deliberately NOT here:
+# .docx and .doc — Word runsheets are almost always tables, which is a
+# separate extraction problem, and HEIC, which needs another dependency
+# for a case screenshots already cover.
+PDF_EXTS = (".pdf",)
+IMAGE_EXTS = (".png", ".jpg", ".jpeg")
+
+
+def _upload_to_text(upload):
+    """Extract text from one uploaded file. Returns `(text, source)`.
+
+    `source` is "pdf" when pdfplumber read embedded text, or "ocr" when
+    the text came from a screenshot or a rasterised scan — the caller
+    turns that into `needs_review`, because OCR is the only path where
+    the operator should check the result before spending a request.
+
+    Raises ValueError with an operator-facing message for anything that
+    cannot be read, and OCRUnavailable on a platform with no OS engine.
+    """
+    name = upload.filename or ""
+    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    if ext not in PDF_EXTS + IMAGE_EXTS:
+        raise ValueError(
+            f"{ext or 'That file'} isn't supported. Upload a PDF, or a PNG "
+            "or JPG screenshot of the runsheet.")
+
+    # Keep the real extension: ocrmac opens by path, and a .pdf suffix on
+    # a PNG is a trap for whoever debugs this next.
+    tmp_path = UPLOAD_FOLDER / f"runsheet_{int(time.time() * 1000)}{ext}"
+    upload.save(str(tmp_path))
+    try:
+        if ext in PDF_EXTS:
+            # extract_pdf_text is passed explicitly rather than left to
+            # default, so tests (and the parse_client fixture) can swap
+            # the module-level name and still be honoured here.
+            text, pages = pdf_text_or_images(
+                str(tmp_path), extract=extract_pdf_text,
+                render=render_pdf_pages)
+            if (text or "").strip():
+                return text, "pdf"
+            if not pages:
+                raise ValueError(
+                    "Couldn't read any text from that PDF. If it's a scan, "
+                    "try a clearer copy or upload a screenshot instead.")
+            return images_to_text(pages), "ocr"
+        return image_to_text(str(tmp_path)), "ocr"
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _extracted_or_error(upload):
+    """`_upload_to_text` with every failure mapped to a plain message.
+
+    Returns `(text, source, error)`. An engine crash must never reach the
+    operator as a stack trace — "Vision framework exploded" is not
+    actionable at 9am on a Sunday.
+    """
+    try:
+        text, source = _upload_to_text(upload)
+    except OCRUnavailable as e:
+        return "", "", str(e)
+    except ValueError as e:
+        return "", "", str(e)
+    except Exception:
+        log.exception("extraction failed for %s", upload.filename)
+        return "", "", ("Something went wrong reading that file. Try a PDF, "
+                        "or a PNG screenshot of the runsheet.")
+    if not (text or "").strip():
+        return "", "", ("Couldn't read any text from that file. Try a bigger "
+                        "or clearer screenshot.")
+    return text, source, ""
+
+
+@bp.route("/api/extract_text", methods=["POST"])
+def api_extract_text():
+    """Turn an upload into text, without spending an OpenRouter request.
+
+    Split out of /api/upload_and_parse so the operator can SEE what was
+    read off a screenshot and fix a misread before parsing. A free
+    OpenRouter account gets 50 requests a day; burning one on a garbled
+    OCR result is the failure this prevents.
+    """
+    upload = request.files.get("file") or request.files.get("pdf")
+    if upload is None or not upload.filename:
+        return jsonify({"error": "No file uploaded."}), 400
+
+    text, source, error = _extracted_or_error(upload)
+    if error:
+        return jsonify({"error": error}), 400
+
+    log.info(f"Extracted {len(text)} chars from "
+             f"{log_safe(upload.filename)} via {source}")
+    return jsonify({
+        "text":         text,
+        "source":       source,
+        # Only OCR output is worth a human's eyes. A text PDF is exact,
+        # so showing a review panel for it would add a click to the
+        # path every Sunday runsheet takes.
+        "needs_review": source == "ocr",
+        "filename":     upload.filename,
+    })
 
 
 def _unusable_reply_message(used_model: str, snippet: str, what: str) -> str:
@@ -161,16 +268,29 @@ def _rate_limit_message(resp) -> str:
 def api_upload_and_parse():
     import requests as req
 
-    # 1. Validate request
-    if "pdf" not in request.files:
-        return jsonify({"error": "No PDF uploaded"}), 400
-    pdf_file = request.files["pdf"]
-    if not pdf_file.filename:
-        return jsonify({"error": "Empty filename"}), 400
+    # 1. Validate request. Two ways in: a file, or text the operator has
+    #    already reviewed and corrected in the OCR panel. Reviewed text
+    #    wins when both arrive — it IS the corrected version of the file.
+    reviewed_text = (request.form.get("runsheet_text") or "")
+    upload = request.files.get("pdf") or request.files.get("file")
+    upload_name = (request.form.get("filename") or "").strip()
+    if upload is not None and upload.filename and not upload_name:
+        upload_name = upload.filename
 
-    # 2. Save upload to a temp path (we delete it after extraction either way)
-    tmp_path = UPLOAD_FOLDER / f"runsheet_{int(time.time()*1000)}.pdf"
-    pdf_file.save(str(tmp_path))
+    if "runsheet_text" in request.form and not reviewed_text.strip():
+        # The operator cleared the textarea. Parsing an empty runsheet
+        # would spend one of a free account's 50 daily requests to be
+        # told there is nothing in it.
+        return jsonify({"error":
+            "There's no runsheet text to parse. Paste or re-upload the "
+            "runsheet and try again."}), 400
+
+    if not reviewed_text.strip() and (upload is None or not upload.filename):
+        return jsonify({"error": "No runsheet uploaded"}), 400
+
+    # Whether to link items to ProPresenter at all. Off means headers
+    # only — see matching_enabled().
+    do_matching = matching_enabled(request.form)
 
     # 3. Resolve API key + model (form values override saved settings)
     settings = load_settings()
@@ -184,11 +304,9 @@ def api_upload_and_parse():
     model = resolve_model(configured, fetch_catalogue())
 
     if not or_key:
-        tmp_path.unlink(missing_ok=True)
         return jsonify({"error": "OpenRouter API key required."}), 400
 
     if not model:
-        tmp_path.unlink(missing_ok=True)
         return jsonify({"error":
             "No AI model is set, and the list of free models could not be "
             "reached. Check your internet connection, or set a model "
@@ -204,16 +322,16 @@ def api_upload_and_parse():
     content = ""
 
     try:
-        # 4. Extract text from the PDF (always clean up the temp file)
-        try:
-            raw = extract_pdf_text(str(tmp_path))
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-        if not raw.strip():
-            return jsonify({"error":
-                "Could not extract text from PDF. "
-                "Make sure it is a text-based PDF (not a scanned image)."}), 400
+        # 4. Get the runsheet text. Either the operator already reviewed
+        # it (screenshot / scan, corrected in the panel) or we extract it
+        # from the upload now — which for a text PDF is the same
+        # pdfplumber call this route has always made.
+        if reviewed_text.strip():
+            raw = reviewed_text
+        else:
+            raw, _source, error = _extracted_or_error(upload)
+            if error:
+                return jsonify({"error": error}), 400
 
         # 5. Assemble the prompt — user-customised or default, plus the
         # Service Mate cue addendum so the model also emits per-role cues.
@@ -229,13 +347,21 @@ def api_upload_and_parse():
         # same "Culture" / "Welcome" / "Worship" slides in every week.
         # Best-effort: any failure here (PP not running, no playlists,
         # template gone) drops back to parse-without-template.
+        #
+        # Skipped entirely when the operator turned "Populate with media
+        # from PP" off: a brand-new event has no template and no reusable
+        # media, so this whole block is round-trips for nothing. Skipping
+        # also means parse works with ProPresenter closed, and on a
+        # 1,261-item library that is a real speed difference.
         sections: list = []
         objects: list = []
         pp_host = (settings.get("pp_host") or "localhost").strip()
         pp_port = (settings.get("pp_port") or "50001").strip()
         base = f"http://{pp_host}:{pp_port}"
         tmpl_uuid = (settings.get("template_playlist_uuid") or "").strip()
-        if not tmpl_uuid:
+        if not do_matching:
+            tmpl_uuid = ""
+        elif not tmpl_uuid:
             # Auto-pick the template based on runsheet content. The hint
             # combines filename + the start of the extracted text — both
             # usually say "youth" / "sunday" / "wednesday" / etc., which
@@ -244,7 +370,7 @@ def api_upload_and_parse():
             # automatically. Fall back to the first template-named
             # playlist on tie or no signal.
             detect_hint = " ".join(filter(None, [
-                pdf_file.filename or "", raw[:500]]))
+                upload_name, raw[:500]]))
             try:
                 tmpl_uuid = auto_detect_template_uuid(
                     fetch_pp_playlists(base),
@@ -358,8 +484,9 @@ def api_upload_and_parse():
                 used_model, snippet, "returned no runsheet items")}), 200
 
         # 8. If the AI didn't supply a service name, derive one from the filename
-        if not service_name and pdf_file.filename:
-            stem = re.sub(r"\.pdf$", "", pdf_file.filename, flags=re.IGNORECASE)
+        if not service_name and upload_name:
+            stem = re.sub(r"\.(pdf|png|jpe?g)$", "", upload_name,
+                          flags=re.IGNORECASE)
             service_name = re.sub(r"[_]+", " ", stem).strip()
 
         # Fill any per-role cue gaps from the rule table so every item has
@@ -437,7 +564,7 @@ def api_upload_and_parse():
         # this with the timer-name-stamped version for auto-track.
         try:
             sm_state = {
-                "service_name":       service_name or pdf_file.filename or "Runsheet",
+                "service_name":       service_name or upload_name or "Runsheet",
                 "items":              items,
                 "current_index":      0,
                 "current_started_at": _dt.datetime.now().isoformat(),
@@ -452,7 +579,7 @@ def api_upload_and_parse():
                  f"suggested name: {log_safe(service_name)!r}")
         return jsonify({
             "items":          items,
-            "filename":       pdf_file.filename,
+            "filename":       upload_name,
             "suggested_name": service_name,
         })
 
@@ -479,6 +606,16 @@ def api_match():
     parsed = body.get("parsed", [])
     library = body.get("library", [])
     threshold = float(body.get("threshold", 0.55))
+
+    # "Populate with media from PP" is off — nothing here applies. The
+    # front end already skips this call, so this is the belt to its
+    # braces: a stale client must not resurrect matching the operator
+    # turned off. Re-match is exempt below because pressing Re-match IS
+    # an explicit request to match now.
+    if not matching_enabled(body) and not body.get("rematch_template"):
+        return jsonify({"matches": [{"index": i, "match": None,
+                                     "confidence": 0.0}
+                                    for i, _it in enumerate(parsed)]})
 
     # Re-match: recompute template links against ProPresenter as it is
     # RIGHT NOW, without re-parsing. The operator renamed a slide and
