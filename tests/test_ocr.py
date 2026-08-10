@@ -22,7 +22,7 @@ import pytest
 
 from propresenterrunsheet.parsing.ocr import (
     OCRUnavailable, observations_to_text, vision_to_observations,
-    winocr_to_observations, image_to_text, pick_backend,
+    winocr_to_observations, image_to_text, images_to_text, pick_backend,
 )
 
 
@@ -219,3 +219,22 @@ def test_image_to_text_propagates_ocr_unavailable():
         raise OCRUnavailable("nope")
     with pytest.raises(OCRUnavailable):
         image_to_text("/tmp/shot.png", backend=fake)
+
+
+# ── multi-page (scanned PDF) ─────────────────────────────────────────────
+
+def test_pages_are_joined_with_a_blank_line():
+    pages = {"p1": [obs("6:30pm", 0, 100)], "p2": [obs("8:10pm", 0, 100)]}
+    assert images_to_text(["p1", "p2"], backend=pages.get) == "6:30pm\n\n8:10pm"
+
+
+def test_a_blank_page_does_not_leave_a_gap():
+    """A scan often has an empty trailing page; it must not read as a
+    paragraph break the model might treat as a section boundary."""
+    pages = {"p1": [obs("6:30pm", 0, 100)], "p2": [], "p3": [obs("8:10pm", 0, 100)]}
+    assert images_to_text(["p1", "p2", "p3"],
+                          backend=pages.get) == "6:30pm\n\n8:10pm"
+
+
+def test_no_pages_gives_empty_string():
+    assert images_to_text([], backend=lambda s: []) == ""

@@ -164,18 +164,20 @@ def winocr_to_observations(result) -> list:
     return out
 
 
-def _mac_backend(path: str) -> list:
+def _mac_backend(source) -> list:
+    # ocrmac takes a path or a PIL image, so rasterised PDF pages go
+    # straight in without a temp-file round trip.
     from ocrmac import ocrmac
     return vision_to_observations(
-        ocrmac.OCR(path, recognition_level="accurate").recognize())
+        ocrmac.OCR(source, recognition_level="accurate").recognize())
 
 
-def _windows_backend(path: str) -> list:
+def _windows_backend(source) -> list:
     import winocr
     from PIL import Image
-    with Image.open(path) as img:
-        return winocr_to_observations(
-            winocr.recognize_pil_sync(img.convert("RGB"), "en"))
+    img = Image.open(source) if isinstance(source, str) else source
+    return winocr_to_observations(
+        winocr.recognize_pil_sync(img.convert("RGB"), "en"))
 
 
 def pick_backend(platform: str = None):
@@ -203,3 +205,16 @@ def image_to_text(path: str, backend=None) -> str:
     """
     backend = backend or pick_backend()
     return observations_to_text(backend(path))
+
+
+def images_to_text(sources, backend=None) -> str:
+    """OCR several images (the pages of a scanned PDF) into one document.
+
+    Pages are joined with a blank line so the model reads them as
+    continuous content rather than one giant run-on row. A page that
+    yields nothing is skipped rather than contributing a blank gap.
+    """
+    backend = backend or pick_backend()
+    pages = [t for t in (observations_to_text(backend(s)) for s in sources or [])
+             if t.strip()]
+    return "\n\n".join(pages)
