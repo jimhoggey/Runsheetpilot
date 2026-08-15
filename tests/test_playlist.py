@@ -46,7 +46,9 @@ def test_unmatched_song_becomes_red_action_header():
     name = item["id"]["name"]
     assert "ACTION NEEDED" in name
     assert "Mystery Song" in name
-    assert "Pre-service" in name
+    # "Pre-service" is prose from the notes column. Headers carry title,
+    # time and duration only — see tests/test_header_text.py.
+    assert "Pre-service" not in name
     assert item["header_color"] == _color_dict(ACTION_NEEDED_COLOR)
 
 
@@ -58,7 +60,9 @@ def test_non_song_type_becomes_coloured_header():
     }])
     item = payload[0]
     assert item["type"] == "header"
-    assert item["id"]["name"] == "King Jesus  —  10:14 AM"
+    # `notes` holding only a time is the pre-`start_time` shape; the time
+    # is still recovered, now with single spacing around the dash.
+    assert item["id"]["name"] == "King Jesus — 10:14 AM"
     assert item["header_color"] == _color_for_type("sermon")
 
 
