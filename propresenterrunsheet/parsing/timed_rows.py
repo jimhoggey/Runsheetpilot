@@ -34,15 +34,23 @@ import re
 # parsing the remainder separately makes that split impossible.
 _ROW_TIME = re.compile(
     r"^\s*(?P<time>\d{1,2}[:.]\d{2}(?:\s*[AaPp]\.?[Mm]\.?)?)")
-# Remainder: optional bare duration column, then the title.
-_ROW_REST = re.compile(r"^\s*(?:(?P<dur>\d{1,3})\s+)?(?P<title>\S.*?)\s*$")
+# Remainder: optional bare duration column, then the title. Greedy to
+# end-of-line with the title stripped in code — a lazy `\S.*?` against a
+# trailing `\s*$` backtracks polynomially on space-heavy lines (CodeQL
+# py/polynomial-redos).
+_ROW_REST = re.compile(r"^\s*(?:(?P<dur>\d{1,3})\s+)?(?P<title>\S.*)$")
 
 
 def _norm_time(t: str) -> str:
-    """'6:25  pm.' / '6.25PM' → '6:25pm' — one shape for comparисons."""
+    """'6:25  pm.' / '6.25PM' → '6:25pm' — one shape for comparisons.
+
+    str methods, not regex: this runs on operator-supplied text, and
+    `:+$`-style patterns backtrack polynomially on strings of colons
+    (CodeQL py/polynomial-redos).
+    """
     t = (t or "").strip().lower().replace(".", ":")
-    t = re.sub(r"[^\d:apm]", "", t)
-    t = re.sub(r":+$", "", t)
+    t = "".join(c for c in t if c.isdigit() or c in ":apm")
+    t = t.rstrip(":")
     # '6:25:pm' (from 'PM.' → ':') back to '6:25pm'
     return t.replace(":a", "a").replace(":p", "p")
 
@@ -66,8 +74,8 @@ def extract_timed_rows(raw) -> list:
         if not rest or not rest.group("title"):
             continue      # bare service-start time in the page header
         rows.append({
-            "start_time":   re.sub(r"\s+", " ", m.group("time")).strip(" ."),
-            "title":        rest.group("title"),
+            "start_time":   " ".join(m.group("time").split()).strip(" ."),
+            "title":        rest.group("title").strip(),
             "duration_min": int(rest.group("dur") or 0),
         })
     return rows
