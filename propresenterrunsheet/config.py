@@ -25,8 +25,22 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 APP_NAME = "Runsheet Pilot"
+
+# Shown once by the what's-new popup on the first launch after an update.
+# THE RELEASE RULE: every release rewrites this list — max three bullets,
+# short, operator-facing, in the app's own voice (see the idle greetings
+# in app.js for the register). The same three lines go in the GitHub
+# release body. tests/test_whats_new.py enforces the cap.
+WHATS_NEW = [
+    "ProPresenter headers are short now — title, time, duration. "
+    "No more bullet-point essays.",
+    "The side panel tucks away — click the ⚙ tab on the left edge "
+    "when you need it.",
+    "This popup! Three quick notes after every update, then I'm out "
+    "of your way.",
+]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.
 _LEGACY_APP_NAME = "ProPresenter Runsheet Builder"
