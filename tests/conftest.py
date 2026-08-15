@@ -78,8 +78,12 @@ def parse_client(client, monkeypatch):
     test_item_types.py."""
     import propresenterrunsheet.routes.parse as parse_mod
 
+    # Deliberately UNTIMED lines: the timed-row guard synthesizes an item
+    # for any "10:00 …" row a scripted reply doesn't cover, which would
+    # skew every count these response-handling tests assert. The guard
+    # has its own suites (test_timed_rows.py, test_parse_rescue.py).
     monkeypatch.setattr(parse_mod, "extract_pdf_text",
-                        lambda _p: "10:00 Welcome\n10:05 Worship")
+                        lambda _p: "Welcome\nWorship")
     # Keep ProPresenter out of it — template lookup is best-effort anyway.
     monkeypatch.setattr(parse_mod, "fetch_pp_playlists",
                         lambda *_a, **_k: (_ for _ in ()).throw(OSError("no PP")))

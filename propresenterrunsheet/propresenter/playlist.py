@@ -59,12 +59,17 @@ _LEADING_TIME = re.compile(
 
 
 def _start_time_of(p: dict) -> str:
-    """The item's start time, preferring the real field over the fallback."""
+    """The item's start time, preferring the real field over the fallback.
+
+    Trailing punctuation is stripped either way: models emit "6:25 PM."
+    even when the runsheet has no period, and that dot ends up in every
+    ProPresenter header. Deterministic cleanup beats asking nicely.
+    """
     explicit = (p.get("start_time") or "").strip()
-    if explicit:
-        return explicit
-    m = _LEADING_TIME.match(p.get("notes") or "")
-    return m.group(1).strip() if m else ""
+    if not explicit:
+        m = _LEADING_TIME.match(p.get("notes") or "")
+        explicit = m.group(1).strip() if m else ""
+    return explicit.rstrip(".,;:").strip()
 
 
 def header_label(p: dict) -> str:

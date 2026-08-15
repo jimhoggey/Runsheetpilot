@@ -1062,8 +1062,12 @@ async function parseRunsheet() {
     // the Create button.
     setStepState(2, 'complete');
     setStepState(3, 'active');
+    // The timed-row guard resynthesizes rows the AI dropped; say so, so
+    // the operator knows why the count beats what the model returned.
     document.getElementById('step-2-meta').textContent =
-      `${matchedItems.length} items`;
+      res.rescued_rows > 0
+        ? `${matchedItems.length} items (${res.rescued_rows} recovered)`
+        : `${matchedItems.length} items`;
     _recordParseTime((performance.now() - t0) / 1000);
   } catch (e) {
     setStatus('❌ ' + escapeHtml(String(e)), 'var(--red)');

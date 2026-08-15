@@ -170,3 +170,13 @@ def test_header_label_is_reusable_on_its_own():
 def test_whitespace_around_fields_is_tidied():
     assert _header({"type": "other", "title": "  Connect Groups  ",
                     "start_time": " 7:15 PM "}) == "Connect Groups — 7:15 PM"
+
+
+def test_model_added_trailing_period_on_the_time_is_stripped():
+    """Seen live on 14 Aug 2026: the model emitted "6:25 PM." (the
+    runsheet has no period) and every PP header carried the dot."""
+    assert _header({"type": "mc_on_stage",
+                    "title": "MC Welcome: Ollie & Elliot",
+                    "start_time": "6:25 PM.",
+                    "duration_min": 5}) == \
+        "MC Welcome: Ollie & Elliot — 6:25 PM (5 min)"
