@@ -15,6 +15,8 @@ Three branches inside the loop:
 The actual HTTP calls + .playlist export still live in the route
 handler — this module only builds the body."""
 
+import re
+
 
 # RGBA (0-1 floats) for ProPresenter playlist header items, by type.
 # Mirrors the tag colours in the UI table so volunteers see the same colour
@@ -47,17 +49,65 @@ def _color_dict(rgba: tuple) -> dict:
     return {"red": r, "green": g, "blue": b, "alpha": a}
 
 
+# A time of day at the START of the notes field. Parses made before
+# `start_time` existed carried the time there — the model happened to lead
+# the notes with it — so this recovers it for playlists built from older
+# saved state. Matches "6:25 PM", "6:25PM", "19:40", "9:05 am".
+_LEADING_TIME = re.compile(
+    r"^\s*(\d{1,2}[:.]\d{2}\s*(?:[ap]\.?m\.?)?|\d{1,2}\s*[ap]\.?m\.?)",
+    re.IGNORECASE)
+
+
+def _start_time_of(p: dict) -> str:
+    """The item's start time, preferring the real field over the fallback."""
+    explicit = (p.get("start_time") or "").strip()
+    if explicit:
+        return explicit
+    m = _LEADING_TIME.match(p.get("notes") or "")
+    return m.group(1).strip() if m else ""
+
+
+def header_label(p: dict) -> str:
+    """The text of a ProPresenter section header: `Title — 6:25 PM (5 min)`.
+
+    Read at a glance, mid-service, by the person running screens. It
+    answers what is coming up and when — nothing else. The people's names
+    ride along inside the title ("MC Welcome: Ollie & Elliot"), which is
+    where the model already puts them.
+
+    `notes` is deliberately NOT included. It holds the runsheet's bullet
+    points ("Invite Night coming up", "be prepped beforehand"), which
+    turned headers into four lines of prose. Those stay visible in
+    Runsheet Pilot's own table and in the Service Mate clock cues.
+
+    Public because the section-expansion path and the unmatched-song path
+    both need this exact string — building it in two places is what let
+    them drift apart in the first place.
+    """
+    title = (p.get("title") or "").strip()
+    if p.get("type") == "scripture":
+        title = f"📖 {title}"
+
+    label = title
+    start = _start_time_of(p)
+    if start:
+        label += f" — {start}"
+    # 0 means the runsheet didn't say — not a zero-length item.
+    try:
+        minutes = int(p.get("duration_min") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes > 0:
+        label += f" ({minutes} min)"
+    return label
+
+
 def _coloured_header_for(p: dict) -> dict:
     """Build a single coloured-header entry from a parsed runsheet item.
     Pulled out so both the no-match fallback path AND the section-expansion
     path can use the runsheet's own labelling without duplicating the
     title/notes/scripture-emoji logic."""
-    title = p.get("title", "") or ""
-    if p.get("type") == "scripture":
-        title = f"📖 {title}"
-    label = title
-    if p.get("notes"):
-        label += f"  —  {p['notes']}"
+    label = header_label(p)
     return {
         "id":           {"uuid": "", "name": label, "index": 0},
         "type":         "header",
@@ -193,10 +243,11 @@ def build_playlist_payload(matched: list) -> list:
             })
         elif p.get("type") == "song":
             # Unmatched song → red ACTION NEEDED placeholder so the volunteer
-            # notices and can manually add the song in PP.
-            label = f"⚠ ACTION NEEDED — {p.get('title', '')}"
-            if p.get("notes"):
-                label += f"  ({p['notes']})"
+            # notices and can manually add the song in PP. Uses the shared
+            # header_label so it stays as short as every other header —
+            # this branch used to append the raw notes blob independently,
+            # which is precisely how the two paths drifted apart.
+            label = f"⚠ ACTION NEEDED — {header_label(p)}"
             items.append({
                 "id":           {"uuid": "", "name": label, "index": 0},
                 "type":         "header",

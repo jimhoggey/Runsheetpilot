@@ -41,13 +41,26 @@
 
 <div class="layout">
 
-<aside>
+<!-- The config drawer's edge handle — the only always-visible trace of
+     the sidebar (hidden by default since v2.8.0; it was permanent noise
+     for controls used maybe once a month). Clicking it pushes the panel
+     into the layout, pre-2.8 style, and back out. The dot mirrors the
+     last ProPresenter contact: green ok, red failed, grey untried —
+     replacing the at-a-glance check the always-visible panel provided. -->
+<button class="drawer-handle" id="drawer-handle" onclick="toggleDrawer()"
+        title="Connection & template settings"
+        aria-label="Open settings panel" aria-expanded="false">
+  <span class="pp-dot" id="pp-dot"></span>
+  <span>⚙</span>
+  <span class="chev">▸</span>
+</button>
 
-  <!-- ProPresenter connection: stays in the sidebar because the operator
-       needs to be able to verify the link to PP at a glance. Other PP-only
-       settings (template playlist) live below this one. The host/port
-       mirror the values inside the Settings modal so the operator can
-       fix a typo here without opening Settings. -->
+<aside id="config-drawer">
+
+  <!-- ProPresenter connection: lives in the drawer with the other PP-only
+       settings (template playlist below). The host/port mirror the values
+       inside the Settings modal so the operator can fix a typo here
+       without opening Settings. -->
   <div class="sidebar-section">
     <div class="sec-title"><span>ProPresenter</span>
       <span class="save-dot" id="save-dot">auto-save</span>
@@ -609,6 +622,23 @@
       <button class="btn btn-dim btn-sm" onclick="resetPrompt()">↺ Reset to default</button>
       <span id="prompt-save-dot" class="save-dot">auto-save</span>
     </div>
+  </div>
+</div>
+
+<!-- What's-new popup — shown once when the running version differs from
+     the last one this install saw (i.e. right after an update, whether via
+     the in-app updater or a manual DMG). Content comes from WHATS_NEW in
+     config.py via /api/whats_new; dismissing marks the version seen. -->
+<div class="whatsnew-backdrop" id="whatsnew-backdrop" role="dialog"
+     aria-modal="true" aria-labelledby="whatsnew-title">
+  <div class="whatsnew-card">
+    <span class="whatsnew-wave">👋</span>
+    <div class="whatsnew-title" id="whatsnew-title">…</div>
+    <div class="whatsnew-version" id="whatsnew-version"></div>
+    <ul class="whatsnew-notes" id="whatsnew-notes"></ul>
+    <button class="btn btn-acc btn-full" onclick="dismissWhatsNew()">
+      Let's go ✨
+    </button>
   </div>
 </div>
 

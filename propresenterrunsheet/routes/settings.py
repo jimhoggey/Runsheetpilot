@@ -8,7 +8,7 @@ import sys
 
 from flask import Blueprint, jsonify, request
 
-from ..config import DATA_DIR, VERSION
+from ..config import DATA_DIR, VERSION, WHATS_NEW
 from ..parsing.ai import DEFAULT_PROMPT
 from ..parsing.models import fetch_catalogue, pick_default_model, usable_models
 from ..propresenter.paths import find_library_dirs, find_pp_root
@@ -41,6 +41,46 @@ def get_models():
     return jsonify({"models": models,
                     "auto": pick_default_model(catalogue),
                     "available": True})
+
+
+@bp.route("/api/whats_new", methods=["GET"])
+def get_whats_new():
+    """Whether to show the once-per-version what's-new popup, and its notes.
+
+    Shows when the running VERSION differs from the last one this install
+    recorded — which catches the in-app updater's relaunch AND a manually
+    installed DMG, because the trigger is the version change itself, not
+    the update action.
+
+    A fresh install (no recorded version) never shows: nothing is "new"
+    to someone seeing the app for the first time — their first sight
+    should be the welcome greeter, not a changelog. Recording the current
+    version here is what arms the popup for their NEXT update.
+
+    Deliberately does NOT mark the version seen — only the dismiss POST
+    does. If the app dies between this call and the popup rendering, the
+    notes survive to the next launch instead of being silently eaten.
+    """
+    last = (load_settings().get("last_seen_version") or "").strip()
+    if not last:
+        save_settings({"last_seen_version": VERSION})
+        return jsonify({"show": False, "version": VERSION, "notes": []})
+    return jsonify({
+        "show":    last != VERSION,
+        "version": VERSION,
+        "notes":   list(WHATS_NEW)[:3],
+    })
+
+
+@bp.route("/api/whats_new/seen", methods=["POST"])
+def post_whats_new_seen():
+    """The popup was dismissed — never show these notes again.
+
+    save_settings merges into the file, so the operator's key/host are
+    untouched.
+    """
+    save_settings({"last_seen_version": VERSION})
+    return jsonify({"ok": True})
 
 
 @bp.route("/api/settings", methods=["GET"])

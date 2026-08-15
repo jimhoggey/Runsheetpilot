@@ -512,6 +512,7 @@ async function loadTemplatePlaylists(selectUuid) {
     } else {
       sel.value = '';
     }
+    setPPDot(playlists.length > 0);
     if (!playlists.length) {
       status.innerHTML = '<span style="color:var(--org)">No playlists found — is ProPresenter running with Network mode on?</span>';
     } else if (sel.value) {
@@ -527,8 +528,81 @@ async function loadTemplatePlaylists(selectUuid) {
       status.innerHTML = `${playlists.length} playlist${playlists.length!==1?'s':''} loaded — name one with "library" or "template" to enable Auto routing, or pick one above.`;
     }
   } catch (e) {
+    setPPDot(false);
     status.innerHTML = `<span style="color:var(--red)">Could not load playlists: ${escapeHtml(String(e))}</span>`;
   }
+}
+
+// ─── Config drawer ────────────────────────────────────────────────────────
+// The sidebar hides off-screen by default (v2.8.0) — it held controls used
+// perhaps once a month, at the permanent cost of a third of the window.
+// Opening PUSHES the content right (the pre-2.8 two-column layout) rather
+// than overlaying it, so both panes stay usable and modals stack above.
+// Deliberately NO persistence: every launch starts hidden, calm by default.
+// The edge handle stays visible and carries the PP dot, replacing the
+// at-a-glance connection check the always-on panel used to give.
+function toggleDrawer() {
+  const open = document.body.classList.toggle('drawer-open');
+  document.getElementById('drawer-handle')
+    .setAttribute('aria-expanded', String(open));
+}
+function closeDrawer() {
+  document.body.classList.remove('drawer-open');
+  document.getElementById('drawer-handle')
+    .setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('keydown', (e) => {
+  // Don't steal Escape while a modal is up — the drawer sits underneath.
+  if (e.key === 'Escape' &&
+      !document.querySelector('.modal-backdrop.active, .whatsnew-backdrop.active')) {
+    closeDrawer();
+  }
+});
+
+// Green = last ProPresenter contact worked, red = failed, grey = untried.
+function setPPDot(ok) {
+  const dot = document.getElementById('pp-dot');
+  if (dot) dot.className = 'pp-dot ' + (ok ? 'ok' : 'bad');
+}
+
+// ─── What's new (once per version) ────────────────────────────────────────
+// The backend decides whether to show (version changed since last seen —
+// covers the update button AND a manually installed DMG) and sends up to
+// three notes from WHATS_NEW in config.py. Dismissing marks the version
+// seen; a crash before render doesn't (GET is read-only), so the notes
+// survive to the next launch.
+const WHATSNEW_GREETINGS = [
+  'Ooh, you updated — good choice.',
+  'Fresh paint. Same mission.',
+  'Look at you, staying current.',
+  'Updated and ready to roll.',
+  'New bits installed. Carry on being great.',
+];
+
+async function initWhatsNew() {
+  try {
+    const res = await fetch('/api/whats_new').then(r => r.json());
+    if (!res.show || !(res.notes || []).length) return;
+    document.getElementById('whatsnew-title').textContent =
+      WHATSNEW_GREETINGS[Math.floor(Math.random() * WHATSNEW_GREETINGS.length)];
+    document.getElementById('whatsnew-version').textContent =
+      `You're now on v${res.version}`;
+    const ul = document.getElementById('whatsnew-notes');
+    ul.innerHTML = '';
+    res.notes.slice(0, 3).forEach(n => {
+      const li = document.createElement('li');
+      li.textContent = n;
+      ul.appendChild(li);
+    });
+    document.getElementById('whatsnew-backdrop').classList.add('active');
+  } catch (e) {
+    // Never let a changelog break the app.
+  }
+}
+
+function dismissWhatsNew() {
+  document.getElementById('whatsnew-backdrop').classList.remove('active');
+  fetch('/api/whats_new/seen', {method: 'POST'}).catch(() => {});
 }
 
 // ─── 4. Library load (silent auto + manual rescan) ────────────────────────
@@ -721,10 +795,12 @@ async function removeLicense() {
 // reads the values from its own section's inputs so the user can verify
 // either form before relying on it.
 async function _runTest(host, port) {
-  return await fetch('/api/test_connection', {
+  const res = await fetch('/api/test_connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({host, port})
   }).then(r => r.json());
+  setPPDot(!!res.ok);
+  return res;
 }
 
 async function testConnection() {
@@ -1834,3 +1910,4 @@ async function badgeCheckUpdates() {
 loadUpdateState();
 setInterval(loadUpdateState, 60 * 60 * 1000);   // re-render if a check lands later
 _startIdleGreeter();   // the app says hello until real work starts
+initWhatsNew();        // once-per-version release notes, after an update

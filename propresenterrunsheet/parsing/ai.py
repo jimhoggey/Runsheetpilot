@@ -92,10 +92,35 @@ times, song lists for other weeks, tech notes, upcoming dates).
   "items": [
     {"type":         "<see TYPES below>",
      "title":        "...",
+     "start_time":   "<time of day exactly as the runsheet writes it,
+                       e.g. '6:25 PM'. Empty string if the row has none>",
      "notes":        "...",
      "duration_min": <integer minutes, or 0 if not specified>}
   ]
 }
+
+## TITLE — keep it to one short line, and KEEP THE PEOPLE'S NAMES
+The title becomes a section header in ProPresenter, read at a glance
+mid-service by the person running screens. It must stay short — but it
+MUST keep the names of whoever is doing the item, because that is how the
+screens operator identifies the slot:
+
+    ✅ "MC Welcome: Ollie & Elliot"
+    ✅ "Games Fun Month Amos & Ethan"
+    ✅ "Culture Moment: Ollie & Elliot"
+
+The time goes in `start_time`, NOT in the title and NOT at the start of
+`notes`. Everything else from the row — bullet points, screen cues,
+reminders, prep instructions — goes in `notes`, never in the title:
+
+    ❌ title: "MC Welcome: Ollie & Elliot 6:25 PM - Invite Night Coming
+              up - Summit 2026 promo screen Fun Month Ending"
+
+    ✅ title:      "MC Welcome: Ollie & Elliot"
+       start_time: "6:25 PM"
+       notes:      "- Invite Night Coming up
+                    - Summit 2026 promo screen
+                    Fun Month Ending"
 
 ## DURATION_MIN
 Most runsheets list a duration next to each item (e.g. "9:30 AM 20 Worship
