@@ -99,17 +99,25 @@ times, song lists for other weeks, tech notes, upcoming dates).
   ]
 }
 
-## TITLE — keep it to one short line, and KEEP THE PEOPLE'S NAMES
+## TITLE — one short line, in ONE consistent shape
 The title becomes a section header in ProPresenter, read at a glance
-mid-service by the person running screens. It must stay short — but it
-MUST keep the names of whoever is doing the item, because that is how the
-screens operator identifies the slot:
+mid-service by the person running screens. Every title uses the same
+format: **the activity, then a colon and the people doing it** (when the
+row names people). Normalise rows that lack the colon so the whole
+playlist reads uniformly:
 
-    ✅ "MC Welcome: Ollie & Elliot"
-    ✅ "Games Fun Month Amos & Ethan"
-    ✅ "Culture Moment: Ollie & Elliot"
+    "MC Welcome: Ollie & Elliot"          (runsheet already had the colon)
+    "Games Fun Month: Amos & Ethan"       (runsheet said "Games Fun Month
+                                           Amos & Ethan" — add the colon)
+    "Culture Moment: Ollie & Elliot"
+    "Connect Groups"                      (nobody named — no colon)
 
-The time goes in `start_time`, NOT in the title and NOT at the start of
+Keep the names — they are how the screens operator identifies the slot.
+Shortening a title NEVER means dropping the row itself: every timed row
+still becomes an item, however minor it looks.
+
+The time goes in `start_time` — written plainly with NO trailing period
+("6:25 PM", not "6:25 PM.") — NOT in the title and NOT at the start of
 `notes`. Everything else from the row — bullet points, screen cues,
 reminders, prep instructions — goes in `notes`, never in the title:
 

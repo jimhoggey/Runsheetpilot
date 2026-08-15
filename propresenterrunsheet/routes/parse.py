@@ -30,6 +30,7 @@ from ..parsing.ocr import (
     OCRUnavailable, image_to_text, images_to_text,
 )
 from ..parsing.pdf import extract_pdf_text, pdf_text_or_images, render_pdf_pages
+from ..parsing.timed_rows import rescue_missing_rows
 from ..propresenter.library import fuzzy_match
 from ..propresenter.net import pp_base
 from ..propresenter.templates import (
@@ -517,6 +518,20 @@ def api_upload_and_parse():
             return jsonify({"error": _unusable_reply_message(
                 used_model, snippet, "returned no runsheet items")}), 200
 
+        # 7b. The timed-row guard. On the 14 Aug 2026 runsheet the model
+        # dropped the three pre-service rows (their notes held a
+        # volunteer roster, which looks like the credits block the prompt
+        # says to skip) — with the prompt ALREADY forbidding exactly
+        # that, so firmer wording is not a fix. Every timed row in the
+        # raw text must come back; any the model lost is synthesized and
+        # slotted in by time. Runs BEFORE the matching loop below so a
+        # rescued "Youth Arrival + Hangout" still picks up its template
+        # link like any parsed item.
+        items, rescued_rows = rescue_missing_rows(items, raw)
+        if rescued_rows:
+            log.warning(f"Model dropped {rescued_rows} timed row(s); "
+                        f"restored from raw text. model={log_safe(used_model)}")
+
         # 8. If the AI didn't supply a service name, derive one from the filename
         if not service_name and upload_name:
             stem = re.sub(r"\.(pdf|png|jpe?g)$", "", upload_name,
@@ -613,6 +628,7 @@ def api_upload_and_parse():
                  f"suggested name: {log_safe(service_name)!r}")
         return jsonify({
             "items":          items,
+            "rescued_rows":   rescued_rows,
             "filename":       upload_name,
             "suggested_name": service_name,
         })

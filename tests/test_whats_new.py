@@ -18,14 +18,16 @@ Two decisions the tests pin down:
 """
 import pytest
 
+import propresenterrunsheet.settings as settings_mod
 from propresenterrunsheet.config import VERSION, WHATS_NEW
-from propresenterrunsheet.settings import load_settings, save_settings
+
+load_settings = settings_mod.load_settings
+save_settings = settings_mod.save_settings
 
 
 @pytest.fixture
 def fresh_settings(client, tmp_path, monkeypatch):
     """Point the settings file at an empty per-test location."""
-    import propresenterrunsheet.settings as settings_mod
     monkeypatch.setattr(settings_mod, "SETTINGS_FILE",
                         tmp_path / "settings.json")
     # The routes module imports load/save by name; they read SETTINGS_FILE
