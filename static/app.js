@@ -536,6 +536,8 @@ async function loadTemplatePlaylists(selectUuid) {
 // ─── Config drawer ────────────────────────────────────────────────────────
 // The sidebar hides off-screen by default (v2.8.0) — it held controls used
 // perhaps once a month, at the permanent cost of a third of the window.
+// Opening PUSHES the content right (the pre-2.8 two-column layout) rather
+// than overlaying it, so both panes stay usable and modals stack above.
 // Deliberately NO persistence: every launch starts hidden, calm by default.
 // The edge handle stays visible and carries the PP dot, replacing the
 // at-a-glance connection check the always-on panel used to give.
@@ -550,7 +552,11 @@ function closeDrawer() {
     .setAttribute('aria-expanded', 'false');
 }
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeDrawer();
+  // Don't steal Escape while a modal is up — the drawer sits underneath.
+  if (e.key === 'Escape' &&
+      !document.querySelector('.modal-backdrop.active, .whatsnew-backdrop.active')) {
+    closeDrawer();
+  }
 });
 
 // Green = last ProPresenter contact worked, red = failed, grey = untried.

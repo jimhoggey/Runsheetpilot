@@ -185,15 +185,15 @@ header .badge {
 .quit-btn:active { transform: translateY(1px); }
 
 /* ─── layout ───────────────────────────────────────────────────────────── */
-/* Single column: the sidebar became a slide-in drawer (v2.8.0). The config
-   panel was permanent noise for a flow that needs it perhaps once a month,
-   so the 3-step flow now gets the full width and the drawer overlays it
-   on demand. Always starts hidden — deliberately no persistence, calm is
-   the default every launch. */
+/* The sidebar is a PUSH drawer (v2.8.0): closed, the 3-step flow owns the
+   full width; open, it slides in from the left and SHIFTS the content
+   right — the pre-2.8 two-column layout, on demand. It stays in normal
+   flow (no overlay, no z-index) so modals stack above it and both panes
+   remain fully usable side by side. Always starts hidden — deliberately
+   no persistence, calm is the default every launch. */
 .layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  align-items: start;
+  display: flex;
+  align-items: flex-start;
   min-height: calc(100vh - 52px);
 }
 aside {
@@ -201,30 +201,32 @@ aside {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  position: fixed;
-  left: 0;
-  top: 52px;
+  flex: 0 0 320px;
   width: 320px;
+  position: sticky;
+  top: 52px;
+  align-self: flex-start;
   height: calc(100vh - 52px);
   overflow-y: auto;
-  z-index: 60;
-  transform: translateX(-100%);
-  transition: transform .28s cubic-bezier(.32,.72,.28,1);
+  /* Slide by margin, not transform: the margin change reflows the flex
+     row, which is what actually pushes the content across. */
+  margin-left: -320px;
+  transition: margin-left .28s cubic-bezier(.32,.72,.28,1);
 }
-body.drawer-open aside {
-  transform: translateX(0);
-  box-shadow: 12px 0 40px rgba(0,0,0,.45);
-}
+body.drawer-open aside { margin-left: 0; }
+main { flex: 1; }
 
 /* Edge handle — the one always-visible trace of the drawer. Carries the
    PP-connection dot because hiding the sidebar removed the operator's
-   at-a-glance check that the link to ProPresenter is alive. */
+   at-a-glance check that the link to ProPresenter is alive. z-index sits
+   BELOW the modal backdrops (50) so Settings and the prompt editor cover
+   it, and above the page content. */
 .drawer-handle {
   position: fixed;
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 61;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -261,21 +263,6 @@ body.drawer-open .drawer-handle .chev { transform: rotate(180deg); }
 }
 .pp-dot.ok  { background: var(--grn); box-shadow: 0 0 6px var(--grn); }
 .pp-dot.bad { background: var(--red); box-shadow: 0 0 6px var(--red); }
-
-/* Click-outside-to-close scrim, below the drawer, above the content. */
-.drawer-scrim {
-  position: fixed;
-  inset: 52px 0 0 0;
-  background: rgba(0,0,0,.35);
-  z-index: 59;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .28s;
-}
-body.drawer-open .drawer-scrim {
-  opacity: 1;
-  pointer-events: auto;
-}
 main {
   display: flex;
   flex-direction: column;
