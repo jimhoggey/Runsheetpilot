@@ -34,12 +34,12 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "No more vanishing rows — if the AI skips a timed item, I now catch "
-    "it and put it back myself.",
-    "Header titles come out in one consistent shape: Activity: Names — "
-    "time (duration).",
-    "Cleaned up that stray period after the time in headers. It bothered "
-    "me too.",
+    "No more vanishing rows — if the AI skips a timed item, "
+    + "I now catch it and put it back myself.",
+    "Header titles come out in one consistent shape: "
+    + "Activity: Names — time (duration).",
+    "Cleaned up that stray period after the time in headers. "
+    + "It bothered me too.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.

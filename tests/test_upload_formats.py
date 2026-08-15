@@ -175,14 +175,14 @@ def test_a_hostile_filename_cannot_steer_the_temp_path(extract_client,
 
 
 def test_safe_ext_only_ever_returns_a_whitelisted_literal():
-    from propresenterrunsheet.routes.parse import _safe_ext, ALLOWED_EXTS
-    assert _safe_ext("a.PNG") == ".png"
-    assert _safe_ext("../evil.pdf") == ".pdf"
-    assert _safe_ext("noext") == ""
-    assert _safe_ext("runsheet.docx") == ""
-    assert _safe_ext(None) == ""
+    import propresenterrunsheet.routes.parse as parse_mod
+    assert parse_mod._safe_ext("a.PNG") == ".png"
+    assert parse_mod._safe_ext("../evil.pdf") == ".pdf"
+    assert parse_mod._safe_ext("noext") == ""
+    assert parse_mod._safe_ext("runsheet.docx") == ""
+    assert parse_mod._safe_ext(None) == ""
     for name in ("x.png", "x.jpg", "x.jpeg", "x.pdf"):
-        assert _safe_ext(name) in ALLOWED_EXTS
+        assert parse_mod._safe_ext(name) in parse_mod.ALLOWED_EXTS
 
 
 def test_the_rejected_extension_is_sanitised_before_being_quoted_back():
