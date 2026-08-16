@@ -62,27 +62,40 @@ def canonicalize_item_type(t) -> str:
 DEFAULT_PROMPT = """\
 You are analysing a church service runsheet (order of service).
 
-## WHAT TO SKIP
-Some runsheets open with a "rostering" block that lists who is doing each
-role, as bare name lines with NO time and NO duration ("Pre Service
-Prayer: Taylor, Jordan", "Worship Leader: Rivera, Sam", "ML Open: ...").
-That is just credits — IGNORE IT.
+## RULE 1 — EVERY LINE THAT STARTS WITH A TIME IS AN ITEM. NO EXCEPTIONS.
+Work through the runsheet line by line. Whenever a line BEGINS with a
+time of day ("5:00 PM", "9:30 AM", "19:40"), that line is a service item
+and MUST appear in your output — including the setup and prep rows
+before doors open:
 
-## WHAT TO KEEP — every timed row, from the very first one
-⚠ If a row starts with a time-of-day, it IS a service item. Output it.
-That includes the early setup and prep rows before doors open:
+    5:00 PM  30  Team Setup + Band practice     ← item
+    5:30 PM  30  Team prayer + Meeting          ← item
+    6:00 PM  25  Youth Arrival + Hangout        ← item
 
-    5:00 PM  30  Team Setup + Band practice
-    5:30 PM  30  Team prayer + Meeting
-    6:00 PM  20  Youth Arrival + Hangout
+Nothing about a timed row can disqualify it: not that it happens before
+the service "properly" starts, not that it looks like preparation, not
+that it is short, and NOT that the lines underneath it are a list of
+volunteer names. The operator runs ProPresenter sections and countdown
+timers off every timed row, so a dropped row is a hole in the service.
 
-All three are items. Do NOT skip a row because it happens before the
-service "properly" starts, because it looks like preparation, or because
-its notes list volunteer names — the operator runs timers and clock cues
-off these rows, and a dropped row is a missing section in ProPresenter.
+## LINES WITHOUT A TIME — that is where the skipping happens
+The skip rules below apply ONLY to lines that do NOT begin with a time.
+They can never remove a timed row.
 
-Do IGNORE any footer that comes AFTER the last timed row (rehearsal
-times, song lists for other weeks, tech notes, upcoming dates).
+  • A "rostering" block of bare name lines with no time and no duration
+    ("Pre Service Prayer: Taylor, Jordan", "Worship Leader: Rivera, Sam",
+    "Welcome & Carpark: Rachel & Sarah") is credits — ignore those LINES.
+    ⚠ If such lines sit directly under a timed row, they are that row's
+    notes and the ROW itself still counts. Skip the credit lines, keep
+    the row.
+  • A footer AFTER the last timed row (rehearsal times, song lists for
+    other weeks, tech notes, upcoming dates) — ignore it.
+
+## BEFORE YOU ANSWER — count check
+Count the lines in the runsheet that begin with a time of day. Your
+`items` must contain at least that many entries (more is fine when songs
+are split out of a section's notes — see below). If you have fewer, you
+have dropped a timed row: go back and add it.
 
 ## RETURN FORMAT — JSON object only, no markdown:
 

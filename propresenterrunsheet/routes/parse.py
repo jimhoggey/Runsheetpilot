@@ -205,6 +205,24 @@ def _unusable_reply_message(used_model: str, snippet: str, what: str) -> str:
     return msg
 
 
+def _rejects_response_format(resp) -> bool:
+    """True when a 400 is the provider refusing our `response_format`.
+
+    Deliberately narrow: only a message that names the parameter (or its
+    concept) counts, so an unrelated 400 — context length, malformed
+    request — is never silently masked by a second attempt.
+    """
+    try:
+        err = (resp.json() or {}).get("error") or {}
+        text = str(err.get("message") or "")
+    except Exception:
+        text = getattr(resp, "text", "") or ""
+    text = text.lower()
+    return any(k in text for k in (
+        "response_format", "response format", "json_object", "json mode",
+        "structured output"))
+
+
 def _provider_failure(resp):
     """Spot OpenRouter relaying an *upstream provider's* failure.
 
@@ -439,9 +457,22 @@ def api_upload_and_parse():
         # — that is not the operator's key/credit/model-id problem, so it gets
         # one retry on the next-ranked free model and an honest message,
         # before the per-status mapping below gets a chance to misdiagnose it.
-        def _openrouter_post(model_id):
+        def _openrouter_post(model_id, json_mode=True):
             log.info(f"OpenRouter request: model={log_safe(model_id)}, "
-                     f"raw_chars={len(raw)}")
+                     f"raw_chars={len(raw)}, json_mode={json_mode}")
+            body = {
+                "model":       model_id,
+                "messages":    [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+            }
+            # JSON mode. The model picker has always filtered for models
+            # that advertise structured output, but the request never
+            # ASKED for it — so a compliant model was still free to wrap
+            # the answer in prose or markdown fences, one of the two ways
+            # a parse fails outright. Asking costs nothing and removes
+            # that failure mode on every model that honours it.
+            if json_mode:
+                body["response_format"] = {"type": "json_object"}
             return req.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={
@@ -450,15 +481,22 @@ def api_upload_and_parse():
                     "X-Title":        APP_NAME,
                     "Content-Type":   "application/json",
                 },
-                json={
-                    "model":       model_id,
-                    "messages":    [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                },
+                json=body,
                 timeout=90,
             )
 
         resp = _openrouter_post(model)
+        # Some free-tier providers advertise structured output and still
+        # 400 on `response_format`. That is OUR parameter being refused,
+        # not the operator's key or model — so retry the same model once,
+        # plainly; the regex-tolerant parser copes with unfenced-or-not
+        # replies exactly as it did before JSON mode existed. Only a 400
+        # that names the parameter earns this; an unrelated 400 falls
+        # through to the normal error handling below.
+        if resp.status_code == 400 and _rejects_response_format(resp):
+            log.info(f"{log_safe(model)} rejected response_format — "
+                     f"retrying without JSON mode")
+            resp = _openrouter_post(model, json_mode=False)
         failure = _provider_failure(resp)
         if failure:
             backup = next_usable_model(model, fetch_catalogue())

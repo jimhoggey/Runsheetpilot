@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.8.1"
+VERSION = "2.8.2"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,12 +34,12 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "No more vanishing rows — if the AI skips a timed item, "
-    + "I now catch it and put it back myself.",
-    "Header titles come out in one consistent shape: "
-    + "Activity: Names — time (duration).",
-    "Cleaned up that stray period after the time in headers. "
-    + "It bothered me too.",
+    "The AI now reads 'every timed row is an item' before anything "
+    + "else — so rows stop going missing at the source, not just after.",
+    "I ask the AI for clean JSON up front now. Fewer garbled replies, "
+    + "fewer wasted parses.",
+    "The AI double-checks its own count before answering. "
+    + "Trust, but verify.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.
