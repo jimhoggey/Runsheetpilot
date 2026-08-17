@@ -20,4 +20,4 @@ winocr>=0.0.15; sys_platform == "win32"
 
 # Rasterises image-only PDFs so OCR can read them. Only reached when
 # pdfplumber finds no embedded text.
-pypdfium2>=5.12.1
+pypdfium2>=5.13.0
