@@ -79,6 +79,26 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB cap on PDF upload
 # render adds microseconds — meaningless for a local app.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
+# Report any unhandled exception raised inside a request. Flask turns
+# these into a 500 for the browser; without this hook they would never
+# be seen by anyone. The handler only ever sends the exception TYPE,
+# scrubbed message and frame basenames — see propresenterrunsheet/stats.py.
+try:
+    from flask import got_request_exception as _got_request_exception
+    from propresenterrunsheet import stats as _stats
+
+    def _report_request_exception(sender, exception, **_extra):
+        try:
+            from flask import request as _rq
+            _stats.report_error(exception, where_kind="request",
+                                route=(_rq.endpoint or "unknown"))
+        except Exception:
+            pass
+
+    _got_request_exception.connect(_report_request_exception, app)
+except Exception:
+    pass
+
 
 @app.errorhandler(413)
 def _too_large(_e):

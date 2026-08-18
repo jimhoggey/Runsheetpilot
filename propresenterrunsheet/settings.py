@@ -39,6 +39,11 @@ def _default_settings() -> dict:
         # radio defaults to the recommended option for first-time users.
         "lib_source":    "auto",
         "create_timers": True,
+        # Anonymous usage counts + crash reports (see stats.py for the
+        # complete list of what can ever be sent). On by default: it is
+        # genuinely anonymous — names and numbers, never runsheet
+        # content — and this single constant is where to flip it.
+        "stats_enabled": True,
         # User-customised AI prompt. Empty string = use built-in DEFAULT_PROMPT.
         "ai_prompt":     "",
         # UUID of the PP playlist used as a template at parse time. When

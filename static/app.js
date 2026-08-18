@@ -20,6 +20,7 @@ let suppressAutoSave = true; // suppress during initial loadSettings()
 
 const AUTOSAVE_FIELDS = [
   'or-key', 'or-model', 'lib-dir', 'export-dir', 'sm-hide',
+  'stats-enabled',
   'pp-host', 'pp-port', 'pp-host2', 'pp-port2', 'threshold',
   'create-timers', 'template-playlist'
 ];
@@ -208,6 +209,7 @@ async function loadSettings() {
   document.getElementById('pp-host2').value   = s.pp_host  || 'localhost';
   document.getElementById('pp-port2').value   = s.pp_port  || '50001';
   document.getElementById('or-key').value     = s.or_key   || '';
+  document.getElementById('stats-enabled').checked = s.stats_enabled !== false;
   // Populate the model dropdown from OpenRouter's live catalogue, then select
   // whatever is saved. Empty = Automatic. Awaited so the saved value has an
   // <option> to land on — otherwise assigning .value to a <select> that
@@ -312,6 +314,7 @@ async function saveSettings() {
     pp_host:                 document.getElementById('pp-host2').value,
     pp_port:                 document.getElementById('pp-port2').value,
     or_key:                  document.getElementById('or-key').value,
+    stats_enabled:           document.getElementById('stats-enabled').checked,
     or_model:                document.getElementById('or-model').value,
     library_dir:             document.getElementById('lib-dir').value,
     lib_source:              libSourceMode,

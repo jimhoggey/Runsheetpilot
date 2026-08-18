@@ -69,6 +69,8 @@ pyinstaller \
     --collect-submodules waitress \
     --collect-submodules cryptography \
     --hidden-import waitress \
+    --hidden-import certifi \
+    --collect-data certifi \
     --hidden-import flask \
     --hidden-import pdfplumber \
     --hidden-import tkinter \

@@ -17,6 +17,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 from .flags import matching_enabled
+from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
 from ..propresenter.net import pp_base
@@ -197,6 +198,8 @@ def api_create_playlist():
                 log.error("PP refused even the headers-only playlist "
                           "(HTTP %s, body=%r)",
                           r2.status_code, log_safe(r2.text, 300))
+                stats.track("playlist_failed", reason="pp_refused_headers",
+                            items=len(matched))
                 return jsonify({"error":
                     "ProPresenter wouldn't accept the playlist items. "
                     "Try restarting ProPresenter, then click Create "
@@ -266,6 +269,30 @@ def api_create_playlist():
                  f"{timer_result['no_duration']} skipped no-duration), "
                  f"export={export_path}")
 
+        # The numbers that describe a real run: how long the import took,
+        # how much landed in ProPresenter, and how much of it is section
+        # headers vs linked slides.
+        pp_sections = sum(1 for it in items
+                          if (it or {}).get("type") == "header")
+        stats.track("playlist_created",
+                    import_ms=int((time.time() - before) * 1000),
+                    pp_items=len(items),
+                    pp_sections=pp_sections,
+                    songs=songs,
+                    headers=headers,
+                    needs_action=needs_action,
+                    timers=timer_result["created"],
+                    unlinked=len(unlinked),
+                    matching=do_matching,
+                    exported=bool(export_path))
+        if unlinked:
+            # The "couldn't attach this media" case. COUNT only — the
+            # media names carry event branding ("C3 SUMMIT 2025 …"), which
+            # is church content and stays in app.log where the operator
+            # can read it.
+            stats.track("media_unlinked", count=len(unlinked),
+                        items=len(matched))
+
         return jsonify({
             "ok":                  True,
             "songs":               songs,
@@ -284,12 +311,14 @@ def api_create_playlist():
         })
 
     except req.exceptions.ConnectionError:
+        stats.track("playlist_failed", reason="pp_unreachable")
         return jsonify({"error":
             f"Cannot connect to ProPresenter at {host}:{port}. "
             "Make sure ProPresenter is running and Network is enabled in "
             "Preferences → Integrations → Network."}), 200
     except Exception as e:
         log.exception("Playlist create failed")
+        stats.report_error(e, where_kind="route", route="create_playlist")
         return jsonify({"error": str(e)}), 200
 
 

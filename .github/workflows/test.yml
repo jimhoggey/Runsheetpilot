@@ -17,6 +17,8 @@ concurrency:
 jobs:
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
+    env:
+      RUNSHEET_PILOT_STATS: '0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
