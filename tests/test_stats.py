@@ -63,7 +63,12 @@ def test_every_wired_event_name_is_whitelisted():
     root = pathlib.Path(__file__).resolve().parent.parent
     called = set()
     for path in (root / "propresenterrunsheet").rglob("*.py"):
-        for m in re.finditer(r'stats\.track\(\s*"([a-z_]+)"', path.read_text()):
+        # encoding is explicit: Python defaults to the locale codec, which
+        # is cp1252 on Windows, and these sources are full of UTF-8 (⚠ — ✅).
+        # Without it this test passes on Mac/Linux and dies on the Windows
+        # build gate.
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r'stats\.track\(\s*"([a-z_]+)"', text):
             called.add(m.group(1))
     assert called, "no stats.track calls found — did the wiring move?"
     assert called <= set(stats.EVENTS), called - set(stats.EVENTS)
