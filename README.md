@@ -229,3 +229,28 @@ The app stores its config and logs **outside** the source tree so they survive a
 | Windows | `%APPDATA%\Runsheet Pilot\` |
 
 Files in there: `settings.json` (includes your OpenRouter API key — gitignored, never committed), `app.log` (rotated, 512 KB × 3), `runsheet_state.json` (Service Mate cue state), `clocks.json` (Service Mate clock IPs).
+
+## Anonymous usage stats
+
+Runsheet Pilot sends a small amount of anonymous usage data so I can see
+which parts are used and where it breaks. It is on by default and there
+is a switch in **Settings → Anonymous usage stats** that turns it off
+immediately.
+
+**What is sent:** the app version, OS name and version, an event name,
+and small numbers — how long a parse took, how many items and sections
+were created in ProPresenter, how many songs matched, whether media
+couldn't be attached, and the *type* of any error (e.g.
+`FileNotFoundError`) with the file and line it came from.
+
+**What is never sent:** your runsheets or any of their text, song
+titles, media names, file names, file paths, your OpenRouter key, or
+anything you typed. There is no account, no device id and no way to link
+two sessions — the session id is random, held in memory only, and never
+written to disk. Error messages are scrubbed of paths, filenames, quoted
+values and your username before they leave the machine; the full,
+unredacted detail stays in `app.log` on your computer.
+
+The complete list of every event the app can ever send is the `EVENTS`
+tuple at the top of `propresenterrunsheet/stats.py` — one screen, no
+surprises. Nothing is sent when running from source.

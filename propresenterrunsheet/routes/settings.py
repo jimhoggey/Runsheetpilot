@@ -13,6 +13,7 @@ from ..parsing.ai import DEFAULT_PROMPT
 from ..parsing.models import fetch_catalogue, pick_default_model, usable_models
 from ..propresenter.paths import find_library_dirs, find_pp_root
 from ..settings import load_settings, save_settings
+from .. import stats
 
 
 bp = Blueprint("settings", __name__)
@@ -65,6 +66,8 @@ def get_whats_new():
     if not last:
         save_settings({"last_seen_version": VERSION})
         return jsonify({"show": False, "version": VERSION, "notes": []})
+    if last != VERSION:
+        stats.track("whats_new_shown", from_version=last)
     return jsonify({
         "show":    last != VERSION,
         "version": VERSION,
@@ -85,6 +88,11 @@ def post_whats_new_seen():
 
 @bp.route("/api/settings", methods=["GET"])
 def get_settings():
+    # The UI has successfully reached the backend, so this launch is not
+    # a "won't open" case — clear the boot marker. This is the first call
+    # the front end makes, and doing it here (not on every poll) keeps it
+    # to one filesystem touch per run.
+    stats.boot_ok()
     s = load_settings()
     pp_root = find_pp_root()
     s["pp_root"] = pp_root
@@ -99,6 +107,11 @@ def get_settings():
 def post_settings():
     body = request.get_json(silent=True) or {}
     save_settings(body)
+    # Apply the analytics toggle immediately — waiting for a restart to
+    # honour "turn this off" is not a real opt-out.
+    if "stats_enabled" in body:
+        stats.set_enabled(bool(body.get("stats_enabled")))
+    stats.track("settings_saved", keys=len(body))
     return jsonify({"ok": True})
 
 

@@ -31,6 +31,7 @@ from ..parsing.ocr import (
 )
 from ..parsing.pdf import extract_pdf_text, pdf_text_or_images, render_pdf_pages
 from ..parsing.timed_rows import rescue_missing_rows
+from .. import stats
 from ..propresenter.library import fuzzy_match
 from ..propresenter.net import pp_base
 from ..propresenter.templates import (
@@ -169,7 +170,14 @@ def api_extract_text():
 
     text, source, error = _extracted_or_error(upload)
     if error:
+        stats.track("extract_failed", kind=_safe_ext(upload.filename) or "none")
         return jsonify({"error": error}), 400
+
+    stats.track("runsheet_uploaded", source=source,
+                needs_review=(source == "ocr"), chars=len(text))
+    if source == "ocr":
+        stats.track("ocr_used", chars=len(text),
+                    kind=_safe_ext(upload.filename) or "none")
 
     log.info(f"Extracted {len(text)} chars from "
              f"{log_safe(upload.filename)} via {source}")
@@ -485,6 +493,7 @@ def api_upload_and_parse():
                 timeout=90,
             )
 
+        ai_t0 = time.time()
         resp = _openrouter_post(model)
         # Some free-tier providers advertise structured output and still
         # 400 on `response_format`. That is OUR parameter being refused,
@@ -501,6 +510,8 @@ def api_upload_and_parse():
         if failure:
             backup = next_usable_model(model, fetch_catalogue())
             if not backup:
+                stats.track("parse_failed", reason="provider", model=model,
+                            code=int(failure.get("code") or 0))
                 return jsonify({"error":
                     _provider_failure_message(model, failure)}), 200
             log.warning(f"Provider behind {log_safe(model)} failed "
@@ -509,6 +520,9 @@ def api_upload_and_parse():
             resp = _openrouter_post(backup)
             backup_failure = _provider_failure(resp)
             if backup_failure:
+                stats.track("parse_failed", reason="provider_both",
+                            model=model, code=int(
+                                backup_failure.get("code") or 0))
                 return jsonify({"error": _provider_failure_message(
                     model, failure, backup, backup_failure)}), 200
             # The backup answered; from here on it is the model of record —
@@ -517,6 +531,7 @@ def api_upload_and_parse():
             model = used_model = backup
 
         if resp.status_code == 429:
+            stats.track("parse_failed", reason="rate_limit", model=used_model)
             return jsonify({"error": _rate_limit_message(resp)}), 200
         if resp.status_code == 401:
             return jsonify({"error":
@@ -553,6 +568,7 @@ def api_upload_and_parse():
             snippet = content.strip().replace("\n", " ")[:160]
             log.error(f"AI returned no runsheet items. model={log_safe(used_model)} "
                       f"reply={log_safe(snippet)!r}")
+            stats.track("parse_failed", reason="no_items", model=used_model)
             return jsonify({"error": _unusable_reply_message(
                 used_model, snippet, "returned no runsheet items")}), 200
 
@@ -569,6 +585,10 @@ def api_upload_and_parse():
         if rescued_rows:
             log.warning(f"Model dropped {rescued_rows} timed row(s); "
                         f"restored from raw text. model={log_safe(used_model)}")
+            # How often the guard has to fire IS the measure of model
+            # quality — the number to watch when picking a paid model.
+            stats.track("rows_rescued", count=rescued_rows,
+                        model=used_model, items=len(items))
 
         # 8. If the AI didn't supply a service name, derive one from the filename
         if not service_name and upload_name:
@@ -662,6 +682,17 @@ def api_upload_and_parse():
         except Exception:
             log.exception("Service Mate parse-time state write failed")
 
+        stats.track("parse_completed",
+                    ai_ms=int((time.time() - ai_t0) * 1000),
+                    items=len(items),
+                    songs=sum(1 for i in items
+                              if isinstance(i, dict) and i.get("type") == "song"),
+                    model=used_model,
+                    rescued=rescued_rows,
+                    template_links=resolved_section_hits + resolved_object_hits,
+                    source="text" if reviewed_text.strip() else "file",
+                    matching=do_matching)
+
         log.info(f"AI parsed {len(items)} runsheet items, "
                  f"suggested name: {log_safe(service_name)!r}")
         return jsonify({
@@ -678,13 +709,16 @@ def api_upload_and_parse():
         snippet = (content or "").strip().replace("\n", " ")[:160]
         log.error(f"AI returned non-JSON. model={log_safe(used_model)} "
                   f"reply={log_safe(snippet)!r}")
+        stats.track("parse_failed", reason="not_json", model=used_model)
         return jsonify({"error": _unusable_reply_message(
             used_model, snippet, "didn't return a runsheet")}), 200
     except req.exceptions.Timeout:
+        stats.track("parse_failed", reason="timeout", model=used_model)
         return jsonify({"error":
             "OpenRouter request timed out. Try again, or pick a faster model."}), 200
     except Exception as e:
         log.exception("Parse failed")
+        stats.report_error(e, where_kind="route", route="upload_and_parse")
         return jsonify({"error": str(e)}), 500
 
 
@@ -701,6 +735,7 @@ def api_match():
     # turned off. Re-match is exempt below because pressing Re-match IS
     # an explicit request to match now.
     if not matching_enabled(body) and not body.get("rematch_template"):
+        stats.track("matching_disabled", items=len(parsed))
         return jsonify({"matches": [{"index": i, "match": None,
                                      "confidence": 0.0}
                                     for i, _it in enumerate(parsed)]})
@@ -730,6 +765,7 @@ def api_match():
                                    force=True)
         log.info("Re-match: %d/%d items linked to the template", n,
                  len(parsed))
+        stats.track("rematch_used", linked=n, items=len(parsed))
 
     results = []
     for item in parsed:
@@ -752,4 +788,18 @@ def api_match():
             match, conf = None, 0.0
         results.append({"parsed": item, "match": match,
                         "confidence": round(conf, 3)})
+
+    songs = sum(1 for r in results
+                if (r["parsed"] or {}).get("type") == "song")
+    stats.track("match_completed",
+                items=len(results),
+                songs=songs,
+                songs_matched=sum(1 for r in results
+                                  if (r["parsed"] or {}).get("type") == "song"
+                                  and r["match"]),
+                template_links=sum(1 for r in results
+                                   if (r["parsed"] or {}).get("type") != "song"
+                                   and r["match"]),
+                library=len(library),
+                rematch=bool(body.get("rematch_template")))
     return jsonify({"items": results})

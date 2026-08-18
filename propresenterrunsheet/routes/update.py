@@ -19,6 +19,8 @@ from .. import updater
 bp = Blueprint("update", __name__)
 log = logging.getLogger("pp_runsheet")
 
+from .. import stats  # noqa: E402 — after the logger, no cycle
+
 
 @bp.route("/api/update", methods=["GET"])
 def api_update_get():
@@ -26,7 +28,11 @@ def api_update_get():
         return jsonify({"state": "dev", "current": updater.VERSION})
     if request.args.get("refresh"):
         updater.check_for_update()
-    return jsonify(updater.get_state())
+    st = updater.get_state()
+    if st.get("state") == "available":
+        stats.track("update_available",
+                    to_version=str(st.get("latest") or "unknown"))
+    return jsonify(st)
 
 
 @bp.route("/api/update/apply", methods=["POST"])
@@ -39,6 +45,9 @@ def api_update_apply():
     if state["state"] not in ("available", "error"):
         return jsonify({"ok": False,
                         "error": "No update available to apply."}), 409
+    stats.track("update_applied", to_version=str(
+        (state.get("latest") or "")) or "unknown")
+    stats.flush(1.5)          # the process is about to be replaced
     threading.Thread(target=updater.apply_update, daemon=True,
                      name="update-apply").start()
     return jsonify({"ok": True})

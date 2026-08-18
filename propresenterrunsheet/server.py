@@ -41,6 +41,7 @@ import threading
 import time
 import webbrowser
 
+from . import stats
 from .config import APP_NAME, DATA_DIR, DEFAULT_PORT, LOG_FILE, PORT_RANGE
 from .config import SETTINGS_FILE, UPLOAD_FOLDER, VERSION
 from .service_mate.daemon import start_clocks_loop
@@ -379,6 +380,15 @@ def main(app=None) -> None:
     if "--probe-webview" in sys.argv:
         sys.exit(_probe_webview())
 
+    # Analytics first, before anything heavy runs — an import-time or
+    # startup crash below still gets reported. Idempotent, and a no-op
+    # unless this is a frozen build with the toggle on. See stats.py for
+    # the complete list of what can ever be sent.
+    try:
+        stats.start()
+    except Exception:
+        pass
+
     try:
         # Belt-and-braces diagnostic: log the routes Flask actually sees
         # so a future "URLs 404 in the bundle but not from source"
@@ -448,8 +458,18 @@ def main(app=None) -> None:
     except KeyboardInterrupt:
         log.info("Interrupted — shutting down")
     except Exception as e:
+        stats.report_error(e, where_kind="startup")
+        stats.flush(3.0)
         _show_startup_error(
             f"{APP_NAME} failed to start",
             f"{type(e).__name__}: {e}\n\nLog file:\n{LOG_FILE}"
         )
         sys.exit(1)
+    finally:
+        # The window closed or waitress returned — one last chance to
+        # send anything still queued.
+        try:
+            stats.track("app_quit", seconds=stats.session_seconds())
+            stats.flush(2.0)
+        except Exception:
+            pass

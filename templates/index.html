@@ -588,6 +588,25 @@
         </p>
       </section>
 
+      <!-- Analytics. Kept visible and plainly worded: the app sends this
+           by default, so the operator has to be able to see exactly what
+           and turn it off in one click. The list here mirrors the EVENTS
+           tuple in propresenterrunsheet/stats.py. -->
+      <section class="settings-section">
+        <h3>Anonymous usage stats</h3>
+        <label class="settings-check">
+          <input type="checkbox" id="stats-enabled" checked>
+          <span>Help improve Runsheet Pilot</span>
+        </label>
+        <p class="settings-hint" style="margin-left:24px;margin-top:4px">
+          Sends anonymous counts and timings — how long a parse took, how
+          many items and sections were created, and the type of any error.
+          <strong>Never</strong> your runsheets, song titles, media names,
+          file names or file paths, and there is no account or device ID.
+          Turn it off any time; it takes effect immediately.
+        </p>
+      </section>
+
       <!-- HIDDEN: legacy mirrored host/port for the Library API fallback.
            The visible host/port in the sidebar (#pp-host2/#pp-port2) is
            the source of truth; these stay so the existing JS that reads
