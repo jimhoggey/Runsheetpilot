@@ -36,6 +36,12 @@ def main() -> int:
     path_str = str(tool_input.get("file_path") or "")
     if not path_str.endswith(".py") or "/.claude/" in path_str:
         return 0
+    if not Path(path_str).exists():
+        return 0                      # edit failed, or a phantom path
+    # Never run the suite from inside the suite — tests/test_claude_hooks.py
+    # exercises this script, and without this guard that recurses.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return 0
 
     python = _python()
     env = dict(os.environ, RUNSHEET_PILOT_STATS="0")
