@@ -20,6 +20,11 @@ Thumbs.db
 # Local user data (these live in the OS app-data dir, but just in case)
 # settings.json holds the OpenRouter API key — must never be committed
 settings.json
+# ...but Claude Code's hook config is not that file. It holds only the
+# commands in .claude/hooks/ and no secrets, and it has to be committed
+# or the hooks vanish on a fresh clone. Machine-local permissions stay
+# in .claude/settings.local.json, which the rule above still covers.
+!.claude/settings.json
 *.log
 
 # Secrets / env files — defensive (not used today, but never commit if added later)
