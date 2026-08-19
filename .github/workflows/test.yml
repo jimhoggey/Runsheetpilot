@@ -16,10 +16,10 @@ concurrency:
 
 jobs:
   pytest:
-    name: pytest (Python ${{ matrix.python-version }})
+    name: pytest (${{ matrix.os }} · Python ${{ matrix.python-version }})
     env:
       RUNSHEET_PILOT_STATS: '0'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,21 @@ jobs:
         # wave of deps (pytest 9, requests 2.34, pdfplumber 0.11) now require
         # 3.10+. 3.10 omitted because it's in security-fix-only mode; if the
         # PyInstaller release target ever moves up to 3.12, drop 3.11 here.
-        python-version: ["3.11", "3.12", "3.13"]
+        #
+        # WINDOWS, on the release-target Python only. Added after v2.9.0 was
+        # blocked by a UnicodeDecodeError that no Linux runner could ever
+        # see: Path.read_text() uses the locale codec, cp1252 on Windows, and
+        # two sources hold UTF-8. Until this job existed, the entire class of
+        # Windows-only bugs (locale codecs, path separators, winocr) was
+        # invisible until the release build — which runs last and blocks
+        # shipping. One job moves that from "release blocked" to "PR red".
+        # Not a full 3x3 matrix: the Python-version risk is the same on both
+        # OSes, so pairing Windows with 3.11 buys the coverage for one job.
+        include:
+          - {os: ubuntu-latest, python-version: "3.11"}
+          - {os: ubuntu-latest, python-version: "3.12"}
+          - {os: ubuntu-latest, python-version: "3.13"}
+          - {os: windows-latest, python-version: "3.11"}
     steps:
       - uses: actions/checkout@v7
 
@@ -49,7 +63,10 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Syntax check (fast fail before pytest)
-        run: python -c "import ast; ast.parse(open('propresenter_app.py').read())"
+        # encoding is explicit for the same reason the Windows job exists:
+        # open() would use cp1252 there, and one em-dash in this file would
+        # break CI on a platform the author never runs.
+        run: python -c "import ast, pathlib; ast.parse(pathlib.Path('propresenter_app.py').read_text(encoding='utf-8'))"
 
       - name: Import smoke test
         # Catches import-time crashes (missing deps, bad globals, etc.) that
@@ -66,7 +83,7 @@ jobs:
         # and vice versa. Fails the build on any unfixed vuln in our
         # actual dependency tree. Only runs on Python 3.11 to save time
         # (the audit result is identical across versions).
-        if: matrix.python-version == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         run: |
           pip install pip-audit
           pip-audit -r requirements.txt --strict
