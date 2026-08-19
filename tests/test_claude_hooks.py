@@ -19,12 +19,25 @@ import pytest
 HOOKS = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
 
 
-def _run(script: str, payload: dict) -> str:
+# The graphify hook only speaks when graphify-out/graph.json exists, and
+# that directory is gitignored — so on a CI checkout it is absent and the
+# hook is correctly silent. Tests therefore run from a tmp cwd carrying a
+# stand-in graph, which makes them independent of whether the developer
+# happens to have built one.
+@pytest.fixture(scope="module")
+def graphed(tmp_path_factory):
+    root = tmp_path_factory.mktemp("graphed")
+    (root / "graphify-out").mkdir()
+    (root / "graphify-out" / "graph.json").write_text("{}", encoding="utf-8")
+    return root
+
+
+def _run(script: str, payload: dict, cwd: Path = None) -> str:
     """Run a hook with `payload` on stdin; return stdout."""
     proc = subprocess.run(
         [sys.executable, str(HOOKS / script)],
         input=json.dumps(payload), capture_output=True, text=True,
-        cwd=HOOKS.parent.parent, timeout=120)
+        cwd=str(cwd or HOOKS.parent.parent), timeout=120)
     assert proc.returncode == 0, f"{script} exited {proc.returncode}"
     return proc.stdout
 
@@ -35,9 +48,16 @@ def _fired(out: str) -> bool:
 
 # ── graphify nudge: precision is the whole point ─────────────────────────
 
-def _bash(cmd):
+def _bash(cmd, cwd):
     return _fired(_run("graphify_nudge.py",
-                       {"tool_name": "Bash", "tool_input": {"command": cmd}}))
+                       {"tool_name": "Bash", "tool_input": {"command": cmd}},
+                       cwd=cwd))
+
+
+def test_no_graph_means_no_nudge(tmp_path):
+    """The hook is for repos that have a graph; everywhere else it is
+    invisible. This is why the other tests need a stand-in graph."""
+    assert not _bash('grep -rn "anything"', cwd=tmp_path)
 
 
 @pytest.mark.parametrize("cmd", [
@@ -46,8 +66,8 @@ def _bash(cmd):
     'find . -name "*.py"',          # `.` is find's mandatory root, not intent
     'fd -e py',
 ])
-def test_repo_wide_searches_get_the_nudge(cmd):
-    assert _bash(cmd), cmd
+def test_repo_wide_searches_get_the_nudge(cmd, graphed):
+    assert _bash(cmd, cwd=graphed), cmd
 
 
 @pytest.mark.parametrize("cmd", [
@@ -58,29 +78,33 @@ def test_repo_wide_searches_get_the_nudge(cmd):
     'git status',
     'python3 -c "print(1)"',
 ])
-def test_targeted_and_unrelated_commands_stay_quiet(cmd):
-    assert not _bash(cmd), cmd
+def test_targeted_and_unrelated_commands_stay_quiet(cmd, graphed):
+    assert not _bash(cmd, cwd=graphed), cmd
 
 
-def test_glob_is_exploratory_by_definition():
+def test_glob_is_exploratory_by_definition(graphed):
     assert _fired(_run("graphify_nudge.py",
-                       {"tool_name": "Glob", "tool_input": {"pattern": "**/*.py"}}))
+                       {"tool_name": "Glob", "tool_input": {"pattern": "**/*.py"}},
+                       cwd=graphed))
 
 
-def test_grep_tool_fires_only_without_a_path():
+def test_grep_tool_fires_only_without_a_path(graphed):
     assert _fired(_run("graphify_nudge.py", {
-        "tool_name": "Grep", "tool_input": {"pattern": "stats.track"}}))
+        "tool_name": "Grep", "tool_input": {"pattern": "stats.track"}},
+        cwd=graphed))
     assert not _fired(_run("graphify_nudge.py", {
         "tool_name": "Grep",
-        "tool_input": {"pattern": "x", "path": "propresenterrunsheet/stats.py"}}))
+        "tool_input": {"pattern": "x", "path": "propresenterrunsheet/stats.py"}},
+        cwd=graphed))
 
 
-def test_reading_a_named_file_is_never_intercepted():
+def test_reading_a_named_file_is_never_intercepted(graphed):
     """The predecessor fired here, on every source Read. That is the
     common case and it already knows where it is going."""
     assert not _fired(_run("graphify_nudge.py", {
         "tool_name": "Read",
-        "tool_input": {"file_path": "propresenterrunsheet/stats.py"}}))
+        "tool_input": {"file_path": "propresenterrunsheet/stats.py"}},
+        cwd=graphed))
 
 
 # ── encoding guard ───────────────────────────────────────────────────────
