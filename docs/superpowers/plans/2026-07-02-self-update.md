@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 (stdlib + `requests`, already shipped), Flask blueprints, vanilla JS, pytest, GitHub Actions.
 
-**Conventions for every task:** run tests with `python3 -m pytest` from the repo root `/Users/fynnj/Documents/Claude/Projects/Pro Proprestor app copy`. All work happens on branch `claude/self-update`. The logger is `logging.getLogger("pp_runsheet")`. Windows swap logic must be provable on the Mac dev machine — hence pure "plan" functions + injectable side effects.
+**Conventions for every task:** run tests with `python3 -m pytest` from the repo root `<repo-root>`. All work happens on branch `claude/self-update`. The logger is `logging.getLogger("pp_runsheet")`. Windows swap logic must be provable on the Mac dev machine — hence pure "plan" functions + injectable side effects.
 
 ---
 
@@ -20,7 +20,7 @@
 - [ ] **Step 1: Create the branch**
 
 ```bash
-cd "/Users/fynnj/Documents/Claude/Projects/Pro Proprestor app copy"
+cd "<repo-root>"
 git checkout -b claude/self-update main
 ```
 
@@ -1287,7 +1287,7 @@ setInterval(loadUpdateState, 60 * 60 * 1000);   // re-render if a check lands la
 - [ ] **Step 5: Verify the page serves with the new elements**
 
 ```bash
-cd "/Users/fynnj/Documents/Claude/Projects/Pro Proprestor app copy"
+cd "<repo-root>"
 pkill -9 -f propresenter_app.py 2>/dev/null; sleep 1
 nohup python3 propresenter_app.py --headless > /tmp/upd_smoke.log 2>&1 & disown
 sleep 5

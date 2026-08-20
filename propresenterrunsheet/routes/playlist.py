@@ -10,6 +10,7 @@ by the sidebar's "Test connection" button."""
 
 import datetime as _dt
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from .flags import matching_enabled
 from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
+from ..propresenter.discovery import resolve_port
 from ..propresenter.net import pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
@@ -324,25 +326,81 @@ def api_create_playlist():
 
 @bp.route("/api/test_connection", methods=["POST"])
 def api_test_connection():
+    """Test the link to ProPresenter, finding the port if need be.
+
+    ProPresenter does not always listen on 50001 — a real machine here
+    ran on 55416, which made every library and template lookup fail with
+    nothing on screen to explain it. When the configured port doesn't
+    answer and PP is on this machine, its own preferences say which port
+    it chose; the UI writes the discovered value back into the box so the
+    fix sticks.
+    """
     import requests as req
+    from ..settings import load_settings
+
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
-    port = body.get("port") or "50001"
-    base = pp_base(host, port)
+    port = str(body.get("port") or "50001")
+
+    # The probe IS the connection test — it calls the same endpoint the
+    # route needs anyway and caches the result, so discovery adds no
+    # extra outbound request. `pp_base` clamps host to hostname
+    # characters and port to digits, so neither can smuggle a path,
+    # scheme or second URL into the address.
+    seen = {}
+
+    def _probe(h, p) -> bool:
+        # pp_base raises UnreachableHost for anything outside
+        # loopback/LAN. Build the URL OUTSIDE the try so that refusal
+        # propagates to the app-level handler — swallowing it here would
+        # report "didn't answer", sending the operator to check a port
+        # when the real problem is the address.
+        url = f"{pp_base(h, p)}/v1/libraries"
+        try:
+            r = req.get(url, timeout=3)
+            if r.ok:
+                seen["libs"] = r.json()
+                return True
+        except Exception:
+            # Unreachable, refused, or not ProPresenter — all of which
+            # mean the same thing to the caller: not listening here.
+            pass
+        return False
+
+    note = ""
+    if (load_settings().get("auto_port") is not False):
+        original = port
+        port, note = resolve_port(host, port, probe=_probe)
+        if port != original:
+            # The port BOX is a free-text field, so `original` is
+            # whatever the operator typed — never send it. Only the
+            # digits we actually connected on, and whether the old value
+            # was the shipped default, which is the thing worth knowing.
+            stats.track("port_discovered",
+                        now=int(re.sub(r"\D", "", port) or 0),
+                        was_default=(str(original).strip() == "50001"))
+
     try:
-        r = req.get(f"{base}/v1/libraries", timeout=4)
-        r.raise_for_status()
-        libs = r.json()
+        libs = seen.get("libs")
+        if libs is None:                      # auto_port off, or it failed
+            if not _probe(host, port):
+                raise req.exceptions.ConnectionError()
+            libs = seen.get("libs")
         return jsonify({"ok": True,
-                        "count": len(libs) if hasattr(libs, "__len__") else 0})
+                        "count": len(libs) if hasattr(libs, "__len__") else 0,
+                        "port": port, "note": note})
     except req.exceptions.ConnectionError:
         # The raw requests error ("HTTPConnectionPool… Max retries exceeded
         # … Errno 61") reads like a stack trace to a volunteer. Say only
-        # what happened and what to do.
-        return jsonify({"ok": False, "error":
-            f"Can't reach ProPresenter at {host}:{port}."})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        # what happened and what to do — `note` usually already does.
+        return jsonify({"ok": False, "port": port, "note": note, "error":
+            note or f"Can't reach ProPresenter at {host}:{port}."})
+    except Exception:
+        # Never hand the exception text to the caller: it can carry paths
+        # and internals, and it tells a volunteer nothing they can act on.
+        log.exception("connection test failed")
+        return jsonify({"ok": False, "port": port, "note": note,
+                        "error": note or "Couldn't reach ProPresenter."})
 
 
 @bp.route("/api/pp/playlists", methods=["GET"])

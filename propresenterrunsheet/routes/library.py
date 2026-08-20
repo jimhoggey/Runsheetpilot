@@ -57,7 +57,13 @@ def _fetch_library_via_api(host: str, port: str):
     /v1/libraries — operators with multiple libraries can still use
     /api/library/scan to point at a specific disk path."""
     import requests as req
-    base = f"http://{host}:{port}"
+    from ..propresenter.net import pp_base
+    # Built OUTSIDE the try: /api/library/fetch takes host/port from the
+    # request body, so this was an unguarded SSRF sink — the one raw URL
+    # build that was request-driven. pp_base validates and pins to the
+    # vetted address, and UnreachableHost propagates to the app-level
+    # handler as a plain refusal.
+    base = pp_base(host, port)
     try:
         r = req.get(f"{base}/v1/libraries", timeout=6)
         r.raise_for_status()

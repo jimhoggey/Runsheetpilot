@@ -99,6 +99,23 @@ try:
 except Exception:
     pass
 
+# A host outside loopback/LAN is a refusal, not a crash: pp_base raises
+# and this turns it into the same shape every other route error uses, so
+# no caller has to repeat the check. HTTP 200 because the JS reads the
+# message out of the body.
+try:
+    from flask import jsonify as _jsonify
+    from propresenterrunsheet.propresenter.net import UnreachableHost
+
+    @app.errorhandler(UnreachableHost)
+    def _unreachable_host(exc):
+        return _jsonify({"ok": False, "error": str(exc)}), 200
+except Exception:
+    # Registering the handler is an improvement, not a requirement — if
+    # Flask's API shifts, the exception still surfaces as a 500 rather
+    # than the app failing to start.
+    pass
+
 
 @app.errorhandler(413)
 def _too_large(_e):

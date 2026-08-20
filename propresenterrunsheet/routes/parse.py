@@ -33,7 +33,7 @@ from ..parsing.pdf import extract_pdf_text, pdf_text_or_images, render_pdf_pages
 from ..parsing.timed_rows import rescue_missing_rows
 from .. import stats
 from ..propresenter.library import fuzzy_match
-from ..propresenter.net import pp_base
+from ..propresenter.net import UnreachableHost, pp_base
 from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
     link_items_to_template, playlist_to_objects, playlist_to_sections,
@@ -418,7 +418,17 @@ def api_upload_and_parse():
         objects: list = []
         pp_host = (settings.get("pp_host") or "localhost").strip()
         pp_port = (settings.get("pp_port") or "50001").strip()
-        base = f"http://{pp_host}:{pp_port}"
+        try:
+            base = pp_base(pp_host, pp_port)
+        except UnreachableHost:
+            # Saved host is outside loopback/LAN (settings are writable
+            # over the API, so this is the second-order path). Parse
+            # must still work — it already does with PP closed — so
+            # just skip everything that would have talked to PP.
+            log.warning("Saved ProPresenter host refused; parsing "
+                        "without template context")
+            base = ""
+            do_matching = False
         tmpl_uuid = (settings.get("template_playlist_uuid") or "").strip()
         if not do_matching:
             tmpl_uuid = ""
