@@ -21,7 +21,7 @@ from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
 from ..propresenter.discovery import resolve_port
-from ..propresenter.net import pp_base
+from ..propresenter.net import is_reachable_pp_host, pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
@@ -349,12 +349,19 @@ def api_test_connection():
     seen = {}
 
     def _probe(h, p) -> bool:
+        # ProPresenter lives on this machine or the church LAN, never on
+        # the public internet — so refuse anything else rather than let
+        # the app be used to probe arbitrary addresses.
+        if not is_reachable_pp_host(h):
+            return False
         try:
             r = req.get(f"{pp_base(h, p)}/v1/libraries", timeout=3)
             if r.ok:
                 seen["libs"] = r.json()
                 return True
         except Exception:
+            # Unreachable, refused, or not ProPresenter — all of which
+            # mean the same thing to the caller: not listening here.
             pass
         return False
 
@@ -366,6 +373,11 @@ def api_test_connection():
             # Worth measuring: if this fires often, 50001 is the wrong
             # default to ship.
             stats.track("port_discovered", was=original, now=port)
+
+    if not is_reachable_pp_host(host):
+        return jsonify({"ok": False, "port": port, "note": "", "error":
+            f"{host} isn't an address ProPresenter can be on. Use "
+            f"localhost, or the computer's name or LAN IP."})
 
     try:
         libs = seen.get("libs")

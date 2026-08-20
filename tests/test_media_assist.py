@@ -213,3 +213,39 @@ def test_is_local(host, expected):
 
 def test_local_pp_settings_never_raises_on_an_unknown_platform():
     assert discovery.local_pp_settings(platform="linux") == {}
+
+
+# ── the SSRF boundary on the ProPresenter host ───────────────────────────
+# The app fetches a host taken from the request body, which is an SSRF
+# sink: without a limit, anything that can reach this local API could use
+# the app to probe arbitrary internet addresses. ProPresenter is never on
+# the public internet, so the boundary is loopback + LAN.
+
+from propresenterrunsheet.propresenter.net import is_reachable_pp_host
+
+
+@pytest.mark.parametrize("host", [
+    "localhost", "127.0.0.1", "::1", "",
+    "192.168.1.153",              # the operator's own LAN address
+    "10.0.0.5", "172.16.4.9",
+    "Fynns-MacBook-Air.local",    # mDNS, what PP advertises itself as
+    "macbook",                    # bare LAN name
+    "169.254.1.1",                # direct ethernet between two machines
+])
+def test_real_propresenter_hosts_are_allowed(host):
+    assert is_reachable_pp_host(host) is True, host
+
+
+@pytest.mark.parametrize("host", [
+    "8.8.8.8", "1.1.1.1", "example.com",
+    "169.254.169.254",            # cloud metadata — the classic SSRF target
+    "169.254.169.254.nip.io",     # …and the DNS trick that reaches it
+])
+def test_public_and_metadata_hosts_are_refused(host):
+    assert is_reachable_pp_host(host) is False, host
+
+
+def test_an_unresolvable_name_is_treated_as_unreachable():
+    """Failing closed: 'we couldn't check' must not mean 'allowed'."""
+    assert is_reachable_pp_host(
+        "no-such-host-anywhere.invalid") is False
