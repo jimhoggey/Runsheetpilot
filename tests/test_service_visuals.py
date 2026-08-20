@@ -165,10 +165,23 @@ def test_scan_survives_a_missing_folder():
     assert sv.scan_timers("/definitely/not/here") == []
 
 
-def test_exports_dir_honours_the_service_visuals_override(monkeypatch):
-    """Mirrors that app's own env override, so the two stay in step."""
-    monkeypatch.setenv("SERVICE_VISUALS_EXPORTS", "/tmp/sv-elsewhere")
-    assert sv.exports_dir() == "/tmp/sv-elsewhere"
+def test_exports_dir_honours_the_service_visuals_override(monkeypatch, tmp_path):
+    """Mirrors that app's own env override, so the two stay in step.
+
+    Compared against os.path.abspath rather than a literal: the override
+    is absolutised, and on Windows a bare "/tmp/x" becomes "D:\\tmp\\x".
+    """
+    import os
+    target = str(tmp_path / "sv-elsewhere")
+    monkeypatch.setenv("SERVICE_VISUALS_EXPORTS", target)
+    assert sv.exports_dir() == os.path.abspath(target)
+
+
+def test_exports_dir_defaults_under_documents(monkeypatch):
+    monkeypatch.delenv("SERVICE_VISUALS_EXPORTS", raising=False)
+    got = sv.exports_dir()
+    assert got.endswith("Service Visuals")
+    assert "Documents" in got
 
 
 # ── review: only what needs a human ──────────────────────────────────────

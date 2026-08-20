@@ -44,8 +44,12 @@ _ASKS_FOR_TIMER = re.compile(
 # "5 minute", "5min", "5m", "5 mins" — an explicit length in the words,
 # which beats the duration column when the two disagree, because someone
 # wrote it on purpose.
+# One unambiguous class for the gap, not `\s*(?:-|\s)?\s*` — that gives
+# the engine three ways to match a single space and backtracks
+# polynomially on a run of them (CodeQL py/polynomial-redos). Longest
+# alternative first so "minutes" isn't consumed as "min".
 _EXPLICIT_MINUTES = re.compile(
-    r"(\d{1,3})\s*(?:-|\s)?\s*(?:minute|minutes|mins|min|m)\b", re.IGNORECASE)
+    r"(\d{1,3})[\s-]{0,4}(?:minutes|minute|mins|min|m)\b", re.IGNORECASE)
 
 # Service Visuals' own output convention.
 _TIMER_FILE = re.compile(
