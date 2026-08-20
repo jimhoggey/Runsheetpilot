@@ -10,6 +10,7 @@ by the sidebar's "Test connection" button."""
 
 import datetime as _dt
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
 from ..propresenter.discovery import resolve_port
-from ..propresenter.net import is_reachable_pp_host, pp_base
+from ..propresenter.net import pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
 from ..propresenter.templates import (
@@ -349,13 +350,14 @@ def api_test_connection():
     seen = {}
 
     def _probe(h, p) -> bool:
-        # ProPresenter lives on this machine or the church LAN, never on
-        # the public internet — so refuse anything else rather than let
-        # the app be used to probe arbitrary addresses.
-        if not is_reachable_pp_host(h):
-            return False
+        # pp_base raises UnreachableHost for anything outside
+        # loopback/LAN. Build the URL OUTSIDE the try so that refusal
+        # propagates to the app-level handler — swallowing it here would
+        # report "didn't answer", sending the operator to check a port
+        # when the real problem is the address.
+        url = f"{pp_base(h, p)}/v1/libraries"
         try:
-            r = req.get(f"{pp_base(h, p)}/v1/libraries", timeout=3)
+            r = req.get(url, timeout=3)
             if r.ok:
                 seen["libs"] = r.json()
                 return True
@@ -370,14 +372,13 @@ def api_test_connection():
         original = port
         port, note = resolve_port(host, port, probe=_probe)
         if port != original:
-            # Worth measuring: if this fires often, 50001 is the wrong
-            # default to ship.
-            stats.track("port_discovered", was=original, now=port)
-
-    if not is_reachable_pp_host(host):
-        return jsonify({"ok": False, "port": port, "note": "", "error":
-            f"{host} isn't an address ProPresenter can be on. Use "
-            f"localhost, or the computer's name or LAN IP."})
+            # The port BOX is a free-text field, so `original` is
+            # whatever the operator typed — never send it. Only the
+            # digits we actually connected on, and whether the old value
+            # was the shipped default, which is the thing worth knowing.
+            stats.track("port_discovered",
+                        now=int(re.sub(r"\D", "", port) or 0),
+                        was_default=(str(original).strip() == "50001"))
 
     try:
         libs = seen.get("libs")

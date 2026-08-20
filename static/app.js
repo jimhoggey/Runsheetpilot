@@ -547,8 +547,22 @@ async function loadTemplatePlaylists(selectUuid) {
 // app does is everything around it: find the file, say which runsheet
 // item it's for, and notice the moment it lands in the bin.
 let _mediaAssistTimer = null;
+let _mediaAssistPolls = 0;
 
-async function loadMediaAssist() {
+// Poll only while it can achieve something, and not forever. With
+// ProPresenter closed every file reads as "not imported", so a naive
+// "keep polling while anything is pending" never stops — it re-scans
+// Downloads and re-posts the whole runsheet every 3s for the life of
+// the page.
+const MEDIA_POLL_MS = 3000;
+const MEDIA_POLL_MAX = 100;          // ~5 minutes, then it gives up
+
+function _stopMediaPoll() {
+  clearInterval(_mediaAssistTimer);
+  _mediaAssistTimer = null;
+}
+
+async function loadMediaAssist(isPoll) {
   const card = document.getElementById('media-assist-card');
   if (!card) return;
   try {
@@ -558,13 +572,22 @@ async function loadMediaAssist() {
         items: matchedItems.map(mi => mi.parsed),
         host: document.getElementById('pp-host2').value,
         port: document.getElementById('pp-port2').value,
+        // Only the first look is a "view"; the polls that follow are
+        // the same view, and counting each one would make the metric
+        // measure how long a window stayed open.
+        poll: !!isPoll,
       })
     }).then(r => r.json());
 
-    if (!res.enabled || !(res.files || []).length) { card.hidden = true; return; }
+    if (!res.enabled || !(res.files || []).length) {
+      _stopMediaPoll();
+      card.hidden = true;
+      return;
+    }
     renderMediaAssist(res);
     card.hidden = false;
   } catch (e) {
+    _stopMediaPoll();
     card.hidden = true;
   }
 }
@@ -600,11 +623,15 @@ function renderMediaAssist(res) {
   }).join('');
 
   // PP writes its Media registry the instant a file is dropped in, so a
-  // short poll while the panel is open picks the import up within a
-  // second or two. Stops as soon as nothing is pending.
-  clearInterval(_mediaAssistTimer);
-  if (pending.length) {
-    _mediaAssistTimer = setInterval(loadMediaAssist, 3000);
+  // short poll picks the import up within a second or two. It stops when
+  // nothing is pending, when ProPresenter isn't answering (nothing can
+  // change until it is), and after a bounded number of ticks.
+  _stopMediaPoll();
+  if (pending.length && res.bin_ok && _mediaAssistPolls < MEDIA_POLL_MAX) {
+    _mediaAssistTimer = setInterval(() => {
+      if (++_mediaAssistPolls >= MEDIA_POLL_MAX) { _stopMediaPoll(); return; }
+      loadMediaAssist(true);
+    }, MEDIA_POLL_MS);
   }
 }
 
@@ -1036,7 +1063,8 @@ async function rematchNow() {
 
 // ─── Start over — wipe the parsed state back to a fresh Step 1 ───────────
 function resetFlow() {
-  clearInterval(_mediaAssistTimer);
+  _stopMediaPoll();
+  _mediaAssistPolls = 0;
   document.getElementById('media-assist-card').hidden = true;
   uploadedFile = null;
   matchedItems = [];

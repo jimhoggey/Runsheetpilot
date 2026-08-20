@@ -51,6 +51,16 @@ def is_reachable_pp_host(host) -> bool:
         return _permitted(ipaddress.ip_address(host))
     except ValueError:
         pass                       # a name, not an address — resolve it
+    # A dotless label is a LAN name ("macbook") — but only if it looks
+    # like a name. "134744072" and "0x8080808" are dotless too, and both
+    # resolve to 8.8.8.8, so a digits-or-hex-only label is an IP literal
+    # in disguise and must go through the address check instead.
+    if re.fullmatch(r"(?:0x)?[0-9a-f]+", host):
+        try:
+            return _permitted(ipaddress.ip_address(int(
+                host, 16 if host.startswith("0x") else 10)))
+        except Exception:
+            return False
     if host.endswith(".local") or "." not in host:
         return True                # mDNS / bare LAN name
     try:
@@ -68,8 +78,27 @@ def is_reachable_pp_host(host) -> bool:
     return bool(infos)
 
 
+class UnreachableHost(ValueError):
+    """The requested host isn't somewhere ProPresenter can be.
+
+    Carries a message written for the operator, so routes can return it
+    directly instead of inventing their own wording.
+    """
+
+
 def pp_base(host, port) -> str:
-    """A clean http://host:port with everything non-hostname stripped."""
+    """A clean http://host:port with everything non-hostname stripped.
+
+    RAISES UnreachableHost for anything outside loopback and the LAN.
+    The check lives here, not in the routes, because every ProPresenter
+    URL in the app is built through this one function — the first
+    version of this guard was wired into a single route and left four
+    other request-body-driven fetches wide open.
+    """
+    if not is_reachable_pp_host(host):
+        raise UnreachableHost(
+            f"{str(host)[:60]} isn't an address ProPresenter can be on. "
+            f"Use localhost, or the computer's name or LAN IP.")
     clean_host = _HOST_RE.sub("", str(host or "").strip()) or "localhost"
     digits = re.sub(r"\D", "", str(port or ""))
     clean_port = digits or "50001"

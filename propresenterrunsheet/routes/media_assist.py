@@ -13,6 +13,8 @@ it lands in the bin.
 """
 
 import logging
+import subprocess
+import sys
 
 from flask import Blueprint, jsonify, request
 
@@ -44,12 +46,18 @@ def api_media_assist():
 
     # The bin is best-effort: with PP closed the panel still lists files
     # and suggestions, it just can't say which are already imported.
+    # Built outside the try: an unreachable host is a refusal the caller
+    # must see, not something to hide behind an empty bin.
+    base = pp_base(body.get("host") or settings.get("pp_host"),
+                   body.get("port") or settings.get("pp_port"))
     bin_names, bin_ok = [], False
     try:
-        base = pp_base(body.get("host") or settings.get("pp_host"),
-                       body.get("port") or settings.get("pp_port"))
         bin_names = [b.get("name") or "" for b in fetch_media_bin(base)]
-        bin_ok = bool(bin_names)
+        # fetch_media_bin returns [] for BOTH "PP unreachable" and "bin
+        # is empty", so ask PP directly whether it is there at all —
+        # otherwise files imported last week render as "to import".
+        import requests as _rq
+        bin_ok = _rq.get(f"{base}/version", timeout=2).ok
     except Exception:
         log.debug("media assist: could not read the Media bin")
 
@@ -62,8 +70,13 @@ def api_media_assist():
                         "error": "Couldn't read your downloads folder."})
 
     pending = [f for f in files if not f["in_bin"]]
-    stats.track("media_assist_shown", files=len(files), pending=len(pending),
-                suggested=sum(1 for f in files if f["suggested"]))
+    # Not on polls: the panel refreshes every few seconds while open, and
+    # counting each tick would turn a per-view metric into a measure of
+    # how long a window stayed on screen — and flood the 128-slot queue.
+    if not body.get("poll"):
+        stats.track("media_assist_shown", files=len(files),
+                    pending=len(pending),
+                    suggested=sum(1 for f in files if f["suggested"]))
     log.info("Media assist: %d recent file(s), %d not yet in PP",
              len(files), len(pending))
     return jsonify({"enabled": True, "bin_ok": bin_ok, "files": files})
@@ -77,9 +90,6 @@ def api_media_assist_reveal():
     caller sends. This opens a file manager window, so accepting an
     arbitrary path from the request would be handing out a file browser.
     """
-    import subprocess
-    import sys
-
     settings = load_settings()
     if not settings.get("media_assist"):
         return jsonify({"ok": False, "error": "Media assist is off."}), 403
@@ -96,7 +106,10 @@ def api_media_assist_reveal():
         if sys.platform == "darwin":
             subprocess.run(["open", "-R", wanted], timeout=5, check=False)
         elif sys.platform == "win32":
-            subprocess.run(["explorer", "/select,", wanted], timeout=5,
+            # ONE token: Explorer ignores the selection when the switch
+            # and the path arrive as separate arguments, and silently
+            # opens the default folder instead.
+            subprocess.run(["explorer", f"/select,{wanted}"], timeout=5,
                            check=False)
         else:
             return jsonify({"ok": False,

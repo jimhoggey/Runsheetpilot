@@ -96,10 +96,25 @@ def test_scan_finds_recent_media_newest_first(tmp_path):
     assert names == ["new.png", "old.png"]
 
 
-def test_scan_ignores_files_older_than_the_window(tmp_path):
+def test_scan_ignores_files_that_arrived_long_ago(tmp_path):
+    """Age is measured from ARRIVAL. The file here really is on disk
+    now, so the window is moved forward instead of backdating mtime —
+    backdating mtime alone no longer makes a file old, which is the
+    whole point of the change below."""
+    _touch(tmp_path, "ancient.png")
+    later = time.time() + 200 * 3600
+    assert ma.scan([str(tmp_path)], max_age_h=48, now=later) == []
+
+
+def test_a_file_authored_months_ago_but_just_received_still_shows(tmp_path):
+    """The case the feature exists for: a leader emails a graphic made
+    in May. AirDrop, saved mail attachments, unzip and curl -R all keep
+    the original mtime, so filtering on mtime would hide it."""
     now = time.time()
-    _touch(tmp_path, "ancient.png", age_h=200, now=now)
-    assert ma.scan([str(tmp_path)], max_age_h=48, now=now) == []
+    p = _touch(tmp_path, "old but just arrived.png", age_h=24 * 90, now=now)
+    assert p.stat().st_mtime < now - 48 * 3600      # mtime really is old
+    assert [f["name"] for f in ma.scan([str(tmp_path)], now=now)] == \
+        ["old but just arrived.png"]
 
 
 def test_scan_ignores_non_media_and_dotfiles(tmp_path):
@@ -249,3 +264,78 @@ def test_an_unresolvable_name_is_treated_as_unreachable():
     """Failing closed: 'we couldn't check' must not mean 'allowed'."""
     assert is_reachable_pp_host(
         "no-such-host-anywhere.invalid") is False
+
+
+# ── the routes themselves ────────────────────────────────────────────────
+# Everything above tests the modules directly, which left the two HTTP
+# endpoints — including the reveal whitelist, the feature's security
+# control — with no coverage at all.
+
+@pytest.fixture
+def assist_client(client, monkeypatch):
+    import propresenterrunsheet.settings as settings_mod
+    real = settings_mod.load_settings
+
+    def enabled():
+        s = dict(real())
+        s["media_assist"] = True
+        return s
+    monkeypatch.setattr(settings_mod, "load_settings", enabled)
+    import propresenterrunsheet.routes.media_assist as mod
+    monkeypatch.setattr(mod, "load_settings", enabled)
+    return client
+
+
+def test_reveal_refuses_a_path_the_scan_did_not_return(assist_client,
+                                                       monkeypatch):
+    """The whitelist is the security control: without it this endpoint
+    is a file browser for anything that can reach the port."""
+    import propresenterrunsheet.routes.media_assist as mod
+    monkeypatch.setattr(mod.media_assist, "scan",
+                        lambda *a, **k: [{"path": "/tmp/allowed.png"}])
+    called = []
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda *a, **k: called.append(a))
+
+    r = assist_client.post("/api/media_assist/reveal",
+                           json={"path": "/etc/passwd"})
+    assert r.status_code == 400
+    assert called == [], "a refused path must never reach subprocess"
+
+
+def test_reveal_allows_a_path_the_scan_returned(assist_client, monkeypatch):
+    import propresenterrunsheet.routes.media_assist as mod
+    monkeypatch.setattr(mod.media_assist, "scan",
+                        lambda *a, **k: [{"path": "/tmp/allowed.png"}])
+    called = []
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda *a, **k: called.append(a[0]))
+    r = assist_client.post("/api/media_assist/reveal",
+                           json={"path": "/tmp/allowed.png"})
+    assert r.get_json()["ok"] is True
+    assert called and "/tmp/allowed.png" in " ".join(called[0])
+
+
+def test_reveal_is_refused_when_the_feature_is_off(client):
+    r = client.post("/api/media_assist/reveal", json={"path": "/tmp/x.png"})
+    assert r.status_code == 403
+
+
+def test_media_assist_returns_nothing_when_off(client):
+    body = client.post("/api/media_assist", json={"items": []}).get_json()
+    assert body == {"enabled": False, "files": []}
+
+
+def test_a_public_host_is_refused_by_every_route(client):
+    """pp_base raises for anything outside loopback/LAN, and the
+    app-level handler turns that into a refusal — so the guard covers
+    every ProPresenter call, not just the connection test."""
+    for path, payload in [
+        ("/api/create_playlist", {"host": "8.8.8.8", "port": "1",
+                                  "name": "x",
+                                  "matched": [{"parsed": {"title": "t"}}]}),
+        ("/api/match", {"host": "8.8.8.8", "port": "1", "parsed": [],
+                        "rematch_template": True}),
+    ]:
+        err = str((client.post(path, json=payload).get_json() or {}))
+        assert "isn't an address" in err, path

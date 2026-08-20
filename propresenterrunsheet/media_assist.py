@@ -83,12 +83,22 @@ def scan(dirs=None, max_age_h: int = DEFAULT_MAX_AGE_H, now=None) -> list:
                 if p.suffix.lower() not in MEDIA_EXTS:
                     continue
                 stat = p.stat()
-                if stat.st_mtime < cutoff:
+                # When the file ARRIVED, not when it was authored.
+                # AirDrop, saved mail attachments, unzip and curl -R all
+                # preserve the original mtime, so a photo made in May and
+                # emailed this morning would otherwise be filtered out —
+                # exactly the case this feature exists for. st_birthtime
+                # is macOS; st_ctime carries creation on Windows and
+                # metadata-change on Unix, both of which beat mtime here.
+                arrived = max(stat.st_mtime,
+                              getattr(stat, "st_birthtime", 0) or 0,
+                              stat.st_ctime)
+                if arrived < cutoff:
                     continue
                 found.append({"name": p.name, "path": str(p),
                               "size": stat.st_size,
-                              "age_h": round((now - stat.st_mtime) / 3600, 1),
-                              "_mtime": stat.st_mtime})
+                              "age_h": round((now - arrived) / 3600, 1),
+                              "_mtime": arrived})
             except Exception:
                 continue
     found.sort(key=lambda f: -f["_mtime"])
@@ -108,7 +118,7 @@ def suggest_item(filename: str, items) -> dict:
     stem_tokens = _tokens(Path(filename).stem)
     if not stem_tokens:
         return None
-    best, best_score = None, 0.0
+    best, best_score, tied = None, 0.0, False
     for i, item in enumerate(items or []):
         if not isinstance(item, dict):
             continue
@@ -126,8 +136,15 @@ def suggest_item(filename: str, items) -> dict:
         # is how much of the shorter side is accounted for.
         score = len(overlap) / min(len(title_tokens), len(stem_tokens))
         if score > best_score:
-            best, best_score = i, score
-    if best is None or best_score < 0.5:
+            best, best_score, tied = i, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    # A tie is ambiguity, and the honest answer to ambiguity is silence.
+    # "Ollie and Elliot.png" matches both "MC Welcome: Ollie & Elliot"
+    # and "Culture Moment: Ollie & Elliot" at 1.0; picking whichever came
+    # first is a maximally-confident wrong guess, which is the one thing
+    # this must not do.
+    if best is None or best_score < 0.5 or tied:
         return None
     return {"index": best, "title": (items[best].get("title") or ""),
             "score": round(best_score, 2)}
