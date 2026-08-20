@@ -303,8 +303,17 @@ def test_reveal_refuses_a_path_the_scan_did_not_return(assist_client,
     assert called == [], "a refused path must never reach subprocess"
 
 
-def test_reveal_allows_a_path_the_scan_returned(assist_client, monkeypatch):
+@pytest.mark.parametrize("platform,expect_arg", [
+    ("darwin", "-R"),
+    ("win32", "/select,/tmp/allowed.png"),   # ONE token, or Explorer ignores it
+])
+def test_reveal_allows_a_path_the_scan_returned(assist_client, monkeypatch,
+                                                platform, expect_arg):
+    """Platform is pinned rather than inherited from the runner: the
+    route only supports macOS and Windows, so on the Linux CI boxes an
+    unpinned test asserts the wrong thing."""
     import propresenterrunsheet.routes.media_assist as mod
+    monkeypatch.setattr(mod.sys, "platform", platform)
     monkeypatch.setattr(mod.media_assist, "scan",
                         lambda *a, **k: [{"path": "/tmp/allowed.png"}])
     called = []
@@ -313,7 +322,18 @@ def test_reveal_allows_a_path_the_scan_returned(assist_client, monkeypatch):
     r = assist_client.post("/api/media_assist/reveal",
                            json={"path": "/tmp/allowed.png"})
     assert r.get_json()["ok"] is True
-    assert called and "/tmp/allowed.png" in " ".join(called[0])
+    assert called and expect_arg in called[0]
+    assert "/tmp/allowed.png" in " ".join(called[0])
+
+
+def test_reveal_says_so_on_an_unsupported_platform(assist_client, monkeypatch):
+    import propresenterrunsheet.routes.media_assist as mod
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+    monkeypatch.setattr(mod.media_assist, "scan",
+                        lambda *a, **k: [{"path": "/tmp/allowed.png"}])
+    r = assist_client.post("/api/media_assist/reveal",
+                           json={"path": "/tmp/allowed.png"})
+    assert r.get_json()["ok"] is False
 
 
 def test_reveal_is_refused_when_the_feature_is_off(client):
