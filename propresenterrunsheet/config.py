@@ -38,8 +38,8 @@ WHATS_NEW = [
     + "appears, priced per runsheet. Or paste any model you like.",
     "Automatic still only ever uses free models — it will never start "
     + "spending without being asked.",
-    "Every model in that list is checked against OpenRouter as you open "
-    + "it. Withdrawn ones just vanish.",
+    "Every model is checked against OpenRouter as you open the list, and "
+    + "I now record which one ran and what it cost.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.

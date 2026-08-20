@@ -23,7 +23,8 @@ from ..parsing.ai import (
     parse_ai_response,
 )
 from ..parsing.models import (
-    fetch_catalogue, is_router, next_usable_model, resolve_model,
+    estimate_cost, fetch_catalogue, is_router, next_usable_model,
+    resolve_model,
 )
 from .flags import matching_enabled
 from ..parsing.ocr import (
@@ -482,6 +483,11 @@ def api_upload_and_parse():
                 "model":       model_id,
                 "messages":    [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
+                # Ask for the real billed cost of this call. Free models
+                # report 0, so this is the honest answer to "is the paid
+                # model worth it?" rather than an estimate from a
+                # pricing table.
+                "usage":       {"include": True},
             }
             # JSON mode. The model picker has always filtered for models
             # that advertise structured output, but the request never
@@ -564,6 +570,23 @@ def api_upload_and_parse():
         # plain model id it matches what we asked for; for a router it names
         # the model the router chose.
         used_model = body.get("model") or model
+        # What the call cost. Preference order matters: OpenRouter's own
+        # billed figure is the truth, and the estimate from catalogue
+        # pricing is the fallback for providers that don't report one —
+        # labelled, so a dashboard never mixes a real number with a
+        # guess and presents them as the same thing.
+        try:
+            spent = float((body.get("usage") or {}).get("cost"))
+            cost_source = "billed"
+        except (TypeError, ValueError):
+            spent, cost_source = None, "unknown"
+        if spent is None:
+            known = {m.get("id"): m for m in
+                     (fetch_catalogue() or {}).get("data") or []
+                     if isinstance(m, dict)}
+            guess = estimate_cost(known.get(used_model))
+            if guess is not None:
+                spent, cost_source = guess, "estimated"
         if used_model != model:
             log.info(f"OpenRouter routed {log_safe(model)} -> {log_safe(used_model)}")
         content = (body["choices"][0]["message"].get("content") or "")
@@ -692,12 +715,22 @@ def api_upload_and_parse():
         except Exception:
             log.exception("Service Mate parse-time state write failed")
 
+        # `model` is the one that ACTUALLY answered — for a router that
+        # is the model it dispatched to, not the router's own id, which
+        # is the whole point of recording it. `chosen` says whether a
+        # human picked it or Automatic did, so adoption of the
+        # recommendation is visible; `paid` and `cost_usd` answer
+        # "was paying for it worth it?" with billing, not a guess.
         stats.track("parse_completed",
                     ai_ms=int((time.time() - ai_t0) * 1000),
                     items=len(items),
                     songs=sum(1 for i in items
                               if isinstance(i, dict) and i.get("type") == "song"),
                     model=used_model,
+                    chosen="auto" if not configured else "pinned",
+                    paid=bool(spent),
+                    cost_usd=round(spent, 6) if spent is not None else -1,
+                    cost_source=cost_source,
                     rescued=rescued_rows,
                     template_links=resolved_section_hits + resolved_object_hits,
                     source="text" if reviewed_text.strip() else "file",
