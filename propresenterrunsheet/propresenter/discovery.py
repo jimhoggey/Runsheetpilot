@@ -84,6 +84,8 @@ def _windows_prefs() -> dict:
                 return {"port": data.get("networkPort"),
                         "enabled": data.get("networkEnabled")}
         except Exception:
+            # Not JSON — fall through to the regex below, which handles
+            # the plist and ini shapes this file has had across versions.
             pass
         m = re.search(r'networkPort"?\s*[:=]\s*"?(\d{2,5})', text)
         if m:

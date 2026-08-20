@@ -359,3 +359,29 @@ def test_a_public_host_is_refused_by_every_route(client):
     ]:
         err = str((client.post(path, json=payload).get_json() or {}))
         assert "isn't an address" in err, path
+
+
+def test_no_request_is_ever_made_to_a_public_host(client, monkeypatch):
+    """The SSRF property, asserted at the wire rather than the message.
+
+    CodeQL flags the two `requests.get` calls that build a URL from
+    `pp_base(...)` as tainted, because its dataflow cannot see that
+    pp_base raises for anything outside loopback/LAN. This proves the
+    property directly: with a public or metadata host, no outbound
+    request is constructed at all.
+    """
+    import requests
+    attempted = []
+    for name in ("get", "post", "put"):
+        monkeypatch.setattr(requests, name, lambda url, *a, **k: (
+            attempted.append(str(url)),
+            (_ for _ in ()).throw(AssertionError(f"request to {url}")))[0])
+
+    for host in ("8.8.8.8", "169.254.169.254", "example.com"):
+        client.post("/api/media_assist",
+                    json={"host": host, "port": "80", "items": []})
+        client.post("/api/test_connection", json={"host": host, "port": "80"})
+        client.post("/api/create_playlist",
+                    json={"host": host, "port": "80", "name": "x",
+                          "matched": [{"parsed": {"title": "t"}}]})
+    assert attempted == []

@@ -111,6 +111,9 @@ try:
     def _unreachable_host(exc):
         return _jsonify({"ok": False, "error": str(exc)}), 200
 except Exception:
+    # Registering the handler is an improvement, not a requirement — if
+    # Flask's API shifts, the exception still surfaces as a 500 rather
+    # than the app failing to start.
     pass
 
 
