@@ -19,6 +19,7 @@ import sys
 from flask import Blueprint, jsonify, request
 
 from .. import media_assist
+from .. import service_visuals
 from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin
@@ -66,8 +67,20 @@ def api_media_assist():
         files = media_assist.build(items, dirs, bin_names=bin_names)
     except Exception:
         log.exception("media assist scan failed")
-        return jsonify({"enabled": True, "files": [], "bin_ok": bin_ok,
+        return jsonify({"enabled": True, "files": [], "timers": [],
+                        "bin_ok": bin_ok,
                         "error": "Couldn't read your downloads folder."})
+
+    # Countdowns the runsheet asked for that nobody has yet. Only rows
+    # that explicitly say so, and only states needing a human — a Sunday
+    # service whose Countdown already lives in the template is silent,
+    # because telling someone to render a timer they have reused every
+    # week for a year is how a panel earns its way into being ignored.
+    timers = []
+    try:
+        timers = service_visuals.review(items, bin_names=bin_names)
+    except Exception:
+        log.exception("service visuals timer review failed")
 
     pending = [f for f in files if not f["in_bin"]]
     # Not on polls: the panel refreshes every few seconds while open, and
@@ -76,10 +89,15 @@ def api_media_assist():
     if not body.get("poll"):
         stats.track("media_assist_shown", files=len(files),
                     pending=len(pending),
-                    suggested=sum(1 for f in files if f["suggested"]))
+                    suggested=sum(1 for f in files if f["suggested"]),
+                    timers_missing=sum(1 for t in timers
+                                       if t["state"] == "missing"),
+                    timers_unimported=sum(1 for t in timers
+                                          if t["state"] == "rendered"))
     log.info("Media assist: %d recent file(s), %d not yet in PP",
              len(files), len(pending))
-    return jsonify({"enabled": True, "bin_ok": bin_ok, "files": files})
+    return jsonify({"enabled": True, "bin_ok": bin_ok, "files": files,
+                    "timers": timers})
 
 
 @bp.route("/api/media_assist/reveal", methods=["POST"])

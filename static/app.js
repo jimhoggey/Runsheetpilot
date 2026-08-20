@@ -579,7 +579,8 @@ async function loadMediaAssist(isPoll) {
       })
     }).then(r => r.json());
 
-    if (!res.enabled || !(res.files || []).length) {
+    const anything = (res.files || []).length || (res.timers || []).length;
+    if (!res.enabled || !anything) {
       _stopMediaPoll();
       card.hidden = true;
       return;
@@ -594,8 +595,36 @@ async function loadMediaAssist(isPoll) {
 
 function renderMediaAssist(res) {
   const pending = res.files.filter(f => !f.in_bin);
+  const timers = res.timers || [];
+  const bits = [];
+  if (pending.length) bits.push(`${pending.length} to import`);
+  if (timers.length) bits.push(`${timers.length} countdown${timers.length !== 1 ? 's' : ''} to sort`);
   document.getElementById('media-assist-meta').textContent =
-    pending.length ? `${pending.length} to import` : 'all imported';
+    bits.join(' · ') || 'all imported';
+
+  // Countdowns the runsheet asked for. Rows already covered by the
+  // ProPresenter template — the Sunday countdown you reuse every week —
+  // never reach here, so anything shown genuinely needs doing.
+  document.getElementById('media-assist-timers').innerHTML = timers.map(t => {
+    const made = t.state === 'rendered';
+    const near = t.nearest
+      ? ` Closest you have is ${t.nearest.minutes} min.` : '';
+    const line = made
+      ? `<span style="color:var(--org)">Made in Service Visuals, not in ProPresenter yet</span>`
+      : `<span style="color:var(--org)">No ${t.minutes}-minute countdown exists — make one in Service Visuals.${escapeHtml(near)}</span>`;
+    const action = made
+      ? `<button class="btn btn-dim btn-sm" onclick="revealMedia(this)"
+                 data-path="${escapeHtml(t.path)}">Show me the file</button>`
+      : '';
+    return `<div style="display:flex;align-items:center;gap:12px;padding:9px 0;
+                        border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">⏱ ${escapeHtml(t.title)} — needs ${t.minutes} min</div>
+        <div class="hint">${line}</div>
+      </div>
+      <div style="flex:none">${action}</div>
+    </div>`;
+  }).join('');
 
   document.getElementById('media-assist-list').innerHTML = res.files.map(f => {
     const kb = f.size > 1048576
