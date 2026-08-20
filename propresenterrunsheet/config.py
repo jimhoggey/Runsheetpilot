@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,12 +34,12 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "Runsheet Pilot now finds ProPresenter's port itself. It is not "
-    + "always 50001, and a wrong one failed silently.",
-    "New: after parsing, I can list media you have just downloaded and "
-    + "tell you which item each one is for. Settings, Extras.",
-    "ProPresenter still needs the drag — but I spot it the second you "
-    + "do, and link it.",
+    "If your runsheet asks for a countdown, I now check Service Visuals "
+    + "and tell you if one that length doesn't exist yet.",
+    "Countdowns already in your ProPresenter template stay quiet — "
+    + "you reuse those every week, nothing to do.",
+    "Exact lengths only. A 3-minute timer in a 5-minute slot is a wrong "
+    + "answer that looks right.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.
