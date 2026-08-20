@@ -232,11 +232,41 @@ def test_local_pp_settings_never_raises_on_an_unknown_platform():
 
 # ── the SSRF boundary on the ProPresenter host ───────────────────────────
 # The app fetches a host taken from the request body, which is an SSRF
-# sink: without a limit, anything that can reach this local API could use
-# the app to probe arbitrary internet addresses. ProPresenter is never on
-# the public internet, so the boundary is loopback + LAN.
+# sink. The guard works by CONSTRUCTION: the host is validated, resolved
+# ONCE, and the URL is built from the vetted IP — never from the
+# caller's string. Pinning is what closes the validate-then-refetch gap
+# (DNS rebinding) and makes IP-literal spelling tricks irrelevant.
 
-from propresenterrunsheet.propresenter.net import is_reachable_pp_host
+from propresenterrunsheet.propresenter import net
+from propresenterrunsheet.propresenter.net import (
+    UnreachableHost, is_reachable_pp_host, pp_base)
+
+# Name lookups go through a fake resolver so these tests mean the same
+# thing on this Mac (where Fynns-MacBook-Air.local really resolves) and
+# on a CI runner (where nothing does).
+_FAKE_DNS = {
+    "fynns-macbook-air.local": ["192.168.1.153"],
+    "macbook": ["192.168.1.20"],
+    "av1": ["10.0.0.5"],
+    "example.com": ["93.184.216.34"],
+    "169.254.169.254.nip.io": ["169.254.169.254"],
+    # Dual-stack LAN name that ALSO publishes a public v6 record — the
+    # public record must not brick the name, and must never be dialled.
+    "dualstack": ["192.168.1.30", "2001:db8::1"],
+}
+
+
+@pytest.fixture(autouse=True)
+def _fake_resolver(monkeypatch):
+    def fake_getaddrinfo(host, *_a, **_k):
+        ips = _FAKE_DNS.get(host)
+        if not ips:
+            raise OSError(f"unresolvable: {host}")
+        return [(2, 1, 6, "", (ip, 0)) for ip in ips]
+    monkeypatch.setattr(net.socket, "getaddrinfo", fake_getaddrinfo)
+    net.reset_cache()
+    yield
+    net.reset_cache()
 
 
 @pytest.mark.parametrize("host", [
@@ -245,6 +275,7 @@ from propresenterrunsheet.propresenter.net import is_reachable_pp_host
     "10.0.0.5", "172.16.4.9",
     "Fynns-MacBook-Air.local",    # mDNS, what PP advertises itself as
     "macbook",                    # bare LAN name
+    "dualstack",                  # LAN name with a stray public record
     "169.254.1.1",                # direct ethernet between two machines
 ])
 def test_real_propresenter_hosts_are_allowed(host):
@@ -255,15 +286,53 @@ def test_real_propresenter_hosts_are_allowed(host):
     "8.8.8.8", "1.1.1.1", "example.com",
     "169.254.169.254",            # cloud metadata — the classic SSRF target
     "169.254.169.254.nip.io",     # …and the DNS trick that reaches it
+    "134744072", "0x8080808",     # 8.8.8.8 spelt as dotless int / hex
 ])
 def test_public_and_metadata_hosts_are_refused(host):
     assert is_reachable_pp_host(host) is False, host
 
 
 def test_an_unresolvable_name_is_treated_as_unreachable():
-    """Failing closed: 'we couldn't check' must not mean 'allowed'."""
-    assert is_reachable_pp_host(
-        "no-such-host-anywhere.invalid") is False
+    """Failing closed: 'we couldn't check' must not mean 'allowed'.
+    Unresolvable also means unconnectable, so nothing real is lost."""
+    assert is_reachable_pp_host("no-such-host-anywhere.invalid") is False
+
+
+# ── the pin: the URL never contains the caller's string ──────────────────
+
+def test_pp_base_pins_a_name_to_its_vetted_address():
+    """The rebinding defence: we connect to the address we vetted, so a
+    name that answers differently at fetch time gains nothing."""
+    assert pp_base("macbook", "50001") == "http://192.168.1.20:50001"
+
+
+def test_pp_base_dials_the_private_record_of_a_dualstack_name():
+    assert pp_base("dualstack", "50001") == "http://192.168.1.30:50001"
+
+
+def test_pp_base_brackets_ipv6():
+    """'::1' used to be mangled to 'http://1:50001' by the character
+    strip — a request to host "1", not IPv6 loopback."""
+    assert pp_base("::1", "50001") == "http://[::1]:50001"
+
+
+def test_pp_base_refuses_with_a_message_an_operator_can_act_on():
+    with pytest.raises(UnreachableHost) as e:
+        pp_base("8.8.8.8", "50001")
+    assert "localhost" in str(e.value)
+
+
+def test_the_resolution_cache_expires(monkeypatch):
+    """A machine that changes address is picked up after the TTL."""
+    assert pp_base("macbook", "1") == "http://192.168.1.20:1"
+    _FAKE_DNS["macbook"] = ["192.168.1.99"]
+    try:
+        real = __import__("time").time()
+        monkeypatch.setattr(net.time, "time", lambda: real + 3600)
+        assert pp_base("macbook", "1") == "http://192.168.1.99:1"
+    finally:
+        _FAKE_DNS["macbook"] = ["192.168.1.20"]
+
 
 
 # ── the routes themselves ────────────────────────────────────────────────

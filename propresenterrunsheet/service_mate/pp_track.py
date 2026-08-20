@@ -226,7 +226,13 @@ def _maybe_advance_from_pp(state: dict) -> dict:
     settings = load_settings()
     host = settings.get("pp_host") or "localhost"
     port = settings.get("pp_port") or "50001"
-    base = f"http://{host}:{port}"
+    try:
+        from ..propresenter.net import pp_base
+        base = pp_base(host, port)
+    except Exception:
+        # Bad saved host: auto-track just has nothing to track this
+        # tick. The daemon must never die over a settings value.
+        return state
     items = state.get("items") or []
     if not items:
         return state

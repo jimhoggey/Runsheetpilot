@@ -1,24 +1,60 @@
-"""Building the ProPresenter base URL from operator settings.
+"""Building the ProPresenter base URL — validate, resolve, and PIN.
 
 `host` and `port` arrive from the browser (Settings form / request body).
-This is a single-user local app talking to the operator's own
-ProPresenter, so a user-chosen host is the feature — but the values
-still get clamped to a hostname/IP and a numeric port so nothing else
-(paths, credentials, a second URL) can ride along in them, and so log
-lines built from them stay single-line.
+Choosing the host is the feature — ProPresenter can be on another
+machine — but it is also an SSRF sink, so the boundary is enforced here,
+in the one function every ProPresenter URL must come from.
+
+The guard works by CONSTRUCTION, not by checking-then-passing-through:
+
+  1. the host is validated against the only places ProPresenter can be —
+     loopback, private ranges, link-local, LAN names;
+  2. a name is resolved ONCE, and the URL is built from the vetted IP,
+     never from the caller's string.
+
+Pinning to the resolved address closes the classic validate/fetch gap
+(DNS rebinding: a name that answers private for the check and public for
+the fetch), makes every IP-literal spelling trick (integer, hex, dotted
+octal) irrelevant, and fixes a real bug — "::1" used to be mangled to
+"http://1:50001" by the character-strip. It is also why the URL contains
+no request-derived string at all, which is what a taint analyser needs
+to see.
+
+Severity context, for whoever reads this during an audit: the app binds
+127.0.0.1 only, so reaching this API at all requires code already
+running on the operator's machine. The boundary is defence in depth,
+not the last line.
 """
 
 import ipaddress
 import re
+import socket
+import time
 
 _HOST_RE = re.compile(r"[^A-Za-z0-9.\-]")
 
-# Link-local is allowed because a direct ethernet cable between two
-# machines is a real AV setup — but these two addresses in that range are
-# the cloud metadata services, the classic SSRF target, and ProPresenter
-# is never behind them.
+# Link-local stays allowed — a direct ethernet cable between two machines
+# is a real AV setup — but these two addresses in that range are the
+# cloud metadata services, the classic SSRF target, and ProPresenter is
+# never behind them.
 _BLOCKED = {ipaddress.ip_address("169.254.169.254"),
             ipaddress.ip_address("fd00:ec2::254")}
+
+# Resolution cache: the media-assist poll and port discovery hit pp_base
+# every few seconds, and re-asking mDNS each time is pointless. Short TTL
+# so a machine that changes address is picked up within a minute.
+_CACHE_TTL_S = 30
+_cache: dict = {}
+
+
+class UnreachableHost(ValueError):
+    """The requested host isn't somewhere ProPresenter can be.
+
+    Carries a message written for the operator, so routes can return it
+    directly instead of inventing their own wording. An app-level
+    errorhandler in propresenter_app.py turns it into the standard
+    {"ok": false, "error": ...} shape for every route at once.
+    """
 
 
 def _permitted(ip) -> bool:
@@ -27,79 +63,99 @@ def _permitted(ip) -> bool:
     return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
 
 
-def is_reachable_pp_host(host) -> bool:
-    """True for a host ProPresenter could plausibly be running on.
+def _as_ip_literal(host: str):
+    """The host as an address object, decoding disguises, or None.
 
-    The app takes a host from the request body and fetches it, which is
-    an SSRF sink: without a limit, anyone who can reach this local API
-    could use the app to probe arbitrary internet addresses.
-
-    ProPresenter is never on the public internet — it is this machine or
-    another one on the church's LAN. So the honest boundary is loopback,
-    the private IPv4/IPv6 ranges, link-local, and bare or `.local`
-    hostnames. That keeps every real setup working (localhost,
-    192.168.1.153, "Fynns-MacBook-Air.local") and refuses the rest.
-
-    A hostname is resolved before judging it, so `evil.example.com`
-    pointing at a public address is rejected too. Resolution failure
-    means "not reachable", which is the safe answer either way.
+    "134744072" and "0x8080808" are dotless, so a naive "no dot means
+    LAN name" rule waves them through — and both are 8.8.8.8.
     """
-    host = (host or "").strip().lower()
-    if not host or host in ("localhost", "::1"):
-        return True
     try:
-        return _permitted(ipaddress.ip_address(host))
+        return ipaddress.ip_address(host)
     except ValueError:
-        pass                       # a name, not an address — resolve it
-    # A dotless label is a LAN name ("macbook") — but only if it looks
-    # like a name. "134744072" and "0x8080808" are dotless too, and both
-    # resolve to 8.8.8.8, so a digits-or-hex-only label is an IP literal
-    # in disguise and must go through the address check instead.
+        pass
     if re.fullmatch(r"(?:0x)?[0-9a-f]+", host):
         try:
-            return _permitted(ipaddress.ip_address(int(
-                host, 16 if host.startswith("0x") else 10)))
+            return ipaddress.ip_address(
+                int(host, 16 if host.startswith("0x") else 10))
         except Exception:
-            return False
-    if host.endswith(".local") or "." not in host:
-        return True                # mDNS / bare LAN name
+            return None
+    return None
+
+
+def resolve_pp_host(host):
+    """Validate `host` and return the vetted address to connect to.
+
+    Returns an ipaddress object, or None when the host is outside
+    loopback/LAN, unresolvable, or malformed. None is deliberate for
+    ALL failure modes — "we couldn't check" must not mean "allowed".
+
+    Names resolve through the OS (which covers .local via mDNS and bare
+    names via the LAN's own lookup), and the first permitted address is
+    pinned, IPv4 preferred. A record set that ALSO carries a public
+    address doesn't disqualify the name — we never connect to the public
+    one, which is the point of pinning.
+    """
+    host = (host or "").strip().lower().rstrip(".")
+    if not host or host == "localhost":
+        return ipaddress.ip_address("127.0.0.1")
+
+    literal = _as_ip_literal(host)
+    if literal is not None:
+        return literal if _permitted(literal) else None
+
+    if _HOST_RE.search(host):
+        return None                      # not a hostname shape at all
+
+    now = time.time()
+    hit = _cache.get(host)
+    if hit and hit[0] > now:
+        return hit[1]
+
     try:
-        import socket
         infos = socket.getaddrinfo(host, None)
     except Exception:
-        return False               # unresolvable: treat as unreachable
+        return None                      # unresolvable: fail closed
+
+    v4 = v6 = None
     for info in infos:
         try:
-            ip = ipaddress.ip_address(info[4][0])
+            # v6 sockaddrs can carry a %zone suffix on some platforms.
+            ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
         except Exception:
-            return False
+            continue
         if not _permitted(ip):
-            return False
-    return bool(infos)
+            continue
+        if ip.version == 4 and v4 is None:
+            v4 = ip
+        elif ip.version == 6 and v6 is None:
+            v6 = ip
+    resolved = v4 or v6
+    _cache[host] = (now + _CACHE_TTL_S, resolved)
+    return resolved
 
 
-class UnreachableHost(ValueError):
-    """The requested host isn't somewhere ProPresenter can be.
+def is_reachable_pp_host(host) -> bool:
+    """True when `host` is somewhere ProPresenter could actually be."""
+    return resolve_pp_host(host) is not None
 
-    Carries a message written for the operator, so routes can return it
-    directly instead of inventing their own wording.
-    """
+
+def reset_cache():
+    """Tests, and anywhere a stale resolution would confuse things."""
+    _cache.clear()
 
 
 def pp_base(host, port) -> str:
-    """A clean http://host:port with everything non-hostname stripped.
+    """The base URL to reach ProPresenter, or raise UnreachableHost.
 
-    RAISES UnreachableHost for anything outside loopback and the LAN.
-    The check lives here, not in the routes, because every ProPresenter
-    URL in the app is built through this one function — the first
-    version of this guard was wired into a single route and left four
-    other request-body-driven fetches wide open.
+    The returned URL's host is ALWAYS the string form of the vetted
+    address from resolve_pp_host — never the caller's input. See the
+    module docstring for why that construction is the security property.
     """
-    if not is_reachable_pp_host(host):
+    ip = resolve_pp_host(host)
+    if ip is None:
         raise UnreachableHost(
             f"{str(host)[:60]} isn't an address ProPresenter can be on. "
             f"Use localhost, or the computer's name or LAN IP.")
-    clean_host = _HOST_RE.sub("", str(host or "").strip()) or "localhost"
+    host_part = f"[{ip}]" if ip.version == 6 else str(ip)
     digits = re.sub(r"\D", "", str(port or ""))
-    clean_port = digits or "50001"
-    return f"http://{clean_host}:{clean_port}"
+    return f"http://{host_part}:{digits or '50001'}"
