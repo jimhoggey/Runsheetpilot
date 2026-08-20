@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,12 +34,12 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "If your runsheet asks for a countdown, I now check Service Visuals "
-    + "and tell you if one that length doesn't exist yet.",
-    "Countdowns already in your ProPresenter template stay quiet — "
-    + "you reuse those every week, nothing to do.",
-    "Exact lengths only. A 3-minute timer in a 5-minute slot is a wrong "
-    + "answer that looks right.",
+    "Fund your OpenRouter key and a short list of recommended models "
+    + "appears, priced per runsheet. Or paste any model you like.",
+    "Automatic still only ever uses free models — it will never start "
+    + "spending without being asked.",
+    "Every model in that list is checked against OpenRouter as you open "
+    + "it. Withdrawn ones just vanish.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.

@@ -168,38 +168,108 @@ async function loadModels(saved) {
   } catch (e) { /* offline — fall through to the degraded path below */ }
 
   sel.innerHTML = '';
-  const auto = document.createElement('option');
-  auto.value = '';
-  auto.textContent = data.auto
-    ? `Automatic — currently ${data.auto}`
-    : 'Automatic (recommended)';
-  sel.appendChild(auto);
-
-  for (const m of data.models || []) {
+  const group = (label) => {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    sel.appendChild(g);
+    return g;
+  };
+  const opt = (parent, value, text) => {
     const o = document.createElement('option');
-    o.value = m.id;
-    const k = Math.round((m.context_length || 0) / 1000);
-    o.textContent = k ? `${m.id} — ${k}k context` : m.id;
-    sel.appendChild(o);
+    o.value = value;
+    o.textContent = text;
+    parent.appendChild(o);
+    return o;
+  };
+
+  // Automatic is FREE-ONLY by design — it must work on a fresh install
+  // with an unfunded key and must never start spending unasked. The
+  // label says so rather than leaving it to be discovered on a bill.
+  opt(sel, '', data.auto
+    ? `Automatic (free) — currently ${data.auto}`
+    : 'Automatic (free models)');
+
+  // Paid picks appear only for a key that can actually pay for them.
+  if ((data.recommended || []).length) {
+    const g = group('Recommended for runsheets');
+    for (const r of data.recommended) {
+      const price = r.cost_per_parse === null || r.cost_per_parse === undefined
+        ? 'price varies'
+        : `~$${r.cost_per_parse.toFixed(4)} per runsheet`;
+      opt(g, r.id, `${r.starred ? '★ ' : ''}${r.label} — ${price}`);
+    }
   }
+
+  if ((data.models || []).length) {
+    const g = group(data.recommended && data.recommended.length
+      ? 'Free — no credit needed' : 'Free models');
+    for (const m of data.models) {
+      const k = Math.round((m.context_length || 0) / 1000);
+      opt(g, m.id, k ? `${m.id} — ${k}k context` : m.id);
+    }
+  }
+
+  opt(sel, '__other__', 'Other — paste any OpenRouter model id…');
 
   // Keep a saved model selectable even when it isn't in the free list —
   // it may be a paid model the user chose deliberately, or one that has since
   // been retired. Silently dropping it would look like the app forgot.
+  // A saved model that isn't in either group is still a legitimate
+  // choice — a paid id typed deliberately, or one since retired.
+  // Dropping it silently would look like the app forgot.
   if (saved && !Array.from(sel.options).some(o => o.value === saved)) {
-    const o = document.createElement('option');
-    o.value = saved;
-    o.textContent = data.available ? `${saved} — not in the free list` : saved;
-    sel.appendChild(o);
+    const g = group('Your choice');
+    opt(g, saved, data.available ? `${saved} — not in the lists above` : saved);
   }
   sel.value = saved || '';
+  _modelNote(data);
+}
 
-  if (note) {
-    note.textContent = data.available
-      ? ''
-      : 'Could not reach OpenRouter, so the model list is unavailable. '
-        + 'Your saved model still works.';
+// "Other…" swaps the dropdown for a text box so any OpenRouter id can be
+// pasted, and back again on blur if it's left empty.
+function onModelChange() {
+  const sel = document.getElementById('or-model');
+  const box = document.getElementById('or-model-other');
+  if (sel.value !== '__other__') {
+    if (box) box.hidden = true;
+    saveSettings();
+    return;
   }
+  box.hidden = false;
+  box.querySelector('input').focus();
+}
+
+function applyOtherModel() {
+  const box = document.getElementById('or-model-other');
+  const id = box.querySelector('input').value.trim();
+  const sel = document.getElementById('or-model');
+  if (!id) { sel.value = ''; box.hidden = true; saveSettings(); return; }
+  let existing = Array.from(sel.options).find(o => o.value === id);
+  if (!existing) {
+    existing = document.createElement('option');
+    existing.value = id;
+    existing.textContent = `${id} — your choice`;
+    sel.appendChild(existing);
+  }
+  sel.value = id;
+  box.hidden = true;
+  saveSettings();
+}
+
+function _modelNote(data) {
+  const note = document.getElementById('or-model-note');
+  if (!note) return;
+  if (!data.available) {
+    note.textContent = 'Could not reach OpenRouter, so the model list is '
+      + 'unavailable. Your saved model still works.';
+    return;
+  }
+  note.innerHTML = data.funded
+    ? 'Your key is funded, so the paid picks above are available. '
+      + '<strong>Automatic</strong> still only ever uses free models.'
+    : '<strong>Automatic</strong> picks the best free model each time. '
+      + 'Add credit at openrouter.ai to unlock the recommended models — '
+      + 'a runsheet costs a fraction of a cent.';
 }
 
 async function loadSettings() {

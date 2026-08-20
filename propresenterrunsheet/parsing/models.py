@@ -35,6 +35,55 @@ import time
 log = logging.getLogger("pp_runsheet")
 
 CATALOGUE_URL = "https://openrouter.ai/api/v1/models"
+KEY_URL = "https://openrouter.ai/api/v1/key"
+
+# A curated shortlist for THIS workload, offered only when the key is
+# funded. Deliberately short: a wall of 300 models is not a choice, it is
+# a research project, and the operator is trying to build a runsheet.
+#
+# The workload is structured extraction from ~30 lines of text against a
+# fixed schema — which small INSTRUCT models do reliably and cheaply.
+# Reasoning models are the wrong tool and measurably worse here: the one
+# tested (gpt-oss-120b) took 230s on one run and forgot the title rule.
+RECOMMENDED = [
+    {
+        "id": "openai/gpt-4.1-mini",
+        "label": "GPT-4.1 mini",
+        "why": "Built for structured extraction. Consistent run to run — "
+               "the reason to pay is repeatability, not raw ability.",
+        "starred": True,
+    },
+    {
+        "id": "qwen/qwen3-30b-a3b-instruct-2507",
+        "label": "Qwen3 30B Instruct",
+        "why": "Cheapest of these and the only one measured on a real "
+               "runsheet here: every timed row, titles normalised, twice.",
+        "starred": False,
+    },
+    {
+        "id": "anthropic/claude-haiku-4.5",
+        "label": "Claude Haiku 4.5",
+        "why": "Strong instruction-following. Dearer than the others, "
+               "still fractions of a cent per runsheet.",
+        "starred": False,
+    },
+    {
+        "id": "openrouter/auto",
+        "label": "OpenRouter Auto",
+        "why": "Lets OpenRouter choose per request. Convenient, but it "
+               "picks a DIFFERENT model each time — so a good parse and a "
+               "bad one can't be told apart, or reproduced.",
+        "starred": False,
+    },
+]
+
+# Token counts for a representative parse — a runsheet plus the prompt in,
+# the JSON items out. Used only to show an order-of-magnitude price, so
+# nobody has to open a pricing page to answer "will this cost me anything
+# real?". Measured against an actual run: Qwen billed $0.000295, this
+# estimates $0.00039.
+_EST_PROMPT_TOKENS = 3500
+_EST_COMPLETION_TOKENS = 800
 
 # Ids that dispatch to some other model per-request. Matched as a prefix so a
 # future `openrouter/free-v2` is caught too. These are excluded from
@@ -149,6 +198,85 @@ def resolve_model(configured: str, catalogue: dict):
                     "(retired?) — falling back to automatic selection",
                     str(configured).replace("\r", " ").replace("\n", " ")[:100])
     return pick_default_model(catalogue)
+
+
+def estimate_cost(model: dict):
+    """Rough cost of one parse, in dollars, or None if not priced."""
+    pricing = (model or {}).get("pricing") or {}
+    try:
+        prompt = float(pricing.get("prompt") or 0)
+        completion = float(pricing.get("completion") or 0)
+    except (TypeError, ValueError):
+        return None
+    if prompt < 0 or completion < 0:
+        # Routers carry sentinel pricing (-1) because the real price is
+        # whatever the model they pick charges. Computing with it yields
+        # a confident, enormous, negative number.
+        return None
+    if prompt == 0 and completion == 0:
+        return 0.0
+    return (prompt * _EST_PROMPT_TOKENS
+            + completion * _EST_COMPLETION_TOKENS)
+
+
+def recommended_models(catalogue: dict) -> list:
+    """The curated shortlist, filtered against the LIVE catalogue.
+
+    NOTHING is offered unless OpenRouter currently lists it — no
+    exceptions, not even the router. A shortlist is a hardcoded list of
+    ids, and hardcoded ids are precisely how this app once shipped a
+    default that 404'd on every install until a new release. An operator
+    cannot diagnose "that model was withdrawn last week"; the only
+    honest behaviour is for it to disappear.
+
+    The star follows availability too: if the starred model is gone, the
+    next surviving entry is starred, so there is always exactly one
+    recommendation rather than a list with nothing marked.
+    """
+    known = {m.get("id"): m for m in (catalogue or {}).get("data") or []
+             if isinstance(m, dict)}
+    out = []
+    for entry in RECOMMENDED:
+        model = known.get(entry["id"])
+        if model is None:
+            log.info("Recommended model %r is not in OpenRouter's catalogue "
+                     "— withdrawn or renamed; leaving it out", entry["id"])
+            continue
+        out.append({**entry,
+                    "context_length": model.get("context_length") or 0,
+                    # A router's price is whatever it dispatches to, so
+                    # it has none of its own to show.
+                    "cost_per_parse": (None if is_router(entry["id"])
+                                       else estimate_cost(model))})
+    if out and not any(r["starred"] for r in out):
+        out[0] = {**out[0], "starred": True}
+    return out
+
+
+def fetch_key_info(api_key: str, http_get=None, timeout=8) -> dict:
+    """Is this key funded? `{"funded": bool|None, "usage": float}`.
+
+    funded=None means "couldn't tell" (offline, or the key is bad), and
+    the caller treats that as free-tier — showing paid models to someone
+    who can't use them produces a 402 on their first parse, which is a
+    much worse failure than a shorter list.
+    """
+    if not (api_key or "").strip():
+        return {"funded": None, "usage": 0.0}
+    if http_get is None:
+        import requests
+        http_get = requests.get
+    try:
+        resp = http_get(KEY_URL, timeout=timeout,
+                        headers={"Authorization": f"Bearer {api_key}"})
+        resp.raise_for_status()
+        data = (resp.json() or {}).get("data") or {}
+    except Exception as e:
+        log.info("Could not read OpenRouter key info (%s)", type(e).__name__)
+        return {"funded": None, "usage": 0.0}
+    free_tier = data.get("is_free_tier")
+    return {"funded": (None if free_tier is None else not free_tier),
+            "usage": float(data.get("usage") or 0.0)}
 
 
 def fetch_catalogue(http_get=None, timeout=10, force=False):

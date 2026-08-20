@@ -488,9 +488,16 @@
           <label for="or-model">Model</label>
           <!-- Populated by loadModels() in app.js from /api/models. The empty
                value means "automatic" and is what a fresh install saves. -->
-          <select id="or-model">
-            <option value="">Automatic (recommended)</option>
+          <select id="or-model" onchange="onModelChange()">
+            <option value="">Automatic (free models)</option>
           </select>
+          <!-- Revealed by picking "Other…". Any OpenRouter model id works,
+               including paid ones the shortlist doesn't cover. -->
+          <div id="or-model-other" hidden style="margin-top:6px">
+            <input type="text" placeholder="e.g. openai/gpt-4.1"
+                   onblur="applyOtherModel()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();applyOtherModel();}">
+          </div>
           <p class="settings-hint" id="or-model-note"></p>
         </div>
         <button class="btn btn-dim btn-sm" style="margin-top:4px"
