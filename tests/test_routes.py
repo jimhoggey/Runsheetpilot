@@ -360,3 +360,62 @@ def test_catch_all_returns_500_for_non_http_exception(app_module):
         resp, status = app_module._unhandled(RuntimeError("kaboom"))
     assert status == 500
     assert "kaboom" in resp.get_json()["error"]
+
+
+# ── clock errors a volunteer can act on ──────────────────────────────────
+# The raw requests text — "HTTPConnectionPool(host='192.168.1.119',
+# port=80): Max retries exceeded with url: /app.json (Caused by
+# NewConnectionError(… [Errno 65] No route to host))" — was reaching the
+# UI verbatim. It reads like a crash and says nothing about what to do.
+#
+# The real incident behind these: the clock was momentarily off Wi-Fi and
+# came back on its own. The IP was right the whole time, but the message
+# sent the operator hunting for a wrong IP.
+
+import pytest
+import requests as _req
+
+from propresenterrunsheet.service_mate.geekmagic import clock_error_message
+
+
+def test_unreachable_says_asleep_not_wrong_ip():
+    """These clocks drop off Wi-Fi and return. Sending someone to
+    re-check a correct IP is the wrong first instruction."""
+    exc = _req.exceptions.ConnectionError(
+        "HTTPConnectionPool(host='192.168.1.119', port=80): Max retries "
+        "exceeded with url: /app.json (Caused by NewConnectionError("
+        "'<urllib3.connection.HTTPConnection object>: Failed to establish a "
+        "new connection: [Errno 65] No route to host'))")
+    msg = clock_error_message(exc, "192.168.1.119")
+    assert "asleep" in msg or "Wi-Fi" in msg
+    assert "power cycle" in msg
+    assert "192.168.1.119" in msg
+
+
+def test_refused_points_at_the_wrong_device():
+    exc = _req.exceptions.ConnectionError("Connection refused")
+    msg = clock_error_message(exc, "192.168.1.5")
+    assert "isn't the clock" in msg
+
+
+def test_timeout_says_it_is_there_but_silent():
+    exc = _req.exceptions.ConnectTimeout("timed out")
+    msg = clock_error_message(exc, "192.168.1.9")
+    assert "didn't answer in time" in msg
+
+
+@pytest.mark.parametrize("exc", [
+    _req.exceptions.ConnectionError(
+        "HTTPConnectionPool(host='x', port=80): Max retries exceeded"),
+    _req.exceptions.ConnectTimeout("timed out"),
+    _req.exceptions.HTTPError("500 Server Error"),
+    ValueError("something odd"),
+])
+def test_no_message_ever_leaks_the_library_internals(exc):
+    """urllib3 nouns in the UI are how a volunteer decides the app is
+    broken and stops trusting it."""
+    msg = clock_error_message(exc, "192.168.1.1")
+    for noise in ("HTTPConnectionPool", "urllib3", "Max retries",
+                  "NewConnectionError", "Errno", "Traceback"):
+        assert noise not in msg, f"{noise!r} leaked: {msg}"
+    assert msg.endswith(".")

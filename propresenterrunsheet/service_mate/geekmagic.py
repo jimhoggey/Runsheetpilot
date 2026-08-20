@@ -19,6 +19,8 @@ import logging
 from .constants import SM_FILENAME, SM_ULTRA_IMAGE_THEME
 
 
+from ..logging_setup import log_safe
+
 log = logging.getLogger("pp_runsheet")
 
 
@@ -95,6 +97,46 @@ def _set_clock_brightness(ip: str, brt: int) -> bool:
         return False
 
 
+def clock_error_message(exc, ip: str) -> str:
+    """Turn a requests failure into something a volunteer can act on.
+
+    The raw text is a wall — "HTTPConnectionPool(host='192.168.1.119',
+    port=80): Max retries exceeded with url: /app.json (Caused by
+    NewConnectionError(... [Errno 65] No route to host))" — which reads
+    like a crash and says nothing about what to do.
+
+    The distinctions that actually matter to the person standing at the
+    desk, in the order they'd try them:
+
+      no route / unreachable  the clock is asleep or off the Wi-Fi.
+                              These devices drop off and come back, so
+                              this is usually "wait a moment or power
+                              cycle", NOT a wrong IP.
+      refused                 something IS at that address but nothing
+                              is listening — usually the wrong device.
+      timeout                 on the network but not answering.
+    """
+    import requests as req
+
+    text = str(exc).lower()
+    if isinstance(exc, req.exceptions.ConnectTimeout) or "timed out" in text:
+        return (f"The clock at {ip} didn't answer in time. It's on the "
+                f"network but not responding — try again, or power cycle it.")
+    if "no route to host" in text or "unreachable" in text:
+        return (f"Can't reach the clock at {ip}. It's most likely asleep or "
+                f"off the Wi-Fi — these clocks drop off and come back, so "
+                f"give it a moment or power cycle it. If it never comes "
+                f"back, check the IP on the clock's own screen.")
+    if "refused" in text:
+        return (f"{ip} refused the connection. Something is at that address "
+                f"but it isn't the clock — check the IP on the clock's screen.")
+    if isinstance(exc, req.exceptions.ConnectionError):
+        return (f"Couldn't connect to the clock at {ip}. Check it's powered "
+                f"on and on the same Wi-Fi as this computer.")
+    return (f"The clock at {ip} didn't respond as expected. Check it's "
+            f"powered on and on the same Wi-Fi as this computer.")
+
+
 def _probe_clock(ip: str) -> dict:
     import requests as req
     try:
@@ -107,4 +149,8 @@ def _probe_clock(ip: str) -> dict:
             data = {"raw": r.text[:200]}
         return {"ok": True, "data": data}
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        # Full detail to app.log for whoever debugs it; a plain sentence
+        # to the person who just wants their clock working.
+        log.info("Clock probe failed for %s: %s: %s",
+                 log_safe(ip), type(e).__name__, log_safe(str(e), 200))
+        return {"ok": False, "error": clock_error_message(e, ip)}

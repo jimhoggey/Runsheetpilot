@@ -90,6 +90,23 @@ if [ ! -d "dist/${APP_BUNDLE_NAME}" ]; then
     exit 1
 fi
 
+# ── Local Network permission (macOS 15+) ─────────────────────────────────────
+# Service Mate reaches GeekMagic clocks on the LAN by IP, and ProPresenter can
+# be on another machine the same way. Since macOS 15 that needs Local Network
+# access, and WITHOUT this key the OS denies it — the app then sees
+# `[Errno 65] No route to host` for a device that answers curl from Terminal
+# in the same second. It looks exactly like a dead clock or a wrong IP, which
+# is how it was misdiagnosed twice before the cause was found.
+#
+# The string is what macOS shows in its permission prompt, so it is written
+# for the operator rather than for us.
+PLIST="dist/${APP_BUNDLE_NAME}/Contents/Info.plist"
+plutil -replace NSLocalNetworkUsageDescription \
+    -string "Runsheet Pilot needs Local Network access to reach ProPresenter and your Service Mate clocks on this network." \
+    "$PLIST"
+plutil -lint "$PLIST" >/dev/null || { echo "ERROR: Info.plist is malformed"; exit 1; }
+echo "Info.plist: Local Network usage description added"
+
 echo "App bundle built: dist/${APP_BUNDLE_NAME}"
 
 # ── Make the .dmg ────────────────────────────────────────────────────────────
