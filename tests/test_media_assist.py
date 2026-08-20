@@ -204,7 +204,7 @@ def test_a_remote_host_is_told_where_to_look_not_scanned(monkeypatch):
         raise AssertionError("must not read local prefs for a remote host")
     monkeypatch.setattr(discovery, "local_pp_settings", boom)
     port, note = discovery.resolve_port(
-        "192.168.1.153", "50001", probe=lambda h, p: False)
+        "192.168.1.50", "50001", probe=lambda h, p: False)
     assert port == "50001"
     assert "Integrations" in note and "not always 50001" in note
 
@@ -220,7 +220,7 @@ def test_prefs_port_that_does_not_answer_is_reported_honestly(monkeypatch):
 
 @pytest.mark.parametrize("host,expected", [
     ("localhost", True), ("127.0.0.1", True), ("", True),
-    ("192.168.1.153", False), ("Fynns-MacBook-Air.local", False),
+    ("192.168.1.50", False), ("Sound-Desk-Mac.local", False),
 ])
 def test_is_local(host, expected):
     assert discovery.is_local(host) is expected
@@ -242,10 +242,10 @@ from propresenterrunsheet.propresenter.net import (
     UnreachableHost, is_reachable_pp_host, pp_base)
 
 # Name lookups go through a fake resolver so these tests mean the same
-# thing on this Mac (where Fynns-MacBook-Air.local really resolves) and
+# thing on this Mac (where Sound-Desk-Mac.local really resolves) and
 # on a CI runner (where nothing does).
 _FAKE_DNS = {
-    "fynns-macbook-air.local": ["192.168.1.153"],
+    "sound-desk-mac.local": ["192.168.1.50"],
     "macbook": ["192.168.1.20"],
     "av1": ["10.0.0.5"],
     "example.com": ["93.184.216.34"],
@@ -271,9 +271,9 @@ def _fake_resolver(monkeypatch):
 
 @pytest.mark.parametrize("host", [
     "localhost", "127.0.0.1", "::1", "",
-    "192.168.1.153",              # the operator's own LAN address
+    "192.168.1.50",              # the operator's own LAN address
     "10.0.0.5", "172.16.4.9",
-    "Fynns-MacBook-Air.local",    # mDNS, what PP advertises itself as
+    "Sound-Desk-Mac.local",    # mDNS, what PP advertises itself as
     "macbook",                    # bare LAN name
     "dualstack",                  # LAN name with a stray public record
     "169.254.1.1",                # direct ethernet between two machines

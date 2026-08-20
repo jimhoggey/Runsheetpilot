@@ -121,10 +121,10 @@ def test_env_var_can_force_it_off(monkeypatch):
 # ── scrubbing ────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("raw,banned", [
-    ("[Errno 13] Permission denied: '/Users/fynnj/Documents/Runsheet.pdf'",
-     ["fynnj", "Runsheet", "Documents"]),
-    (r"C:\Users\fynnj\AppData\Local\Temp\_MEI123\index.html",
-     ["fynnj", "AppData", "index.html"]),
+    ("[Errno 13] Permission denied: '/Users/operatorj/Documents/Runsheet.pdf'",
+     ["operatorj", "Runsheet", "Documents"]),
+    (r"C:\Users\operatorj\AppData\Local\Temp\_MEI123\index.html",
+     ["operatorj", "AppData", "index.html"]),
     (r"cannot open \\server\share\C3 SUMMIT 2025.mp4", ["SUMMIT", "server"]),
     ("KeyError('Youth Service : Community Night')",
      ["Youth", "Community"]),
@@ -142,8 +142,8 @@ def test_scrub_keeps_the_useful_shape():
 
 
 def test_scrub_replaces_the_os_username(monkeypatch):
-    monkeypatch.setenv("USER", "fynnj")
-    assert "fynnj" not in stats.scrub("failed for user fynnj today")
+    monkeypatch.setenv("USER", "operatorj")
+    assert "operatorj" not in stats.scrub("failed for user operatorj today")
 
 
 def test_scrub_is_length_capped():
@@ -161,14 +161,14 @@ def test_report_error_sends_shape_not_content(monkeypatch):
     _enable(monkeypatch)
     try:
         raise FileNotFoundError(
-            "[Errno 2] No such file: '/Users/fynnj/Youth Runsheet.pdf'")
+            "[Errno 2] No such file: '/Users/operatorj/Youth Runsheet.pdf'")
     except FileNotFoundError as e:
         stats.report_error(e, where_kind="route", route="create_playlist")
     ev = _drain()[0]
     assert ev["eventName"] == "crash"
     assert ev["props"]["error"] == "FileNotFoundError"
     assert ev["props"]["where_kind"] == "route"
-    assert "fynnj" not in ev["props"]["msg"]
+    assert "operatorj" not in ev["props"]["msg"]
     assert "Youth" not in ev["props"]["msg"]
     # `where` is basenames + line numbers only, never full paths.
     assert "/" not in ev["props"]["where"]
