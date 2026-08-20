@@ -10,7 +10,10 @@ from flask import Blueprint, jsonify, request
 
 from ..config import DATA_DIR, VERSION, WHATS_NEW
 from ..parsing.ai import DEFAULT_PROMPT
-from ..parsing.models import fetch_catalogue, pick_default_model, usable_models
+from ..parsing.models import (
+    fetch_catalogue, fetch_key_info, pick_default_model,
+    recommended_models, usable_models,
+)
 from ..propresenter.paths import find_library_dirs, find_pp_root
 from ..settings import load_settings, save_settings
 from .. import stats
@@ -32,15 +35,34 @@ def get_models():
     empty rather than erroring when OpenRouter can't be reached, so Settings
     still opens offline.
     """
-    catalogue = fetch_catalogue()
+    # force=True: the catalogue is cached for hours, which is right for
+    # the parse path but wrong here — this is the moment the operator is
+    # LOOKING at the list, and a model withdrawn since launch must not
+    # still be offered. One request, fails soft to the cache.
+    catalogue = fetch_catalogue(force=True)
+    # Is the key funded? Paid models are offered only when it is —
+    # showing them to someone who can't pay produces a 402 on their first
+    # parse, which is a far worse first impression than a shorter list.
+    # Unknown (offline, bad key) is treated as not funded.
+    key = (load_settings().get("or_key") or "").strip()
+    info = fetch_key_info(key)
+    funded = bool(info.get("funded"))
+
     if not catalogue:
-        return jsonify({"models": [], "auto": None, "available": False})
+        return jsonify({"models": [], "auto": None, "available": False,
+                        "recommended": [], "funded": funded})
     models = [{"id": m["id"],
                "name": m.get("name") or m["id"],
                "context_length": m.get("context_length") or 0}
               for m in usable_models(catalogue)]
     return jsonify({"models": models,
+                    # Automatic is FREE-ONLY, by design: it must work on
+                    # a fresh install with an unfunded key, and it must
+                    # never start spending without being asked.
                     "auto": pick_default_model(catalogue),
+                    "recommended": recommended_models(catalogue) if funded
+                                   else [],
+                    "funded": funded,
                     "available": True})
 
 
