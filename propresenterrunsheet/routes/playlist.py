@@ -20,6 +20,7 @@ from .flags import matching_enabled
 from .. import stats
 from ..logging_setup import log_safe
 from ..propresenter.media_bin import fetch_media_bin, relink_media
+from ..propresenter.discovery import resolve_port
 from ..propresenter.net import pp_base
 from ..propresenter.paths import find_playlist_dir, find_pp_root
 from ..propresenter.playlist import build_playlist_payload
@@ -324,25 +325,54 @@ def api_create_playlist():
 
 @bp.route("/api/test_connection", methods=["POST"])
 def api_test_connection():
+    """Test the link to ProPresenter, finding the port if need be.
+
+    ProPresenter does not always listen on 50001 — a real machine here
+    ran on 55416, which made every library and template lookup fail with
+    nothing on screen to explain it. When the configured port doesn't
+    answer and PP is on this machine, its own preferences say which port
+    it chose; the UI writes the discovered value back into the box so the
+    fix sticks.
+    """
     import requests as req
+    from ..settings import load_settings
+
     body = request.get_json(silent=True) or {}
     host = body.get("host") or "localhost"
-    port = body.get("port") or "50001"
+    port = str(body.get("port") or "50001")
+
+    def _probe(h, p) -> bool:
+        try:
+            return req.get(f"{pp_base(h, p)}/version", timeout=2).ok
+        except Exception:
+            return False
+
+    note = ""
+    if (load_settings().get("auto_port") is not False):
+        original = port
+        port, note = resolve_port(host, port, probe=_probe)
+        if port != original:
+            # Worth measuring: if this fires often, 50001 is the wrong
+            # default to ship.
+            stats.track("port_discovered", was=original, now=port)
+
     base = pp_base(host, port)
     try:
         r = req.get(f"{base}/v1/libraries", timeout=4)
         r.raise_for_status()
         libs = r.json()
         return jsonify({"ok": True,
-                        "count": len(libs) if hasattr(libs, "__len__") else 0})
+                        "count": len(libs) if hasattr(libs, "__len__") else 0,
+                        "port": port, "note": note})
     except req.exceptions.ConnectionError:
         # The raw requests error ("HTTPConnectionPool… Max retries exceeded
         # … Errno 61") reads like a stack trace to a volunteer. Say only
-        # what happened and what to do.
-        return jsonify({"ok": False, "error":
-            f"Can't reach ProPresenter at {host}:{port}."})
+        # what happened and what to do — `note` usually already does.
+        return jsonify({"ok": False, "port": port, "note": note, "error":
+            note or f"Can't reach ProPresenter at {host}:{port}."})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": False, "port": port, "note": note,
+                        "error": str(e)})
 
 
 @bp.route("/api/pp/playlists", methods=["GET"])

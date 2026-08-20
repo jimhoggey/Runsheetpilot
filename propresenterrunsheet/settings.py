@@ -44,6 +44,18 @@ def _default_settings() -> dict:
         # genuinely anonymous — names and numbers, never runsheet
         # content — and this single constant is where to flip it.
         "stats_enabled": True,
+        # Read ProPresenter's own port out of its preferences when the
+        # configured one doesn't answer. On by default: it is a fix for a
+        # silent failure (a real machine ran on 55416 while the app
+        # assumed 50001), it only ever engages AFTER the configured port
+        # has failed, and it never overrides a port that works.
+        "auto_port": True,
+        # The downloaded-media assist panel. OFF by default — new, and it
+        # lists filenames from the operator's Downloads folder, which is
+        # not something to switch on for someone without asking.
+        "media_assist": False,
+        # Folders it watches. Empty means Downloads + Desktop.
+        "media_assist_dirs": [],
         # User-customised AI prompt. Empty string = use built-in DEFAULT_PROMPT.
         "ai_prompt":     "",
         # UUID of the PP playlist used as a template at parse time. When

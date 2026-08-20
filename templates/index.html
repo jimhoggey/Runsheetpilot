@@ -247,6 +247,24 @@
     <span id="next-step-text"></span>
   </div>
 
+  <!-- Downloaded-media assist — hidden unless the setting is on AND
+       there is something to show. Populated by loadMediaAssist(). -->
+  <div class="step-card" id="media-assist-card" hidden>
+    <div class="step-header">
+      <div class="step-badge"><span class="step-num">＋</span></div>
+      <div class="step-title">New media to import</div>
+      <div class="step-meta" id="media-assist-meta"></div>
+    </div>
+    <div class="step-body">
+      <p class="step-desc">
+        Recently downloaded media. ProPresenter can only take media that's
+        in its <strong>Media</strong> tab — drag these in and they'll link
+        automatically.
+      </p>
+      <div id="media-assist-list"></div>
+    </div>
+  </div>
+
   <!-- ── STEP 3 — CREATE ──────────────────────────────────────────── -->
   <div class="step-card state-locked" id="step-card-3">
     <div class="step-header">
@@ -604,6 +622,39 @@
           <strong>Never</strong> your runsheets, song titles, media names,
           file names or file paths, and there is no account or device ID.
           Turn it off any time; it takes effect immediately.
+        </p>
+      </section>
+
+      <!-- New-feature switches. Both default the way they do for a
+           reason: auto-port is a fix for a silent failure and only ever
+           engages after the configured port has already failed, so it is
+           on; media assist lists filenames from the operator's Downloads
+           folder, so it is off until they ask for it. -->
+      <section class="settings-section">
+        <h3>Extras</h3>
+
+        <label class="settings-check">
+          <input type="checkbox" id="auto-port" checked>
+          <span>Find ProPresenter's port automatically</span>
+        </label>
+        <p class="settings-hint" style="margin-left:24px;margin-top:4px">
+          ProPresenter doesn't always use port 50001. If the port above
+          doesn't answer and ProPresenter is on this computer, Runsheet
+          Pilot reads the real one from ProPresenter's own settings and
+          switches to it. A port you typed that works is never changed.
+        </p>
+
+        <label class="settings-check" style="margin-top:14px">
+          <input type="checkbox" id="media-assist">
+          <span>Show new downloads to import <em>(experimental)</em></span>
+        </label>
+        <p class="settings-hint" style="margin-left:24px;margin-top:4px">
+          After parsing, lists media added to your Downloads and Desktop
+          in the last two days, and guesses which runsheet item each one
+          belongs to. ProPresenter's API can't import media, so you still
+          drag the file into its Media tab — but Runsheet Pilot spots it
+          the moment you do and links it. Reads file <strong>names</strong>
+          only, never contents.
         </p>
       </section>
 

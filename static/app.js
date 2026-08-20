@@ -20,7 +20,7 @@ let suppressAutoSave = true; // suppress during initial loadSettings()
 
 const AUTOSAVE_FIELDS = [
   'or-key', 'or-model', 'lib-dir', 'export-dir', 'sm-hide',
-  'stats-enabled',
+  'stats-enabled', 'auto-port', 'media-assist',
   'pp-host', 'pp-port', 'pp-host2', 'pp-port2', 'threshold',
   'create-timers', 'template-playlist'
 ];
@@ -210,6 +210,8 @@ async function loadSettings() {
   document.getElementById('pp-port2').value   = s.pp_port  || '50001';
   document.getElementById('or-key').value     = s.or_key   || '';
   document.getElementById('stats-enabled').checked = s.stats_enabled !== false;
+  document.getElementById('auto-port').checked     = s.auto_port !== false;
+  document.getElementById('media-assist').checked  = !!s.media_assist;
   // Populate the model dropdown from OpenRouter's live catalogue, then select
   // whatever is saved. Empty = Automatic. Awaited so the saved value has an
   // <option> to land on — otherwise assigning .value to a <select> that
@@ -315,6 +317,8 @@ async function saveSettings() {
     pp_port:                 document.getElementById('pp-port2').value,
     or_key:                  document.getElementById('or-key').value,
     stats_enabled:           document.getElementById('stats-enabled').checked,
+    auto_port:               document.getElementById('auto-port').checked,
+    media_assist:            document.getElementById('media-assist').checked,
     or_model:                document.getElementById('or-model').value,
     library_dir:             document.getElementById('lib-dir').value,
     lib_source:              libSourceMode,
@@ -534,6 +538,90 @@ async function loadTemplatePlaylists(selectUuid) {
     setPPDot(false);
     status.innerHTML = `<span style="color:var(--red)">Could not load playlists: ${escapeHtml(String(e))}</span>`;
   }
+}
+
+// ─── Downloaded-media assist ──────────────────────────────────────────────
+// ProPresenter's media API is read-only and its Media bin is a registry,
+// not a folder — a file copied into PP's media folder stays invisible
+// (verified against a real install). So the drag is irreducible. What the
+// app does is everything around it: find the file, say which runsheet
+// item it's for, and notice the moment it lands in the bin.
+let _mediaAssistTimer = null;
+
+async function loadMediaAssist() {
+  const card = document.getElementById('media-assist-card');
+  if (!card) return;
+  try {
+    const res = await fetch('/api/media_assist', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        items: matchedItems.map(mi => mi.parsed),
+        host: document.getElementById('pp-host2').value,
+        port: document.getElementById('pp-port2').value,
+      })
+    }).then(r => r.json());
+
+    if (!res.enabled || !(res.files || []).length) { card.hidden = true; return; }
+    renderMediaAssist(res);
+    card.hidden = false;
+  } catch (e) {
+    card.hidden = true;
+  }
+}
+
+function renderMediaAssist(res) {
+  const pending = res.files.filter(f => !f.in_bin);
+  document.getElementById('media-assist-meta').textContent =
+    pending.length ? `${pending.length} to import` : 'all imported';
+
+  document.getElementById('media-assist-list').innerHTML = res.files.map(f => {
+    const kb = f.size > 1048576
+      ? (f.size / 1048576).toFixed(1) + ' MB'
+      : Math.round(f.size / 1024) + ' KB';
+    const age = f.age_h < 1 ? 'just now'
+      : (f.age_h < 24 ? Math.round(f.age_h) + 'h ago'
+                      : Math.round(f.age_h / 24) + 'd ago');
+    const forItem = f.suggested
+      ? `<span style="color:var(--acc-2)">→ ${escapeHtml(f.suggested.title)}</span>`
+      : '<span style="color:var(--dim)">no obvious match</span>';
+    const state = f.in_bin
+      ? '<span style="color:var(--grn);font-weight:600">✓ in ProPresenter</span>'
+      : `<button class="btn btn-dim btn-sm" onclick="revealMedia(this)"
+                 data-path="${escapeHtml(f.path)}">Show me the file</button>`;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:9px 0;
+                        border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;
+                    white-space:nowrap">${escapeHtml(f.name)}</div>
+        <div class="hint">${kb} · ${age} · ${forItem}</div>
+      </div>
+      <div style="flex:none">${state}</div>
+    </div>`;
+  }).join('');
+
+  // PP writes its Media registry the instant a file is dropped in, so a
+  // short poll while the panel is open picks the import up within a
+  // second or two. Stops as soon as nothing is pending.
+  clearInterval(_mediaAssistTimer);
+  if (pending.length) {
+    _mediaAssistTimer = setInterval(loadMediaAssist, 3000);
+  }
+}
+
+async function revealMedia(btn) {
+  const path = btn.dataset.path;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await fetch('/api/media_assist/reveal', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path})
+    }).then(r => r.json());
+    btn.textContent = res.ok ? 'Drag it into Media →' : 'Couldn\'t open';
+  } catch (e) {
+    btn.textContent = 'Couldn\'t open';
+  }
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Show me the file'; }, 4000);
 }
 
 // ─── Config drawer ────────────────────────────────────────────────────────
@@ -803,6 +891,17 @@ async function _runTest(host, port) {
     body: JSON.stringify({host, port})
   }).then(r => r.json());
   setPPDot(!!res.ok);
+  // The backend may have found ProPresenter on a different port (it does
+  // not always use 50001). Write the working value back into the field
+  // and save it, or the operator fixes the same thing every launch.
+  if (res.ok && res.port && res.port !== String(port)) {
+    ['pp-port2', 'pp-port'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = res.port;
+    });
+    saveSettings();
+    setStatus(`🔌 ${escapeHtml(res.note || 'Found ProPresenter on port ' + res.port + '.')}`);
+  }
   return res;
 }
 
@@ -819,7 +918,7 @@ async function testConnection2() {
     document.getElementById('pp-host2').value,
     document.getElementById('pp-port2').value);
   alert(res.ok
-    ? `✅ Connected — ProPresenter is ready.`
+    ? (res.note ? `✅ Connected.\n\n${res.note}` : `✅ Connected — ProPresenter is ready.`)
     : `❌ ${res.error}\nOpen ProPresenter and turn on Network (Preferences → Integrations), then try again.`);
 }
 
@@ -937,6 +1036,8 @@ async function rematchNow() {
 
 // ─── Start over — wipe the parsed state back to a fresh Step 1 ───────────
 function resetFlow() {
+  clearInterval(_mediaAssistTimer);
+  document.getElementById('media-assist-card').hidden = true;
   uploadedFile = null;
   matchedItems = [];
   document.getElementById('pdf-input').value = '';
@@ -1060,6 +1161,7 @@ async function parseRunsheet() {
     matchedItems = matchRes.items;
     renderResults();
     _showNextStepHint(matchedItems.length);
+    loadMediaAssist();
     parseSucceeded = true;
     // Mark step 2 complete + unlock step 3 so the operator's eye goes to
     // the Create button.

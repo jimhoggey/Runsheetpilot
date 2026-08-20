@@ -67,6 +67,10 @@ EVENTS = (
     "playlist_created",
     "playlist_failed",
     "media_unlinked",
+    # the downloaded-media assist panel
+    "media_assist_shown",
+    "media_assist_reveal",
+    "port_discovered",
     # config + updates
     "settings_saved",
     "update_available",
