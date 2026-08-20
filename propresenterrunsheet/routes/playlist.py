@@ -341,11 +341,22 @@ def api_test_connection():
     host = body.get("host") or "localhost"
     port = str(body.get("port") or "50001")
 
+    # The probe IS the connection test — it calls the same endpoint the
+    # route needs anyway and caches the result, so discovery adds no
+    # extra outbound request. `pp_base` clamps host to hostname
+    # characters and port to digits, so neither can smuggle a path,
+    # scheme or second URL into the address.
+    seen = {}
+
     def _probe(h, p) -> bool:
         try:
-            return req.get(f"{pp_base(h, p)}/version", timeout=2).ok
+            r = req.get(f"{pp_base(h, p)}/v1/libraries", timeout=3)
+            if r.ok:
+                seen["libs"] = r.json()
+                return True
         except Exception:
-            return False
+            pass
+        return False
 
     note = ""
     if (load_settings().get("auto_port") is not False):
@@ -356,11 +367,12 @@ def api_test_connection():
             # default to ship.
             stats.track("port_discovered", was=original, now=port)
 
-    base = pp_base(host, port)
     try:
-        r = req.get(f"{base}/v1/libraries", timeout=4)
-        r.raise_for_status()
-        libs = r.json()
+        libs = seen.get("libs")
+        if libs is None:                      # auto_port off, or it failed
+            if not _probe(host, port):
+                raise req.exceptions.ConnectionError()
+            libs = seen.get("libs")
         return jsonify({"ok": True,
                         "count": len(libs) if hasattr(libs, "__len__") else 0,
                         "port": port, "note": note})
@@ -370,9 +382,12 @@ def api_test_connection():
         # what happened and what to do — `note` usually already does.
         return jsonify({"ok": False, "port": port, "note": note, "error":
             note or f"Can't reach ProPresenter at {host}:{port}."})
-    except Exception as e:
+    except Exception:
+        # Never hand the exception text to the caller: it can carry paths
+        # and internals, and it tells a volunteer nothing they can act on.
+        log.exception("connection test failed")
         return jsonify({"ok": False, "port": port, "note": note,
-                        "error": str(e)})
+                        "error": note or "Couldn't reach ProPresenter."})
 
 
 @bp.route("/api/pp/playlists", methods=["GET"])

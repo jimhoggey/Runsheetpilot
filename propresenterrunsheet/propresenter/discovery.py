@@ -26,6 +26,8 @@ import re
 import sys
 from pathlib import Path
 
+from ..logging_setup import log_safe
+
 log = logging.getLogger("pp_runsheet")
 
 DEFAULT_PORT = "50001"
@@ -71,6 +73,8 @@ def _windows_prefs() -> dict:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            # Unreadable or vanished mid-scan; the next candidate file is
+            # just as likely to hold the keys.
             continue
         if "networkPort" not in text:
             continue
@@ -140,8 +144,10 @@ def resolve_port(host: str, configured: str, probe=None,
             return configured, (
                 f"ProPresenter's own settings say port {found}, but nothing "
                 f"answered there. Is ProPresenter running?")
+        # log_safe: `configured` arrives from the request body, so a
+        # crafted value could otherwise forge log lines.
         log.info("ProPresenter found on port %s (configured was %s)",
-                 found, configured)
+                 log_safe(str(found)), log_safe(configured))
         return str(found), (
             f"Found ProPresenter on port {found} and switched to it "
             f"(it was set to {configured}).")
