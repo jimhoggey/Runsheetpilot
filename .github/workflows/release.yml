@@ -68,8 +68,9 @@ jobs:
 
       - name: Build .exe with PyInstaller
         # Inline command instead of calling build_win.bat — that script does
-        # venv creation + cleanup we don't need on a fresh runner. Flags must
-        # stay in sync with build_win.bat if you change one, change both.
+        # venv creation + cleanup we don't need on a fresh runner.
+        # tests/test_release_workflow.py asserts the dependency flags here
+        # match build_win.bat — asking politely did not work.
         run: |
           pyinstaller `
             --name "Runsheet Pilot" `
@@ -84,6 +85,17 @@ jobs:
             --collect-all webview `
             --collect-all clr_loader `
             --collect-all pythonnet `
+            --hidden-import certifi `
+            --collect-data certifi `
+            --collect-all winocr `
+            --collect-all winrt `
+            --collect-all pypdfium2 `
+            --hidden-import winrt.windows.media.ocr `
+            --hidden-import winrt.windows.globalization `
+            --hidden-import winrt.windows.storage.streams `
+            --hidden-import winrt.windows.graphics.imaging `
+            --hidden-import winrt.windows.foundation `
+            --hidden-import winrt.windows.foundation.collections `
             --icon assets\icon.ico `
             --add-data "templates;templates" `
             --add-data "static;static" `
@@ -316,7 +328,8 @@ jobs:
       - name: Build .app + .dmg
         # build_mac.sh creates its own venv + does git-state checks we don't
         # need on a fresh runner. Inline the PyInstaller + hdiutil calls
-        # instead — flags must stay in sync with build_mac.sh.
+        # instead. tests/test_release_workflow.py asserts the dependency
+        # flags here match build_mac.sh — asking politely did not work.
         run: |
           VERSION=$(grep -E '^VERSION\s*=' propresenterrunsheet/config.py \
                     | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
@@ -340,6 +353,12 @@ jobs:
             --hidden-import pdfplumber \
             --hidden-import tkinter \
             --collect-all webview \
+            --hidden-import certifi \
+            --collect-data certifi \
+            --collect-all ocrmac \
+            --hidden-import Vision \
+            --hidden-import CoreML \
+            --collect-all pypdfium2 \
             --icon assets/icon.icns \
             --add-data "templates:templates" \
             --add-data "assets:assets" \

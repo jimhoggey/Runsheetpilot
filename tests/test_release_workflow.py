@@ -19,6 +19,8 @@ check that actually catches a plutil call that ran but did nothing - this
 test only catches the step being deleted.
 """
 
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -59,3 +61,93 @@ def test_workflow_verifies_the_key_on_the_built_bundle():
     assert "PlistBuddy" in text and KEY in text, (
         "release.yml must read the key back off the built bundle and fail "
         "the build if it is missing.")
+
+
+# ── Build-flag drift ────────────────────────────────────────────────────────
+#
+# The second half of the same incident. release.yml builds BOTH platforms by
+# inlining PyInstaller rather than calling build_mac.sh / build_win.bat, and
+# both jobs carried a comment asking that the flags "stay in sync". Neither
+# did. At the time this test was written the CI builds were missing, on both
+# platforms, certifi (the CA bundle every OpenRouter call needs), pypdfium2
+# (scanned-PDF rescue) and the whole OS-native OCR stack — ocrmac/Vision/
+# CoreML on Mac, winocr/winrt on Windows.
+#
+# None of it was caught, because the smoke test only polls /api/health, which
+# makes no HTTPS call and no OCR call. A binary missing all three answers
+# "ok" and then fails in front of an operator.
+#
+# We compare only the DEPENDENCY-COLLECTION flags. Those are the ones whose
+# absence silently omits code from the binary. --name/--icon/entry point are
+# excluded deliberately: the local scripts use shell variables (%APP_NAME%,
+# $ENTRY) where CI uses literals, so they can never compare equal and are
+# not what breaks.
+_DEP_FLAGS = ("--hidden-import", "--collect-all", "--collect-submodules",
+              "--collect-data", "--add-data")
+
+# (label, local script, how to find the pyinstaller call in each source)
+_PAIRS = [
+    ("macOS", "build_mac.sh", r"^pyinstaller\b", r"propresenter_app\.py",
+     r"Build \.app \+ \.dmg", r"test -d"),
+    ("Windows", "build_win.bat", r"^pyinstaller\s", r"%ENTRY%",
+     r"Build \.exe with PyInstaller", r"Stable-named exe"),
+]
+
+
+def _slice(text, start_pat, end_pat):
+    lines = text.splitlines()
+    out, on = [], False
+    for line in lines:
+        if not on and re.search(start_pat, line.strip()):
+            on = True
+        if on:
+            out.append(line)
+            if re.search(end_pat, line):
+                break
+    return "\n".join(out)
+
+
+def _dep_flags(block):
+    """Flag/value pairs from a PyInstaller invocation, order-insensitive.
+
+    Strips the three line-continuation characters this repo uses across its
+    three shells - backslash (sh), caret (cmd) and backtick (pwsh) - then
+    tokenises. Tokenising rather than reading line-by-line is what makes
+    `--windowed --onedir --noconfirm --clean` on one line in CI compare equal
+    to the same four flags on four lines in build_mac.sh.
+    """
+    cleaned = re.sub(r"[\\^`]\s*$", " ", block, flags=re.MULTILINE)
+    try:
+        toks = shlex.split(cleaned, comments=True)
+    except ValueError:
+        toks = cleaned.split()
+    pairs = set()
+    for i, tok in enumerate(toks):
+        if tok in _DEP_FLAGS and i + 1 < len(toks):
+            pairs.add(f"{tok} {toks[i + 1]}")
+    return pairs
+
+
+@pytest.mark.parametrize(
+    "label,script,s_start,s_end,ci_start,ci_end", _PAIRS,
+    ids=[p[0] for p in _PAIRS])
+def test_ci_build_matches_the_local_build_script(
+        label, script, s_start, s_end, ci_start, ci_end):
+    """Every dependency the local build collects, CI must collect too.
+
+    One-directional on purpose: CI may legitimately collect something extra,
+    but anything the local script knows it needs and CI omits is a binary
+    that ships without it.
+    """
+    local = _dep_flags(_slice(_read(script), s_start, s_end))
+    ci = _dep_flags(_slice(_read(".github/workflows/release.yml"),
+                           ci_start, ci_end))
+    assert local, f"could not parse the PyInstaller call out of {script}"
+    assert ci, f"could not parse the {label} PyInstaller call out of release.yml"
+
+    missing = sorted(local - ci)
+    assert not missing, (
+        f"{label}: release.yml is missing {len(missing)} flag(s) that "
+        f"{script} passes:\n  " + "\n  ".join(missing) +
+        f"\n\nThe released {label} binary will be built without them. "
+        f"Add them to the {label} job in .github/workflows/release.yml.")
