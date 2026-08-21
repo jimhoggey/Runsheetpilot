@@ -15,6 +15,7 @@ all worked around here:
    `_CLOCK_THEME_SET` so we don't pay for the round trip every push."""
 
 import logging
+import sys
 
 from .constants import SM_FILENAME, SM_ULTRA_IMAGE_THEME
 
@@ -112,6 +113,14 @@ def clock_error_message(exc, ip: str) -> str:
                               These devices drop off and come back, so
                               this is usually "wait a moment or power
                               cycle", NOT a wrong IP.
+                              ON macOS THIS IS AMBIGUOUS: when the OS
+                              denies Local Network access it fails the
+                              connect with the SAME [Errno 65], so a
+                              perfectly healthy clock looks dead. We
+                              cannot tell the two apart from the errno,
+                              so on darwin we name both — silently
+                              blaming the clock sent people to power
+                              cycle hardware that was never the problem.
       refused                 something IS at that address but nothing
                               is listening — usually the wrong device.
       timeout                 on the network but not answering.
@@ -123,10 +132,19 @@ def clock_error_message(exc, ip: str) -> str:
         return (f"The clock at {ip} didn't answer in time. It's on the "
                 f"network but not responding — try again, or power cycle it.")
     if "no route to host" in text or "unreachable" in text:
-        return (f"Can't reach the clock at {ip}. It's most likely asleep or "
-                f"off the Wi-Fi — these clocks drop off and come back, so "
-                f"give it a moment or power cycle it. If it never comes "
-                f"back, check the IP on the clock's own screen.")
+        base = (f"Can't reach the clock at {ip}. Either it's asleep or off "
+                f"the Wi-Fi — these clocks drop off and come back, so give "
+                f"it a moment or power cycle it")
+        if sys.platform == "darwin":
+            # The tell: a denied permission fails EVERY clock, every time.
+            # A sleeping clock is intermittent and one-at-a-time.
+            return (base + " — or macOS is blocking this app from reaching "
+                    f"your network. Check System Settings \u203a Privacy & "
+                    f"Security \u203a Local Network and turn on Runsheet "
+                    f"Pilot. If every clock fails and none of them ever come "
+                    f"back, it's this, not the hardware.")
+        return (base + ". If it never comes back, check the IP on the "
+                "clock's own screen.")
     if "refused" in text:
         return (f"{ip} refused the connection. Something is at that address "
                 f"but it isn't the clock — check the IP on the clock's screen.")
