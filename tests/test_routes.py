@@ -419,3 +419,31 @@ def test_no_message_ever_leaks_the_library_internals(exc):
                   "NewConnectionError", "Errno", "Traceback"):
         assert noise not in msg, f"{noise!r} leaked: {msg}"
     assert msg.endswith(".")
+
+
+def test_macos_message_names_the_local_network_setting(monkeypatch):
+    """macOS reports a Local-Network denial with the SAME [Errno 65] as a
+    dead device. v2.12.1 blamed the clock unconditionally, so an operator
+    whose Mac was blocking the app power-cycled healthy hardware and got
+    nowhere. On darwin the message must name the setting."""
+    monkeypatch.setattr(
+        "propresenterrunsheet.service_mate.geekmagic.sys.platform", "darwin")
+    exc = _req.exceptions.ConnectionError("[Errno 65] No route to host")
+    msg = clock_error_message(exc, "192.168.1.119")
+    assert "Local Network" in msg
+    assert "Privacy" in msg
+    # The clock explanation must survive too - it is still the likelier
+    # cause once permission has been granted.
+    assert "power cycle" in msg
+
+
+def test_non_macos_message_does_not_mention_macos(monkeypatch):
+    """Windows has no Local Network gate. Telling a Windows operator to
+    open System Settings is a dead end."""
+    monkeypatch.setattr(
+        "propresenterrunsheet.service_mate.geekmagic.sys.platform", "win32")
+    exc = _req.exceptions.ConnectionError("[Errno 65] No route to host")
+    msg = clock_error_message(exc, "192.168.1.119")
+    assert "Local Network" not in msg
+    assert "macOS" not in msg
+    assert "power cycle" in msg

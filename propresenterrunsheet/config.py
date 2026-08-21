@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.12.1"
+VERSION = "2.12.2"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,12 +34,11 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "macOS was silently blocking Service Mate from reaching your clocks. "
-    + "The app now asks permission properly — say yes.",
-    "Clock errors say what actually went wrong instead of pasting a "
-    + "Python traceback at you.",
-    "If macOS is the one blocking it, I now tell you exactly which "
-    + "setting to flip.",
+    "Mac: the Local Network fix in 2.12.1 never actually made it into the "
+    + "download. It does now — say yes when macOS asks, and your clocks "
+    + "come back.",
+    "When macOS is the one blocking a clock, the error says so and names "
+    + "the setting, instead of blaming a clock that was fine all along.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.

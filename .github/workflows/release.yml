@@ -68,8 +68,9 @@ jobs:
 
       - name: Build .exe with PyInstaller
         # Inline command instead of calling build_win.bat — that script does
-        # venv creation + cleanup we don't need on a fresh runner. Flags must
-        # stay in sync with build_win.bat if you change one, change both.
+        # venv creation + cleanup we don't need on a fresh runner.
+        # tests/test_release_workflow.py asserts the dependency flags here
+        # match build_win.bat — asking politely did not work.
         run: |
           pyinstaller `
             --name "Runsheet Pilot" `
@@ -84,6 +85,17 @@ jobs:
             --collect-all webview `
             --collect-all clr_loader `
             --collect-all pythonnet `
+            --hidden-import certifi `
+            --collect-data certifi `
+            --collect-all winocr `
+            --collect-all winrt `
+            --collect-all pypdfium2 `
+            --hidden-import winrt.windows.media.ocr `
+            --hidden-import winrt.windows.globalization `
+            --hidden-import winrt.windows.storage.streams `
+            --hidden-import winrt.windows.graphics.imaging `
+            --hidden-import winrt.windows.foundation `
+            --hidden-import winrt.windows.foundation.collections `
             --icon assets\icon.ico `
             --add-data "templates;templates" `
             --add-data "static;static" `
@@ -316,7 +328,8 @@ jobs:
       - name: Build .app + .dmg
         # build_mac.sh creates its own venv + does git-state checks we don't
         # need on a fresh runner. Inline the PyInstaller + hdiutil calls
-        # instead — flags must stay in sync with build_mac.sh.
+        # instead. tests/test_release_workflow.py asserts the dependency
+        # flags here match build_mac.sh — asking politely did not work.
         run: |
           VERSION=$(grep -E '^VERSION\s*=' propresenterrunsheet/config.py \
                     | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
@@ -340,6 +353,12 @@ jobs:
             --hidden-import pdfplumber \
             --hidden-import tkinter \
             --collect-all webview \
+            --hidden-import certifi \
+            --collect-data certifi \
+            --collect-all ocrmac \
+            --hidden-import Vision \
+            --hidden-import CoreML \
+            --collect-all pypdfium2 \
             --icon assets/icon.icns \
             --add-data "templates:templates" \
             --add-data "assets:assets" \
@@ -347,6 +366,25 @@ jobs:
             propresenter_app.py
 
           test -d "dist/${APP_BUNDLE}" || { echo "Build missing"; exit 1; }
+
+          # Local Network permission (macOS 15+). Without this key macOS
+          # refuses every connection to a private IP and reports it as
+          # [Errno 65] No route to host — indistinguishable from a dead
+          # device — so Service Mate could never reach the clocks and no
+          # permission prompt ever appeared. v2.12.1 shipped this fix in
+          # build_mac.sh only, which this job does not run; the artifact
+          # users actually installed never had it. Hence the verify below.
+          PLIST="dist/${APP_BUNDLE}/Contents/Info.plist"
+          plutil -replace NSLocalNetworkUsageDescription \
+              -string "Runsheet Pilot needs Local Network access to reach ProPresenter and your Service Mate clocks on this network." \
+              "$PLIST"
+          plutil -lint "$PLIST" >/dev/null || { echo "Info.plist malformed"; exit 1; }
+          # Assert on the built bundle, not on the script that built it —
+          # a string-match test would have passed while the DMG was broken.
+          /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' \
+              "$PLIST" >/dev/null \
+            || { echo "ERROR: Info.plist is missing NSLocalNetworkUsageDescription"; exit 1; }
+          echo "Info.plist: Local Network usage description present"
 
           DMG_STAGE="dist/dmg_stage"
           mkdir -p "$DMG_STAGE"
