@@ -9,6 +9,9 @@ Kept separate from the route handlers so the loop can run independently of
 any HTTP request — boot the server, the daemon starts and keeps the clocks
 fresh."""
 
+import datetime as _dt
+import hashlib
+import json
 import logging
 import threading
 import time
@@ -17,7 +20,8 @@ from .constants import (
     SM_LOOP_INTERVAL_S, SM_PP_POLL_EVERY_N_TICKS, SM_VERBOSITIES,
     SM_VERBOSITY_DEFAULT,
 )
-from .geekmagic import _push_to_clock
+from .geekmagic import _probe_custom, _push_state, _push_to_clock
+from .protocol import EndsAtHolder, build_state_payload
 from .pp_track import _maybe_advance_from_pp
 from .render import _render_cue, _render_standby
 from .state import _read_clocks_config, _read_runsheet_state, _write_runsheet_state
@@ -30,6 +34,35 @@ log = logging.getLogger("pp_runsheet")
 # invalidate a clock's "last pushed" entry, forcing the loop to re-push on the
 # next tick. Tests reach in to inspect/clear it.
 _CLOCKS_LOOP_LAST_PUSHED: dict = {}
+
+# ONE holder for the whole estate, deliberately not one per clock.
+#
+# `ends_at` is a property of the runsheet item, not of a display. Every clock
+# must receive the identical deadline: that is what makes them tick together,
+# because each device schedules its repaint at the instant the displayed
+# integer changes, derived from that shared value. Per-clock holders would
+# resolve at slightly different moments and hand out deadlines a few hundred
+# milliseconds apart — and no amount of clock-offset accuracy recovers from
+# that.
+_ENDS_AT = EndsAtHolder()
+
+# Re-push at least this often even when nothing changed, so a clock that was
+# rebooted or dropped off the network rejoins the service without waiting for
+# the next cue. Cheap: a small JSON body, versus the ~30KB JPEG the stock path
+# sends twice a second.
+_HEARTBEAT_S = 10.0
+
+
+def _state_fingerprint(payload: dict) -> str:
+    """Dedup key for a state payload, with `now` EXCLUDED.
+
+    `now` is re-stamped for every push, so including it would make every
+    payload unique and defeat dedup entirely — turning a push-on-change
+    protocol into 120 pushes a minute.
+    """
+    body = {k: v for k, v in payload.items() if k != "now"}
+    return hashlib.sha1(
+        json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _clocks_loop_tick(tick: int) -> None:
@@ -58,6 +91,12 @@ def _clocks_loop_tick(tick: int) -> None:
             _write_runsheet_state(state)
         except Exception:
             log.exception("Failed to persist runsheet state mid-loop")
+    # Resolved ONCE per tick, before the per-clock loop, so every clock in this
+    # pass is given the same deadline.
+    ends_at = None if standby else _ENDS_AT.resolve(state, _dt.datetime.now())
+    if standby:
+        _ENDS_AT.reset()
+
     for clock in cfg["clocks"]:
         ip = (clock.get("ip") or "").strip()
         role = clock.get("role") or clock.get("id") or "screen"
@@ -67,13 +106,41 @@ def _clocks_loop_tick(tick: int) -> None:
             verbosity = SM_VERBOSITY_DEFAULT
         if not ip:
             continue
+
+        if _probe_custom(ip):
+            # Custom firmware: send state, never pictures. The device owns the
+            # timer and repaints locally, which is the entire point of the
+            # rewrite — so no Pillow render happens for this clock at all.
+            layout = "standby" if standby else verbosity
+            try:
+                payload = build_state_payload(
+                    role, layout, state, ends_at,
+                    # Stamped HERE, immediately before this clock's POST, and
+                    # deliberately not once above the loop. A single `now`
+                    # reused across sequential pushes gives the last clock an
+                    # offset hundreds of milliseconds worse than the first,
+                    # baked in until the next push.
+                    _dt.datetime.now())
+            except Exception:
+                log.exception(f"payload build failed for role={role}")
+                continue
+
+            h = _state_fingerprint(payload)
+            prev = _CLOCKS_LOOP_LAST_PUSHED.get(cid) or ("", 0.0)
+            if prev[0] == h and (time.time() - prev[1]) < _HEARTBEAT_S:
+                continue
+            if _push_state(ip, payload):
+                _CLOCKS_LOOP_LAST_PUSHED[cid] = (h, time.time())
+            continue
+
+        # Stock firmware: unchanged image push. This branch must keep working —
+        # it is what every clock not yet reflashed depends on.
         try:
             jpg = (_render_standby(role) if standby
                    else _render_cue(role, state, verbosity=verbosity))
         except Exception:
             log.exception(f"render failed for role={role}")
             continue
-        import hashlib
         h = hashlib.sha1(jpg).hexdigest()
         # Re-push every ~40 s even if unchanged, so the device recovers if it
         # was rebooted or the image was cleared.
