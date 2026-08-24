@@ -98,12 +98,47 @@ def _cue_for(role: str, item: dict) -> str:
     if not item:
         return ""
     cues = item.get("cues") or {}
-    text = (cues.get(role) or "").strip()
+    raw = cues.get(role)
+    # cues[role] is now a LIST (the clock rotates through them). Older saved
+    # runsheets hold a single string, and the stock-image renderer still wants
+    # one line, so take the first either way.
+    if isinstance(raw, (list, tuple)):
+        raw = next((str(c) for c in raw if str(c).strip()), "")
+    text = (raw or "").strip()
     if text:
         return text[:60]
     table = ROLE_CUE_TABLES.get(role, {})
     t = (item.get("type") or "other").lower()
     return table.get(t, "Get ready")
+
+
+def _cues_for(role: str, item: dict) -> list:
+    """Every cue for this role, in display order.
+
+    A station often needs more than one thing said about the same item: "Mics
+    on for Kiara & Annie" AND "Trailer video — audio". The clock rotates
+    through these, which keeps one glanceable line while carrying more than
+    one line of information.
+
+    Accepts both shapes. The AI now returns a list per role, but runsheets
+    parsed before that change hold a single string, and those must keep
+    working without a re-parse.
+    """
+    if not item:
+        return []
+    raw = (item.get("cues") or {}).get(role)
+    if isinstance(raw, str):
+        out = [raw.strip()] if raw.strip() else []
+    elif isinstance(raw, (list, tuple)):
+        out = [str(c).strip() for c in raw if str(c).strip()]
+    else:
+        out = []
+    if not out:
+        fallback = _cue_for(role, item)
+        out = [fallback] if fallback else []
+    # Cap both length and count: the firmware holds MAX_CUES entries of 80
+    # bytes, and a cue nobody can read in five seconds is not a cue.
+    return [c[:60] for c in out[:4]]
 
 
 def _ensure_item_cues(item: dict) -> dict:

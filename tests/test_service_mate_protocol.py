@@ -418,3 +418,42 @@ def test_next_type_is_sent(daemon_env):
     daemon, sent, _ = daemon_env
     daemon._clocks_loop_tick(0)
     assert sent[0][1]["next_type"] == "mc_on_stage"
+
+
+# --------------------------------------------------- rotating cues -------
+
+def test_cues_list_is_sent_as_an_array():
+    s = _state()
+    s["items"][0]["cues"]["sound"] = ["Mics on for Kiara & Annie",
+                                      "Trailer video - unmute audio"]
+    p = build_state_payload("sound", "compact", s, None, NOW)
+    assert p["cues"] == ["Mics on for Kiara & Annie",
+                         "Trailer video - unmute audio"]
+
+
+def test_legacy_string_cue_still_works():
+    """Runsheets parsed before cues became arrays must not need a re-parse."""
+    p = build_state_payload("screen", "compact", _state(), None, NOW)
+    assert p["cues"] == ["Show Points screen"]
+
+
+def test_cue_field_kept_for_older_firmware():
+    s = _state()
+    s["items"][0]["cues"]["screen"] = ["First thing", "Second thing"]
+    p = build_state_payload("screen", "compact", s, None, NOW)
+    assert p["cue"] == "First thing"
+
+
+def test_cues_fall_back_to_the_rule_table():
+    s = _state()
+    s["items"][0]["cues"] = {}
+    p = build_state_payload("sound", "compact", s, None, NOW)
+    assert p["cues"] == ["Band mics live · MC mute"]      # SOUND_CUES["song"]
+
+
+def test_cues_are_capped_in_count_and_length():
+    s = _state()
+    s["items"][0]["cues"]["screen"] = ["a" * 90, "b", "c", "d", "e", "f"]
+    p = build_state_payload("screen", "compact", s, None, NOW)
+    assert len(p["cues"]) == 4                 # firmware holds MAX_CUES
+    assert all(len(c) <= 60 for c in p["cues"])

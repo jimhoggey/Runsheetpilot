@@ -23,7 +23,7 @@ reintroduces the countdown stutter that motivated the whole rewrite:
 import datetime as _dt
 
 from .constants import SM_VERBOSITY_DEFAULT
-from .state import _cue_for, _next_visible_item
+from .state import _cue_for, _cues_for, _next_visible_item
 
 
 # How far a freshly computed deadline must move before we believe it is a real
@@ -138,6 +138,9 @@ def build_state_payload(role, verbosity, state, ends_at, now, brightness=None):
         "role":       role,
         "layout":     layout,
         "title":      (cur.get("title") or "").strip(),
+        # `cues` is the real field; `cue` stays for firmware that predates the
+        # array, and for the stock-image renderer which shows a single line.
+        "cues":       _cues_for(role, cur),
         "cue":        _cue_for(role, cur),
         "type":       (cur.get("type") or "other").lower(),
         "next_title": (nxt.get("title") or "").strip() if nxt else "",
