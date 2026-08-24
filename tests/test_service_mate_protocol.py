@@ -457,3 +457,34 @@ def test_cues_are_capped_in_count_and_length():
     p = build_state_payload("screen", "compact", s, None, NOW)
     assert len(p["cues"]) == 4                 # firmware holds MAX_CUES
     assert all(len(c) <= 60 for c in p["cues"])
+
+
+# ------------------------------------------- cue shape normalisation ------
+
+def test_ensure_item_cues_accepts_a_list():
+    """The model returning the new array shape must not break the parse. This
+    raised "'list' object has no attribute 'strip'" and killed parsing outright."""
+    from propresenterrunsheet.service_mate.state import _ensure_item_cues
+    item = {"title": "MC Welcome", "type": "mc_on_stage",
+            "cues": {"screen": ["Slide - Welcome", "Trailer video ready"]}}
+    out = _ensure_item_cues(item)
+    assert out["cues"]["screen"] == ["Slide - Welcome", "Trailer video ready"]
+    assert isinstance(out["cues"]["sound"], list) and out["cues"]["sound"]
+    assert isinstance(out["cues"]["lights"], list) and out["cues"]["lights"]
+
+
+def test_ensure_item_cues_accepts_a_string():
+    from propresenterrunsheet.service_mate.state import _ensure_item_cues
+    item = {"title": "MC Welcome", "type": "mc_on_stage",
+            "cues": {"screen": "Slide - Welcome"}}
+    out = _ensure_item_cues(item)
+    assert out["cues"]["screen"] == ["Slide - Welcome"]
+
+
+def test_ensure_item_cues_handles_empty_and_missing():
+    from propresenterrunsheet.service_mate.state import _ensure_item_cues
+    for cues in ({}, {"screen": ""}, {"screen": []}, {"screen": None}):
+        out = _ensure_item_cues({"title": "X", "type": "song", "cues": dict(cues)})
+        for role in ("screen", "sound", "lights"):
+            assert isinstance(out["cues"][role], list)
+            assert all(isinstance(c, str) and c for c in out["cues"][role])

@@ -455,10 +455,13 @@ def test_ensure_item_cues_fills_missing_roles_only(app_module):
     item = {"type": "song", "cues": {"screen": "Custom"}}
     out = app_module._ensure_item_cues(item)
     cues = out["cues"]
-    assert cues["screen"] == "Custom"
+    # Cues are stored as a LIST per role now: a station often needs more than
+    # one thing said, and the clock rotates through them. A single string on
+    # the way in is normalised to a one-entry list rather than rejected.
+    assert cues["screen"] == ["Custom"]
     # The other two roles came from the rule table:
-    assert cues["sound"] == "Band mics live · MC mute"
-    assert cues["lights"] == "Stage wash — band"
+    assert cues["sound"] == ["Band mics live · MC mute"]
+    assert cues["lights"] == ["Stage wash — band"]
 
 
 def test_ensure_item_cues_creates_cues_dict_when_absent(app_module):

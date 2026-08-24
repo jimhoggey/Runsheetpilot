@@ -70,7 +70,9 @@ def test_rescued_rows_have_clamped_types_and_cues(parse_client, monkeypatch):
     assert rescued["duration_min"] == 30
     # The cue fill ran: all three Service Mate roles are populated.
     assert set(rescued["cues"].keys()) >= {"screen", "sound", "lights"}
-    assert all(v.strip() for v in rescued["cues"].values())
+    # Each role holds a non-empty LIST of cues, which the clock rotates through.
+    assert all(isinstance(v, list) and v and all(c.strip() for c in v)
+               for v in rescued["cues"].values())
     # library_match is present-and-None like every unmatched item.
     assert rescued.get("library_match") is None
 

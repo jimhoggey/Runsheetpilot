@@ -142,11 +142,18 @@ def _cues_for(role: str, item: dict) -> list:
 
 
 def _ensure_item_cues(item: dict) -> dict:
-    """Ensure the item has cues for all three roles (LLM-fed or fallback)."""
+    """Ensure the item has cues for all three roles (LLM-fed or fallback).
+
+    Normalises to the LIST shape whatever came in. The model now returns an
+    array per role so the clock can rotate through several cues, but a runsheet
+    parsed before that change holds a single string, and a model can always
+    return the older shape anyway. Calling .strip() on the value assumed a
+    string and broke the parse outright with "'list' object has no attribute
+    'strip'" the first time the model complied with the new prompt.
+    """
     cues = dict(item.get("cues") or {})
     for role in ("screen", "sound", "lights"):
-        if not (cues.get(role) or "").strip():
-            cues[role] = _cue_for(role, item)
+        cues[role] = _cues_for(role, item)
     item["cues"] = cues
     return item
 
