@@ -114,14 +114,14 @@ class EndsAtHolder:
         return self._ends_at
 
 
-def build_state_payload(role, verbosity, state, ends_at, now):
+def build_state_payload(role, verbosity, state, ends_at, now, brightness=None):
     """Build the JSON body for POST /api/state.
 
     `now` must be stamped by the caller immediately before the POST for THIS
     clock — see the module docstring. `ends_at` comes from an EndsAtHolder.
 
-    Optional fields (`starts_at`, `next_duration_s`) are OMITTED rather than
-    sent as null when unknown. The firmware treats absent as "hide the
+    Optional fields (`starts_at`, `next_duration_s`, `brightness`) are OMITTED
+    rather than sent as null when unknown. The firmware treats absent as "hide the
     element"; null on a field it expects to be a string is a parse failure.
     """
     items = state.get("items") or []
@@ -156,5 +156,15 @@ def build_state_payload(role, verbosity, state, ends_at, now):
     next_secs = _duration_seconds(nxt)
     if next_secs:
         payload["next_duration_s"] = next_secs
+
+    # The firmware implements brightness both here and on POST /api/brightness,
+    # but nothing sent it, so the Settings slider had no effect on a reflashed
+    # clock -- a visible control that silently did nothing. Carrying it in the
+    # state push means it survives a clock reboot without a separate call.
+    if brightness is not None:
+        try:
+            payload["brightness"] = max(1, min(100, int(brightness)))
+        except (TypeError, ValueError):
+            pass
 
     return payload

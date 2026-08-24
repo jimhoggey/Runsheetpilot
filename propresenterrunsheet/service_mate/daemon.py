@@ -120,7 +120,8 @@ def _clocks_loop_tick(tick: int) -> None:
                     # reused across sequential pushes gives the last clock an
                     # offset hundreds of milliseconds worse than the first,
                     # baked in until the next push.
-                    _dt.datetime.now())
+                    _dt.datetime.now(),
+                    brightness=cfg.get("brightness"))
             except Exception:
                 log.exception(f"payload build failed for role={role}")
                 continue

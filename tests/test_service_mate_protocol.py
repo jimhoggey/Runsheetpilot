@@ -386,3 +386,35 @@ def test_standby_sends_standby_layout(daemon_env):
     sm_state._write_runsheet_state(s)
     daemon._clocks_loop_tick(0)
     assert sent and all(p["layout"] == "standby" for _ip, p in sent)
+
+
+# ------------------------------------------------------- brightness ------
+
+def test_brightness_omitted_when_not_configured():
+    p = build_state_payload("screen", "compact", _state(), None, NOW)
+    assert "brightness" not in p
+
+
+def test_brightness_included_and_clamped():
+    p = build_state_payload("screen", "compact", _state(), None, NOW,
+                            brightness=60)
+    assert p["brightness"] == 60
+    assert build_state_payload("screen", "compact", _state(), None, NOW,
+                               brightness=0)["brightness"] == 1
+    assert build_state_payload("screen", "compact", _state(), None, NOW,
+                               brightness=999)["brightness"] == 100
+
+
+def test_daemon_sends_configured_brightness_to_custom_clocks(daemon_env):
+    """The Settings slider had no effect on reflashed clocks: the app only ever
+    spoke the stock GeekMagic brightness endpoint."""
+    daemon, sent, _ = daemon_env
+    daemon._clocks_loop_tick(0)
+    assert sent and all(p.get("brightness") == 100 for _ip, p in sent)
+
+
+def test_next_type_is_sent(daemon_env):
+    """Dropped silently by the firmware parser until the drift audit caught it."""
+    daemon, sent, _ = daemon_env
+    daemon._clocks_loop_tick(0)
+    assert sent[0][1]["next_type"] == "mc_on_stage"

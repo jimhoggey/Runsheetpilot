@@ -133,6 +133,19 @@ def _identify_clock(ip: str) -> dict:
             "error": stock.get("error") or "no response"}
 
 
+def _set_clock_brightness_custom(ip: str, brt: int) -> bool:
+    """Brightness for a custom-firmware clock. The stock `/set?brt=` route does
+    not exist on the ESP firmware."""
+    import requests as req
+    try:
+        r = req.post(f"http://{ip}/api/brightness",
+                     json={"brightness": max(1, min(100, int(brt)))}, timeout=4)
+        return bool(r.ok)
+    except Exception:
+        log.debug("Clock %s brightness failed", log_safe(ip))
+        return False
+
+
 def _push_test_state(ip: str, role: str) -> bool:
     """Test card for a custom-firmware clock.
 
