@@ -1866,7 +1866,10 @@ async function smProbe(id) {
   try {
     const res = await fetch(`/api/clocks/${id}/probe`, {method:'POST'}).then(r => r.json());
     if (res.ok) {
-      status.textContent = '✓ online';
+      // Show which generation of clock answered. Detected, never configured —
+      // a device-type setting can be wrong, this cannot.
+      status.textContent = res.label ? ('✓ ' + res.label) : '✓ online';
+      status.title = res.detail || '';
       status.style.color = 'var(--grn)';
     } else {
       status.textContent = '✗ ' + (res.error || 'failed');

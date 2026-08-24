@@ -30,6 +30,161 @@ log = logging.getLogger("pp_runsheet")
 _CLOCK_THEME_SET: set = set()
 
 
+# Which clocks run the custom ESP32 firmware, as {ip: (is_custom, checked_at)}.
+#
+# Runsheet Pilot supports both firmwares at once and decides per clock, per
+# push. That is a hard requirement, not a convenience: it lets clocks be
+# migrated one at a time, keeps a clock reflashed back to stock working, and
+# means a half-finished migration on a Friday afternoon is not three dead
+# clocks. Breaking this fallback bricks every clock not yet reflashed.
+_CUSTOM_FW_CACHE: dict = {}
+
+# The daemon ticks every 500ms. Probing on every tick would hit each clock 120
+# times a minute, so the answer is cached — but it must expire, or a clock
+# reflashed either direction needs an app restart to be noticed.
+_CUSTOM_FW_TTL_S = 60.0
+
+# Deliberately short. This runs inside the daemon loop, and an unplugged clock
+# must not stall the pushes to the other two.
+_PROBE_TIMEOUT_S = 0.3
+
+
+def _probe_custom(ip: str) -> bool:
+    """True when the clock at `ip` speaks the JSON state protocol.
+
+    Detection is by presence of `GET /api/state`: stock GeekMagic firmware has
+    no such route, so a connection error or a non-2xx means "stock, push
+    JPEGs". Any failure answers False — the image path is the safe default,
+    because it is what works today.
+    """
+    import time
+    import requests as req
+    if not ip:
+        return False
+    cached = _CUSTOM_FW_CACHE.get(ip)
+    if cached and (time.time() - cached[1]) < _CUSTOM_FW_TTL_S:
+        return cached[0]
+    ok = False
+    try:
+        r = req.get(f"http://{ip}/api/state", timeout=_PROBE_TIMEOUT_S)
+        ok = bool(r.ok)
+    except Exception:
+        # Expected constantly for stock clocks and for any clock that is off.
+        # Debug, not warning: this is the normal path for half the estate.
+        log.debug("Clock %s did not answer /api/state — treating as stock",
+                  log_safe(ip))
+    _CUSTOM_FW_CACHE[ip] = (ok, time.time())
+    return ok
+
+
+def _push_state(ip: str, payload: dict) -> bool:
+    """POST the JSON state to a custom-firmware clock. Any 2xx is success.
+
+    Mirrors how `_push_to_clock` judges the stock path, so the daemon can treat
+    both branches identically.
+    """
+    import requests as req
+    if not ip:
+        return False
+    try:
+        r = req.post(f"http://{ip}/api/state", json=payload, timeout=4)
+        return bool(r.ok)
+    except Exception as e:
+        log.info("Clock %s state push failed: %s: %s",
+                 log_safe(ip), type(e).__name__, log_safe(str(e), 200))
+        return False
+
+
+def _identify_clock(ip: str) -> dict:
+    """What kind of clock is at `ip`, for the UI's probe button.
+
+    Deliberately a READ-OUT, not a setting. A manual device-type toggle can be
+    wrong -- point it at the wrong firmware and that clock silently stops
+    working until a human notices -- whereas detection re-checks on a timer and
+    self-corrects when a clock is reflashed in either direction.
+
+    Returns {ok, kind, label, detail}. `kind` is "esp32" | "geekmagic" | "".
+    """
+    import requests as req
+    if not ip:
+        return {"ok": False, "kind": "", "label": "",
+                "error": "no IP set"}
+    # Custom firmware first: it is the one we can identify precisely.
+    try:
+        r = req.get(f"http://{ip}/api/state", timeout=1.5)
+        if r.ok:
+            fw = ""
+            try:
+                fw = (r.json() or {}).get("firmware") or ""
+            except Exception:
+                pass
+            return {"ok": True, "kind": "esp32",
+                    "label": "Service Mate ESP32",
+                    "detail": fw or "custom firmware"}
+    except Exception:
+        pass          # not custom, or not reachable -- try the stock probe
+
+    stock = _probe_clock(ip)
+    if stock.get("ok"):
+        return {"ok": True, "kind": "geekmagic",
+                "label": "GeekMagic (stock firmware)",
+                "detail": "image push"}
+    return {"ok": False, "kind": "", "label": "",
+            "error": stock.get("error") or "no response"}
+
+
+def _set_clock_brightness_custom(ip: str, brt: int) -> bool:
+    """Brightness for a custom-firmware clock. The stock `/set?brt=` route does
+    not exist on the ESP firmware."""
+    import requests as req
+    try:
+        r = req.post(f"http://{ip}/api/brightness",
+                     json={"brightness": max(1, min(100, int(brt)))}, timeout=4)
+        return bool(r.ok)
+    except Exception:
+        log.debug("Clock %s brightness failed", log_safe(ip))
+        return False
+
+
+def _push_test_state(ip: str, role: str) -> bool:
+    """Test card for a custom-firmware clock.
+
+    The stock path uploads a rendered JPEG; that route does not exist on the
+    ESP firmware, so the Test button pushed an image at a device with nowhere
+    to put it and reported failure. Send state instead.
+    """
+    import datetime as _dt
+    now = _dt.datetime.now()
+    payload = {
+        "now":        now.isoformat(timespec="milliseconds"),
+        "starts_at":  now.isoformat(timespec="milliseconds"),
+        "ends_at":    (now + _dt.timedelta(seconds=30)).isoformat(
+                          timespec="milliseconds"),
+        "role":       role,
+        "layout":     "compact",
+        "title":      "Service Mate test",
+        "cue":        f"This is the {role} clock",
+        "type":       "other",
+        "next_title": ip,
+        "next_type":  "other",
+        "next_cue":   "",
+        "notes":      "",
+        "next_duration_s": 60,
+    }
+    return _push_state(ip, payload)
+
+
+def _set_clock_standby(ip: str) -> bool:
+    """Clear a custom-firmware clock to its waiting screen."""
+    import requests as req
+    try:
+        r = req.post(f"http://{ip}/api/standby", json={}, timeout=4)
+        return bool(r.ok)
+    except Exception:
+        log.debug("Clock %s standby failed", log_safe(ip))
+        return False
+
+
 def _push_to_clock(ip: str, image_bytes: bytes,
                    filename: str = SM_FILENAME) -> bool:
     """Upload an image to a GeekMagic Ultra and switch its display to it.
