@@ -119,7 +119,11 @@ def api_clock_probe(clock_id: str):
     ip = (clock.get("ip") or "").strip()
     if not ip:
         return jsonify({"ok": False, "error": "no IP set"}), 200
-    return jsonify(_probe_clock(ip))
+    # Report WHICH firmware is there, not just that something answered. This
+    # is the whole device-type story in the UI: a read-out that cannot be set
+    # wrong, rather than a toggle that can.
+    from ..service_mate.geekmagic import _identify_clock
+    return jsonify(_identify_clock(ip))
 
 
 @bp.route("/api/clocks/<clock_id>/test", methods=["POST"])
@@ -136,6 +140,13 @@ def api_clock_test(clock_id: str):
     if not ip:
         return jsonify({"ok": False, "error": "no IP set"}), 200
     role = clock.get("role") or "screen"
+    from ..service_mate.geekmagic import _probe_custom, _push_test_state
+    if _probe_custom(ip):
+        # Custom firmware has no image-upload route, so the JPEG test card
+        # would simply fail. Send a state payload it can actually render.
+        ok = _push_test_state(ip, role)
+        _CLOCKS_LOOP_LAST_PUSHED.pop(clock_id, None)
+        return jsonify({"ok": ok})
     jpg = _render_test_card(role, ip)
     if cfg.get("brightness"):
         _set_clock_brightness(ip, int(cfg["brightness"]))

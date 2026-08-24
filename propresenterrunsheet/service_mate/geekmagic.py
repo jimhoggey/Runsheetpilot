@@ -95,6 +95,72 @@ def _push_state(ip: str, payload: dict) -> bool:
         return False
 
 
+def _identify_clock(ip: str) -> dict:
+    """What kind of clock is at `ip`, for the UI's probe button.
+
+    Deliberately a READ-OUT, not a setting. A manual device-type toggle can be
+    wrong -- point it at the wrong firmware and that clock silently stops
+    working until a human notices -- whereas detection re-checks on a timer and
+    self-corrects when a clock is reflashed in either direction.
+
+    Returns {ok, kind, label, detail}. `kind` is "esp32" | "geekmagic" | "".
+    """
+    import requests as req
+    if not ip:
+        return {"ok": False, "kind": "", "label": "",
+                "error": "no IP set"}
+    # Custom firmware first: it is the one we can identify precisely.
+    try:
+        r = req.get(f"http://{ip}/api/state", timeout=1.5)
+        if r.ok:
+            fw = ""
+            try:
+                fw = (r.json() or {}).get("firmware") or ""
+            except Exception:
+                pass
+            return {"ok": True, "kind": "esp32",
+                    "label": "Service Mate ESP32",
+                    "detail": fw or "custom firmware"}
+    except Exception:
+        pass          # not custom, or not reachable -- try the stock probe
+
+    stock = _probe_clock(ip)
+    if stock.get("ok"):
+        return {"ok": True, "kind": "geekmagic",
+                "label": "GeekMagic (stock firmware)",
+                "detail": "image push"}
+    return {"ok": False, "kind": "", "label": "",
+            "error": stock.get("error") or "no response"}
+
+
+def _push_test_state(ip: str, role: str) -> bool:
+    """Test card for a custom-firmware clock.
+
+    The stock path uploads a rendered JPEG; that route does not exist on the
+    ESP firmware, so the Test button pushed an image at a device with nowhere
+    to put it and reported failure. Send state instead.
+    """
+    import datetime as _dt
+    now = _dt.datetime.now()
+    payload = {
+        "now":        now.isoformat(timespec="milliseconds"),
+        "starts_at":  now.isoformat(timespec="milliseconds"),
+        "ends_at":    (now + _dt.timedelta(seconds=30)).isoformat(
+                          timespec="milliseconds"),
+        "role":       role,
+        "layout":     "compact",
+        "title":      "Service Mate test",
+        "cue":        f"This is the {role} clock",
+        "type":       "other",
+        "next_title": ip,
+        "next_type":  "other",
+        "next_cue":   "",
+        "notes":      "",
+        "next_duration_s": 60,
+    }
+    return _push_state(ip, payload)
+
+
 def _set_clock_standby(ip: str) -> bool:
     """Clear a custom-firmware clock to its waiting screen."""
     import requests as req
