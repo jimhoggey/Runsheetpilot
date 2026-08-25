@@ -3,7 +3,7 @@ pdfplumber>=0.11.10
 requests>=2.34.2
 waitress>=3.0.2
 Pillow>=12.3.0
-pywebview>=6.0
+pywebview>=6.2.1
 
 # Reading screenshots and scanned runsheets. The OCR engines are the
 # operating system's own — Apple Vision and Windows.Media.Ocr — so these
