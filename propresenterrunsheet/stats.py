@@ -80,6 +80,59 @@ EVENTS = (
     "crash",
 )
 
+# ── settings_saved: WHICH setting changed ───────────────────────────────────
+#
+# The event used to carry keys=len(body) and nothing else. That was always
+# 15, because the UI posts the whole settings object on every autosave, so
+# the number said "a save happened" and not one thing more.
+#
+# Field NAMES are our own constants and are always safe to send. VALUES are
+# emphatically not: this one dict holds the OpenRouter API key, the Service
+# Mate licence key, a hostname and two filesystem paths, any of which
+# identifies the operator or is an outright secret. And note that track()
+# does NOT scrub prop values — scrub() is wired only to crash messages — so
+# a value passed here goes out verbatim.
+#
+# Hence deny-by-default: a value is transmitted ONLY if its field is listed
+# below. Anything new is name-only until a human decides otherwise, which is
+# the right way round for a list whose failure mode is leaking a key.
+SETTINGS_VALUE_SAFE = frozenset({
+    # Booleans — the new state of a toggle IS the useful signal.
+    "stats_enabled", "auto_port", "media_assist", "create_timers", "sm_hide",
+    "lib_source",    # 'auto' | 'api' | 'disk'
+    "threshold",     # 0.0-1.0
+    "or_model",      # model id, already sent alongside parse_completed
+    "pp_port",       # a port number is not personal, and the install that
+                     # ran on 55416 instead of 50001 is exactly the kind of
+                     # thing worth seeing across the fleet
+})
+
+# Prop names this function owns. A settings field sharing either name would
+# be silently overwritten; tests/test_stats.py asserts none ever does.
+_SETTINGS_META_PROPS = ("changed", "n_changed")
+
+
+def settings_change_props(before: dict, after: dict) -> dict:
+    """Describe what a settings save actually changed, safely.
+
+    `after` is the POST body, which may be a partial update — the UI posts
+    all 15 fields, but the parse-timing writer posts one. Only keys present
+    in `after` are considered, and each is compared against what was on disk.
+
+    A no-op save reports n_changed=0 rather than being dropped: redundant
+    saves are worth being able to see and count, since a loop that rewrites
+    identical settings is a bug that would otherwise be invisible.
+    """
+    changed = sorted(k for k, v in after.items() if before.get(k) != v)
+    props: dict = {"changed": ",".join(changed)[:200], "n_changed": len(changed)}
+    for k in changed:
+        if k in SETTINGS_VALUE_SAFE and k not in _SETTINGS_META_PROPS:
+            v = after[k]
+            if isinstance(v, (str, int, float, bool)):
+                props[k] = v
+    return props
+
+
 # A crash loop is one bug, not 500 events.
 _MAX_ERRORS_PER_RUN = 20
 

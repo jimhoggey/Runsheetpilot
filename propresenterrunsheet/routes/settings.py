@@ -128,12 +128,23 @@ def get_settings():
 @bp.route("/api/settings", methods=["POST"])
 def post_settings():
     body = request.get_json(silent=True) or {}
+    # Read BEFORE writing — this is the only moment the old values still
+    # exist, and diffing here rather than in the browser means every writer
+    # is covered, including the ones that bypass the UI's autosave (the
+    # model dropdown, and the port-discovery writeback that saves without
+    # anyone touching the keyboard).
+    before = load_settings()
     save_settings(body)
     # Apply the analytics toggle immediately — waiting for a restart to
-    # honour "turn this off" is not a real opt-out.
+    # honour "turn this off" is not a real opt-out. Deliberately before
+    # track(): someone who just switched analytics OFF must not have that
+    # very action phoned home.
     if "stats_enabled" in body:
         stats.set_enabled(bool(body.get("stats_enabled")))
-    stats.track("settings_saved", keys=len(body))
+    # keys= is kept so existing charts don't go blank; it is now the least
+    # informative thing in the event.
+    stats.track("settings_saved", keys=len(body),
+                **stats.settings_change_props(before, body))
     return jsonify({"ok": True})
 
 
