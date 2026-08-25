@@ -102,6 +102,18 @@ have dropped a timed row: go back and add it.
 {
   "service_name": "<short name combining the service title and date,
                     e.g. 'Sunday Service — 3 May 2026'>",
+  "service_type": "<WHICH KIND of service this is, 1-3 words, NO date —
+                    e.g. 'Youth', 'Young Adults', 'Sunday Morning',
+                    'Wednesday Prayer', 'Kids'. Read it off the TITLE AT
+                    THE TOP of the runsheet, which names the service; use
+                    that wording. Do not infer the service from the items
+                    underneath — a young adults runsheet can be full of
+                    rows that would suit any service, and youth and young
+                    adults are DIFFERENT services that must never collapse
+                    into each other. This decides which of the operator's
+                    ProPresenter template playlists gets reused, and the
+                    wrong answer pre-loads the wrong media. Empty string
+                    if the runsheet genuinely never says.>",
   "items": [
     {"type":         "<see TYPES below>",
      "title":        "...",
@@ -246,6 +258,7 @@ Use empty string ("") if there is no extra info.
 
 ## EXAMPLE
 {"service_name":"Sunday Service — 3 May 2026",
+ "service_type":"Sunday Morning",
  "items":[
    {"type":"other","title":"Go live - online streaming","notes":"9:24 AM","duration_min":1},
    {"type":"other","title":"Countdown - Start 9:27am","notes":"9:25 AM","duration_min":5},
@@ -352,7 +365,15 @@ def assemble_prompt(template: str, runsheet_text: str,
 def parse_ai_response(content: str):
     """Pull the JSON out of an OpenRouter response. Handles markdown fences
     and either a `{service_name, items}` object or a bare items array.
-    Returns (items, service_name) or raises a json error."""
+    Returns (items, service_name, service_type) or raises a json error.
+
+    `service_type` is the model's answer to "which KIND of service is
+    this" — the single hint every template-resolution point shares, so
+    parse, re-match and create can't reach different verdicts about which
+    template to reuse. It is "" for a bare array, for an older reply that
+    predates the field, and for a customised prompt that doesn't ask for
+    it; callers must treat "" as "no extra evidence", not as a mismatch.
+    """
     content = content.strip()
     content = re.sub(r"^```[a-z]*\n?", "", content)
     content = re.sub(r"\n?```$", "", content)
@@ -365,7 +386,9 @@ def parse_ai_response(content: str):
     else:
         data = json.loads(content)
     if isinstance(data, list):
-        return data, ""
+        return data, "", ""
     if isinstance(data, dict):
-        return data.get("items", []), (data.get("service_name") or "").strip()
-    return [], ""
+        return (data.get("items", []),
+                (data.get("service_name") or "").strip(),
+                (data.get("service_type") or "").strip())
+    return [], "", ""

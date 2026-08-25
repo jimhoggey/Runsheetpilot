@@ -38,8 +38,9 @@ bp = Blueprint("playlist", __name__)
 log = logging.getLogger("pp_runsheet")
 
 
-def _rematch_template(matched, base, tmpl_uuid, aliases=None):
+def _rematch_template(matched, base, tmpl_uuid, aliases=None, hint=""):
     """Re-run the deterministic template match for items that missed it.
+    Returns how many items it linked.
 
     Template links are normally attached at PARSE time — but if
     ProPresenter wasn't running then, that lookup failed silently and the
@@ -53,21 +54,29 @@ def _rematch_template(matched, base, tmpl_uuid, aliases=None):
     the object's name in the item's title; sections win over single
     objects) runs again HERE, but only when at least one non-song item
     is unmatched — a fully-matched parse costs nothing extra. Best-effort
-    throughout: template still unreachable -> unchanged behaviour."""
+    throughout: template still unreachable -> unchanged behaviour.
+
+    `hint` is the service label the model reported at parse time,
+    forwarded by the client. Because this rescue re-resolves "Auto" from
+    scratch, it was the step that could undo a decline parse got right:
+    given only item titles to go on, it would re-attach a template that
+    is not for this service. Resolving from the same label parse used
+    makes the two agree by construction. Titles remain the fallback when
+    no label is available."""
     needs = [mi for mi in matched
              if isinstance(mi.get("parsed"), dict)
              and mi["parsed"].get("type") != "song"
              and not mi["parsed"].get("library_match")]
     if not needs:
-        return
+        return 0
     try:
         if not tmpl_uuid:
-            hint = " ".join((mi["parsed"].get("title") or "")
-                            for mi in needs)
+            hint = (hint or "").strip() or " ".join(
+                (mi["parsed"].get("title") or "") for mi in needs)
             tmpl_uuid = auto_detect_template_uuid(
                 fetch_pp_playlists(base), hint=hint) or ""
         if not tmpl_uuid:
-            return
+            return 0
         raw = fetch_pp_playlist_items(base, tmpl_uuid)
         sections = playlist_to_sections(raw)
         objects = playlist_to_objects(raw)
@@ -95,8 +104,10 @@ def _rematch_template(matched, base, tmpl_uuid, aliases=None):
         if hits:
             log.info("Create-time template re-match linked %d item(s) "
                      "the parse missed (PP was likely closed then)", hits)
+        return hits
     except Exception:
         log.exception("Create-time template re-match failed; continuing")
+        return 0
 
 
 @bp.route("/api/create_playlist", methods=["POST"])
@@ -143,11 +154,14 @@ def api_create_playlist():
         # rather than left to be a harmless no-op — on the production
         # machine that call walks a 1,261-item library.
         unlinked = []
+        template_relinked = 0
         if do_matching:
             from ..settings import load_settings as _ls
-            _rematch_template(matched, base,
-                              (body.get("template_playlist_uuid") or "").strip(),
-                              (_ls() or {}).get("template_aliases"))
+            template_relinked = _rematch_template(
+                matched, base,
+                (body.get("template_playlist_uuid") or "").strip(),
+                (_ls() or {}).get("template_aliases"),
+                hint=(body.get("service_label") or "").strip()) or 0
 
             bin_items = fetch_media_bin(base)
             unlinked = relink_media(matched, bin_items) if bin_items else []
@@ -304,6 +318,9 @@ def api_create_playlist():
             # media isn't in PP's Media bin — the UI turns this into a
             # plain-English "drag these into Media, then Create again".
             "unlinked":            unlinked,
+            # Items the create-time rescue linked that the parse missed —
+            # normally because ProPresenter was closed when they parsed.
+            "template_relinked":   template_relinked,
             "timers_created":      timer_result["created"],
             "timers_deleted":      timer_result["deleted"],
             "timers_no_duration":  timer_result["no_duration"],

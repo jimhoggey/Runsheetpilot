@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.13.0"
+VERSION = "2.14.0"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,12 +34,13 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "Service Mate clocks can now run new firmware that counts down on the "
-    + "device itself. No more stutter, and every clock ticks together.",
-    "Your existing clocks keep working exactly as they are — the app spots "
-    + "which kind each one is and talks to it the right way.",
-    "Cues can say more than one thing per station now, and the clock rotates "
-    + "through them.",
+    "Auto won't reach for a template that isn't yours any more. A young "
+    + "adults runsheet no longer comes back full of youth media just "
+    + "because youth is the only template you've built.",
+    "It works out which service you're running from the top of the "
+    + "runsheet, where you already write it.",
+    "No template for this service yet? Still fine — you get your headers, "
+    + "timers and songs, and a line saying why there's no template media.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.
@@ -106,6 +107,11 @@ if not getattr(sys, "frozen", False):
         # twice to find any legacy settings.json next to propresenter_app.py.
         old = Path(__file__).resolve().parent.parent / "settings.json"
         if old.exists() and not SETTINGS_FILE.exists():
-            SETTINGS_FILE.write_text(old.read_text())
+            # Explicit utf-8 both ways: read_text() uses the locale codec,
+            # which is cp1252 on Windows, and a saved `ai_prompt` carries
+            # em-dashes and arrows. That decode raised, the bare `except`
+            # below swallowed it, and the migration silently did nothing.
+            SETTINGS_FILE.write_text(old.read_text(encoding="utf-8"),
+                                     encoding="utf-8")
     except Exception:
         pass

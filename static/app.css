@@ -577,6 +577,10 @@ tr:hover td { background: rgba(255,255,255,0.025); }
 }
 .notice-ok  { background: var(--grn-soft); border-color: rgba(34,197,94,0.30);  color: #86efac; }
 .notice-err { background: var(--red-soft); border-color: rgba(239,68,68,0.30); color: #fca5a5; }
+/* Something the operator should know, that is not a problem. Accent
+   blue, deliberately NOT the orange warning: "no template for this
+   service" is a normal way to run an event, not a failure. */
+.notice-info { background: var(--acc-soft); border-color: rgba(59,130,246,0.30); color: #bfdbfe; }
 
 code {
   font-family: var(--font-mono);
