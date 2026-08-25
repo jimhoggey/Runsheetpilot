@@ -25,19 +25,101 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.14.1"
+VERSION = "2.15.0"
 APP_NAME = "Runsheet Pilot"
 
+# Release notes, newest first. ONE source of truth: the what's-new popup
+# shown after an update reads the entry for the running VERSION, and the
+# version badge reads the most recent few for its "what changed lately"
+# popup.
+#
+# THE RELEASE RULE: every release adds an entry here — max three bullets,
+# short, operator-facing, in the app's own voice (see the idle greetings in
+# app.js for the register), MOST IMPACTFUL FIRST. That ordering is load
+# bearing now: the badge popup surfaces each version's first bullet as its
+# headline, so bullet one is what a returning operator actually reads.
+# The same lines go in the GitHub release body.
+# tests/test_whats_new.py enforces the cap AND that VERSION has an entry.
+RELEASE_NOTES = {
+    "2.15.0": [
+        "Behind by a few versions? Updating now takes you straight to the "
+        + "newest one. It works out which release is actually newest "
+        + "instead of trusting GitHub to say so.",
+        "Click the version number, top right, to see what changed in the "
+        + "last few releases.",
+    ],
+    "2.14.1": [
+        "The anonymous usage stats now record WHICH setting you changed — "
+        + "the name of it, never what you typed. Your API key, licence key "
+        + "and folder paths still never leave this machine.",
+    ],
+    "2.14.0": [
+        "Auto won't reach for a template that isn't yours any more. A young "
+        + "adults runsheet no longer comes back full of youth media just "
+        + "because youth is the only template you've built.",
+        "It works out which service you're running from the top of the "
+        + "runsheet, where you already write it.",
+        "No template for this service yet? Still fine — you get your "
+        + "headers, timers and songs, and a line saying why there's no "
+        + "template media.",
+    ],
+    "2.13.0": [
+        "Service Mate clocks can now run new firmware that counts down on "
+        + "the device itself. No more stutter, and every clock ticks "
+        + "together.",
+        "Your existing clocks keep working exactly as they are — the app "
+        + "spots which kind each one is and talks to it the right way.",
+        "Cues can say more than one thing per station now, and the clock "
+        + "rotates through them.",
+    ],
+    "2.12.1": [
+        "macOS was silently blocking Service Mate from reaching your "
+        + "clocks. The app now asks permission properly — say yes.",
+        "Clock errors say what actually went wrong instead of pasting a "
+        + "Python traceback at you.",
+        "If macOS is the one blocking it, I now tell you exactly which "
+        + "setting to flip.",
+    ],
+    "2.12.0": [
+        "Fund your OpenRouter key and a short list of recommended models "
+        + "appears, priced per runsheet. Or paste any model you like.",
+        "Automatic still only ever uses free models — it will never start "
+        + "spending without being asked.",
+        "Every model is checked against OpenRouter as you open the list, "
+        + "and I now record which one ran and what it cost.",
+    ],
+}
+
+
+def _version_key(v: str) -> tuple:
+    """'2.15.0' -> (2, 15, 0). Unparseable sorts last, never first."""
+    try:
+        return tuple(int(p) for p in str(v).split("."))
+    except ValueError:
+        return (-1,)
+
+
+def recent_release_notes(limit: int = 3) -> list:
+    """The newest `limit` releases as [{version, notes, headline}], newest
+    first.
+
+    Sorted by parsed version rather than trusting dict insertion order —
+    an entry added in the wrong place would otherwise silently reorder the
+    operator's changelog.
+    """
+    out = []
+    for ver in sorted(RELEASE_NOTES, key=_version_key, reverse=True)[:limit]:
+        notes = [n for n in RELEASE_NOTES.get(ver) or [] if n and n.strip()]
+        if notes:
+            out.append({"version": ver, "notes": notes[:3],
+                        "headline": notes[0]})
+    return out
+
+
 # Shown once by the what's-new popup on the first launch after an update.
-# THE RELEASE RULE: every release rewrites this list — max three bullets,
-# short, operator-facing, in the app's own voice (see the idle greetings
-# in app.js for the register). The same three lines go in the GitHub
-# release body. tests/test_whats_new.py enforces the cap.
-WHATS_NEW = [
-    "The anonymous usage stats now record WHICH setting you changed — the "
-    + "name of it, never what you typed. Your API key, licence key and "
-    + "folder paths still never leave this machine.",
-]
+# .get() not [] on purpose: a VERSION bump with no notes yet must not stop
+# the app from booting. The test suite is what catches the omission.
+WHATS_NEW = RELEASE_NOTES.get(VERSION, [])
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.
 _LEGACY_APP_NAME = "ProPresenter Runsheet Builder"

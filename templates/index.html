@@ -26,7 +26,8 @@
          deliberately no banner: two competing entry points for the same
          action is what made this confusing. See app.js §11. -->
     <span class="badge-wrap" id="badge-wrap">
-      <span class="badge" id="version-badge" onclick="bumpVersionTaps()" title="">v—</span>
+      <span class="badge" id="version-badge" onclick="showReleaseHistory()"
+            title="What's changed lately">v—</span>
       <button class="badge-check" id="badge-check-btn"
               onclick="badgeCheckUpdates()">Check for updates</button>
     </span>
@@ -710,18 +711,25 @@
   </div>
 </div>
 
-<!-- What's-new popup — shown once when the running version differs from
-     the last one this install saw (i.e. right after an update, whether via
-     the in-app updater or a manual DMG). Content comes from WHATS_NEW in
-     config.py via /api/whats_new; dismissing marks the version seen. -->
+<!-- What's-new popup. Two modes, one card:
+     "update"  — shown once when the running version differs from the last
+                 one this install saw (after the in-app updater or a manual
+                 DMG). Content from WHATS_NEW; dismissing marks it seen.
+     "history" — opened by clicking the version badge. Spans the last three
+                 releases via /api/release_notes and marks NOTHING seen, so
+                 a curious glance can't rob you of the popup after your next
+                 update.
+     The 👋 carries the tap easter egg, which used to live on the badge —
+     the badge now opens this card, so taps 2-7 would hit the backdrop. -->
 <div class="whatsnew-backdrop" id="whatsnew-backdrop" role="dialog"
      aria-modal="true" aria-labelledby="whatsnew-title">
   <div class="whatsnew-card">
-    <span class="whatsnew-wave">👋</span>
+    <span class="whatsnew-wave" onclick="bumpVersionTaps()">👋</span>
     <div class="whatsnew-title" id="whatsnew-title">…</div>
     <div class="whatsnew-version" id="whatsnew-version"></div>
     <ul class="whatsnew-notes" id="whatsnew-notes"></ul>
-    <button class="btn btn-acc btn-full" onclick="dismissWhatsNew()">
+    <button class="btn btn-acc btn-full" id="whatsnew-cta"
+            onclick="dismissWhatsNew()">
       Let's go ✨
     </button>
   </div>

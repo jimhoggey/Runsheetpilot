@@ -503,3 +503,107 @@ def test_api_update_apply_409_when_nothing_available(client, monkeypatch, upd_en
     monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
     updater._set(state="idle")
     assert client.post("/api/update/apply").status_code == 409
+
+
+# ── Landing on the newest version in one hop ────────────────────────────────
+#
+# The updater never stepped through versions — it has always compared full
+# semver tuples and jumped straight to the target. What it DID depend on was
+# GitHub's /releases/latest pointer, which is the most recently PUBLISHED
+# non-draft release, NOT the highest version number. Those differ whenever a
+# hotfix on an older line is published after a newer release, and the pointer
+# has been seen lagging a fresh publish outright. Either way an install
+# several versions behind is offered the wrong release, or none.
+#
+# So we read the release LIST and take the highest installable semver.
+
+def test_picks_the_highest_version_not_the_first_in_the_list():
+    """GitHub returns newest-published first. That is not highest-version."""
+    releases = [_release_payload(tag="v2.13.5"),   # hotfix, published last
+                _release_payload(tag="v2.15.0"),
+                _release_payload(tag="v2.14.0")]
+    info = updater.pick_best_release(releases, platform="win32",
+                                     current="2.13.0")
+    assert info["version"] == "2.15.0"
+
+
+def test_two_versions_behind_lands_directly_on_the_newest():
+    """The scenario: on 2.13.0 with 2.15.0 out. One hop, not two."""
+    releases = [_release_payload(tag=t)
+                for t in ("v2.15.0", "v2.14.1", "v2.14.0")]
+    info = updater.pick_best_release(releases, platform="darwin",
+                                     current="2.13.0")
+    assert info["version"] == "2.15.0"
+
+
+def test_drafts_and_prereleases_are_never_offered():
+    draft = {**_release_payload(tag="v9.0.0"), "draft": True}
+    pre = {**_release_payload(tag="v8.0.0"), "prerelease": True}
+    good = _release_payload(tag="v2.15.0")
+    info = updater.pick_best_release([draft, pre, good], platform="win32",
+                                     current="2.13.0")
+    assert info["version"] == "2.15.0"
+
+
+def test_a_release_missing_this_platforms_asset_is_skipped_not_fatal():
+    """A half-failed publish should cost Mac users the newest version, not
+    block them on every version."""
+    mac_less = _release_payload(tag="v2.16.0", assets=[
+        {"name": "Runsheet-Pilot-windows.exe",
+         "browser_download_url": "https://gh/win.exe"},
+        {"name": "SHA256SUMS.txt", "browser_download_url": "https://gh/s"}])
+    info = updater.pick_best_release(
+        [mac_less, _release_payload(tag="v2.15.0")],
+        platform="darwin", current="2.13.0")
+    assert info["version"] == "2.15.0"
+    # ...while Windows, which DOES have an asset there, still gets 2.16.0.
+    win = updater.pick_best_release(
+        [mac_less, _release_payload(tag="v2.15.0")],
+        platform="win32", current="2.13.0")
+    assert win["version"] == "2.16.0"
+
+
+def test_nothing_offered_when_every_release_is_older():
+    releases = [_release_payload(tag=t) for t in ("v1.0.0", "v2.0.0")]
+    assert updater.pick_best_release(releases, platform="win32",
+                                     current="2.13.0") is None
+
+
+def test_check_for_update_reads_the_list_and_takes_the_highest(upd_env):
+    seen = []
+
+    def http_get(url, **kw):
+        seen.append(url)
+        if url == updater.API_RELEASES:
+            return FakeResponse(json_data=[
+                _release_payload(tag="v99.1.0"),
+                _release_payload(tag="v99.3.0"),   # highest, not first
+                _release_payload(tag="v99.2.0")])
+        raise AssertionError(f"should not have requested {url}")
+
+    info = updater.check_for_update(http_get=http_get, platform="win32")
+    assert info["version"] == "99.3.0"
+    assert seen == [updater.API_RELEASES], "must not need /releases/latest"
+    assert updater.get_state()["latest"] == "99.3.0"
+
+
+def test_check_for_update_falls_back_when_the_list_endpoint_fails(upd_env):
+    """A rate limit on the list must downgrade the check, not kill it."""
+    def http_get(url, **kw):
+        if url == updater.API_RELEASES:
+            raise OSError("403 rate limited")
+        return FakeResponse(json_data=_release_payload(tag="v99.0.0"))
+
+    info = updater.check_for_update(http_get=http_get, platform="win32")
+    assert info["version"] == "99.0.0"
+
+
+def test_check_for_update_survives_a_list_that_is_not_a_list(upd_env):
+    """Defensive: an error object where an array was expected."""
+    def http_get(url, **kw):
+        if url == updater.API_RELEASES:
+            return FakeResponse(json_data={"message": "API rate limit"})
+        return FakeResponse(json_data=_release_payload(tag="v99.0.0"))
+
+    assert updater.check_for_update(
+        http_get=http_get, platform="win32")["version"] == "99.0.0"

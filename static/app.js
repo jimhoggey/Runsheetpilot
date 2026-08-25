@@ -857,15 +857,60 @@ async function initWhatsNew() {
       li.textContent = n;
       ul.appendChild(li);
     });
+    _whatsNewMode = 'update';
+    document.getElementById('whatsnew-cta').textContent = "Let's go \u2728";
     document.getElementById('whatsnew-backdrop').classList.add('active');
   } catch (e) {
     // Never let a changelog break the app.
   }
 }
 
+// Which mode the shared card is in. 'update' is the once-after-updating
+// popup and marks the version seen on dismiss; 'history' is the version
+// badge's changelog and must mark NOTHING — otherwise glancing at what
+// changed silently cancels the popup you'd get after your next update.
+let _whatsNewMode = 'update';
+
 function dismissWhatsNew() {
   document.getElementById('whatsnew-backdrop').classList.remove('active');
-  fetch('/api/whats_new/seen', {method: 'POST'}).catch(() => {});
+  if (_whatsNewMode === 'update') {
+    fetch('/api/whats_new/seen', {method: 'POST'}).catch(() => {});
+  }
+  _whatsNewMode = 'update';
+}
+
+// Clicking the version badge. One line per release, newest first, showing
+// that release's FIRST note — the release rule puts the most impactful
+// bullet first, so three versions gives three headlines rather than nine
+// bullets nobody reads.
+async function showReleaseHistory() {
+  try {
+    const res = await fetch('/api/release_notes').then(r => r.json());
+    const rels = res.releases || [];
+    if (!rels.length) return;
+    _whatsNewMode = 'history';
+    document.getElementById('whatsnew-title').textContent =
+      "What's changed lately";
+    document.getElementById('whatsnew-version').textContent =
+      `You're on v${res.current}`;
+    const ul = document.getElementById('whatsnew-notes');
+    ul.innerHTML = '';
+    rels.forEach(r => {
+      const li = document.createElement('li');
+      const tag = document.createElement('strong');
+      tag.textContent = `v${r.version} · `;
+      li.appendChild(tag);
+      // textContent, not innerHTML — these strings are ours today, but a
+      // changelog is exactly the kind of thing that later gets fed from
+      // somewhere else.
+      li.appendChild(document.createTextNode(r.headline));
+      ul.appendChild(li);
+    });
+    document.getElementById('whatsnew-cta').textContent = 'Close';
+    document.getElementById('whatsnew-backdrop').classList.add('active');
+  } catch (e) {
+    // A changelog is never worth breaking the app over.
+  }
 }
 
 // ─── 4. Library load (silent auto + manual rescan) ────────────────────────
