@@ -89,3 +89,63 @@ def test_dismiss_preserves_other_settings(fresh_settings):
     assert s.get("or_key") == "sk-keep-me"
     assert s.get("pp_host") == "10.0.0.5"
     assert s.get("last_seen_version") == VERSION
+
+
+# ── The version badge's changelog ───────────────────────────────────────────
+
+def test_current_version_has_release_notes():
+    """A VERSION bump with no notes leaves the after-update popup empty.
+    config.py uses .get() so the app still boots; this is what catches it."""
+    from propresenterrunsheet.config import RELEASE_NOTES, VERSION
+    assert VERSION in RELEASE_NOTES, (
+        f"v{VERSION} has no entry in RELEASE_NOTES — add one before "
+        f"releasing, most impactful bullet first.")
+
+
+def test_whats_new_is_the_entry_for_the_running_version():
+    """One source of truth. Two lists would drift, and the drifting one
+    would be the changelog nobody notices is wrong."""
+    from propresenterrunsheet.config import RELEASE_NOTES, VERSION, WHATS_NEW
+    assert WHATS_NEW == RELEASE_NOTES[VERSION]
+
+
+def test_every_release_note_entry_obeys_the_three_bullet_cap():
+    from propresenterrunsheet.config import RELEASE_NOTES
+    for ver, notes in RELEASE_NOTES.items():
+        assert 1 <= len(notes) <= 3, f"v{ver} has {len(notes)} bullets"
+        assert all(isinstance(n, str) and n.strip() for n in notes), ver
+
+
+def test_recent_notes_are_newest_first_by_version_not_dict_order():
+    """Sorted by parsed version: 2.9.0 must not outrank 2.14.0, and an
+    entry added in the wrong place must not reorder the changelog."""
+    from propresenterrunsheet import config
+    fake = {"2.9.0": ["old"], "2.14.0": ["newer"], "2.13.0": ["mid"]}
+    orig = config.RELEASE_NOTES
+    try:
+        config.RELEASE_NOTES = fake
+        got = [r["version"] for r in config.recent_release_notes(3)]
+    finally:
+        config.RELEASE_NOTES = orig
+    assert got == ["2.14.0", "2.13.0", "2.9.0"]
+
+
+def test_recent_notes_headline_is_the_first_bullet():
+    """The badge popup shows one line per release, so bullet one carries it."""
+    from propresenterrunsheet.config import recent_release_notes
+    for rel in recent_release_notes(3):
+        assert rel["headline"] == rel["notes"][0]
+
+
+def test_release_notes_endpoint_spans_versions_and_marks_nothing_seen(
+        fresh_settings):
+    """Reading the changelog must not consume the after-update popup."""
+    from propresenterrunsheet.settings import load_settings
+    before = load_settings().get("last_seen_version")
+
+    r = fresh_settings.get("/api/release_notes")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert len(body["releases"]) >= 2, "should span more than one version"
+    assert body["releases"][0]["version"] == body["current"]
+    assert load_settings().get("last_seen_version") == before

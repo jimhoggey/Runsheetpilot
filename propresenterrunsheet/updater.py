@@ -46,6 +46,15 @@ log = logging.getLogger("pp_runsheet")
 # real one.
 REPO = "jimhoggey/Runsheetpilot"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
+# The LIST endpoint, which is what we actually prefer. /releases/latest is
+# GitHub's "latest" POINTER: the most recently PUBLISHED non-draft,
+# non-prerelease release — not the highest version number. Publish a hotfix
+# on an old line after a newer release and the pointer moves backwards, and
+# the pointer has been observed lagging behind a freshly published release
+# outright. Either way an install two versions behind gets offered the wrong
+# one, or nothing at all. Reading the list and taking the highest semver
+# removes the dependency on that pointer being right.
+API_RELEASES = f"https://api.github.com/repos/{REPO}/releases?per_page=30"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 ASSET_MAC = "Runsheet-Pilot-mac.zip"
 ASSET_WIN = "Runsheet-Pilot-windows.exe"
@@ -111,13 +120,20 @@ def pick_platform_asset(assets, platform=None):
     return None
 
 
-def parse_release(payload, platform=None):
-    """Turn a /releases/latest payload into update info, or None if the
-    release isn't newer, lacks this platform's stable asset, or lacks the
-    checksums file (unverifiable -> not offered)."""
-    tag = (payload or {}).get("tag_name") or ""
+def parse_release(payload, platform=None, current=VERSION):
+    """Turn one release payload into update info, or None if the release
+    isn't newer, is a draft/pre-release, lacks this platform's stable
+    asset, or lacks the checksums file (unverifiable -> not offered).
+
+    The draft/pre-release check matters now that we read the release LIST:
+    /releases/latest filters those out for us, the list does not.
+    """
+    payload = payload or {}
+    if payload.get("draft") or payload.get("prerelease"):
+        return None
+    tag = payload.get("tag_name") or ""
     ver = parse_semver(tag)
-    if not ver or not is_newer(tag):
+    if not ver or not is_newer(tag, current):
         return None
     assets = payload.get("assets") or []
     asset = pick_platform_asset(assets, platform)
@@ -131,6 +147,31 @@ def parse_release(payload, platform=None):
         "asset_url": asset["browser_download_url"],
         "sums_url": sums["browser_download_url"],
     }
+
+
+def pick_best_release(payloads, platform=None, current=VERSION):
+    """The highest usable version across a list of releases, or None.
+
+    "Usable" means every check parse_release makes — newer than `current`,
+    not a draft or pre-release, and carrying BOTH this platform's stable
+    asset and SHA256SUMS.txt. A release missing the Mac zip is skipped
+    rather than fatal, so a partially-failed publish costs Mac users the
+    newest version instead of blocking them entirely; they get the highest
+    one that is actually installable.
+
+    Ordering comes from the parsed semver, never from the order GitHub
+    returned the list in.
+    """
+    best = None
+    best_ver = None
+    for payload in payloads or []:
+        info = parse_release(payload, platform=platform, current=current)
+        if not info:
+            continue
+        ver = parse_semver(info["version"])
+        if ver and (best_ver is None or ver > best_ver):
+            best, best_ver = info, ver
+    return best
 
 
 def parse_sha256sums(text):
@@ -342,18 +383,39 @@ def _execute_swap(ops, spawn=None, hard_exit=None):
 
 
 def check_for_update(http_get=None, timeout=5, platform=None):
-    """Hit /releases/latest; stage + expose 'available' if newer. Failures
-    are logged and swallowed — a booth without internet must never see an
-    update error it didn't ask for."""
+    """Find the highest installable release; stage + expose 'available'.
+
+    Reads the release LIST and takes the highest semver, so an install any
+    number of versions behind lands directly on the newest one — there is
+    no stepping through intermediate versions, and no reliance on GitHub's
+    "latest" pointer aiming at the highest version (it points at the most
+    recently published one, which is not the same thing).
+
+    Falls back to /releases/latest if the list request fails, so a rate
+    limit or a shape change downgrades the check rather than killing it.
+
+    Failures are logged and swallowed — a booth without internet must
+    never see an update error it didn't ask for.
+    """
     get = http_get or requests.get
+    headers = {"Accept": "application/vnd.github+json"}
+    info = None
     try:
-        r = get(API_LATEST, timeout=timeout,
-                headers={"Accept": "application/vnd.github+json"})
+        r = get(API_RELEASES, timeout=timeout, headers=headers)
         r.raise_for_status()
-        info = parse_release(r.json(), platform=platform)
+        releases = r.json()
+        if not isinstance(releases, list):
+            raise ValueError("releases list was not a list")
+        info = pick_best_release(releases, platform=platform)
     except Exception as e:
-        log.info("Update check skipped: %s", e)
-        return None
+        log.info("Release list unavailable (%s); trying /releases/latest", e)
+        try:
+            r = get(API_LATEST, timeout=timeout, headers=headers)
+            r.raise_for_status()
+            info = parse_release(r.json(), platform=platform)
+        except Exception as e2:
+            log.info("Update check skipped: %s", e2)
+            return None
     if info:
         with _lock:
             _AVAILABLE.clear()

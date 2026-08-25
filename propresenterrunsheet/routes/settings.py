@@ -8,7 +8,7 @@ import sys
 
 from flask import Blueprint, jsonify, request
 
-from ..config import DATA_DIR, VERSION, WHATS_NEW
+from ..config import DATA_DIR, VERSION, WHATS_NEW, recent_release_notes
 from ..parsing.ai import DEFAULT_PROMPT
 from ..parsing.models import (
     fetch_catalogue, fetch_key_info, pick_default_model,
@@ -95,6 +95,23 @@ def get_whats_new():
         "version": VERSION,
         "notes":   list(WHATS_NEW)[:3],
     })
+
+
+@bp.route("/api/release_notes", methods=["GET"])
+def get_release_notes():
+    """What changed across the last few releases — for the version badge.
+
+    Distinct from /api/whats_new in two ways that matter: it spans several
+    versions rather than only the running one, and it is READ-ONLY. It must
+    never mark a version seen, or an operator glancing at the changelog
+    would silently rob themselves of the popup after their next update.
+
+    Served from RELEASE_NOTES in config.py rather than the GitHub API on
+    purpose — a booth with no internet still gets its changelog, and the
+    published release bodies have turned out to be an unreliable source
+    (several are GitHub's auto-generated "What's Changed" list).
+    """
+    return jsonify({"current": VERSION, "releases": recent_release_notes(3)})
 
 
 @bp.route("/api/whats_new/seen", methods=["POST"])
