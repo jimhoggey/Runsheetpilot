@@ -31,7 +31,7 @@ from ..parsing.ocr import (
     OCRUnavailable, image_to_text, images_to_text,
 )
 from ..parsing.pdf import extract_pdf_text, pdf_text_or_images, render_pdf_pages
-from ..parsing.timed_rows import rescue_missing_rows
+from ..parsing.timed_rows import rescue_missing_rows, service_header
 from .. import stats
 from ..propresenter.library import fuzzy_match
 from ..propresenter.net import UnreachableHost, pp_base
@@ -39,6 +39,7 @@ from ..propresenter.templates import (
     auto_detect_template_uuid, fetch_pp_playlist_items, fetch_pp_playlists,
     link_items_to_template, playlist_to_objects, playlist_to_sections,
     resolve_object, resolve_section, resolve_with_aliases,
+    template_candidates,
 )
 from ..service_mate.state import _ensure_item_cues, _write_runsheet_state
 from ..logging_setup import log_safe
@@ -431,6 +432,14 @@ def api_upload_and_parse():
             base = ""
             do_matching = False
         tmpl_uuid = (settings.get("template_playlist_uuid") or "").strip()
+        # A uuid from settings is the operator PINNING the dropdown — an
+        # explicit instruction, never second-guessed by the confirmation
+        # pass below. Only an Auto pick is ours to revise.
+        tmpl_pinned = bool(tmpl_uuid)
+        # None means "not fetched yet" — distinct from [] ("PP has no
+        # playlists"), so the confirmation pass below doesn't re-ask a
+        # ProPresenter that already answered.
+        pp_playlists = None
         if not do_matching:
             tmpl_uuid = ""
         elif not tmpl_uuid:
@@ -441,12 +450,29 @@ def api_upload_and_parse():
             # Library" and a sunday runsheet to "Sunday Morning Library"
             # automatically. Fall back to the first template-named
             # playlist on tie or no signal.
+            # This runs BEFORE the model has read anything, so the hint is
+            # whatever the raw text can prove: the filename and the
+            # runsheet's MASTHEAD — the lines above the first timed row,
+            # where it names itself ("Youth Service : EVANGELISM 101").
+            #
+            # It used to be the first 500 characters, which is the body as
+            # much as the header. That let one row's notes decide the
+            # template: a young adults runsheet with "THIS IS YOUTH" in a
+            # setup note scored a confident hit on the youth library.
+            # The masthead is the runsheet saying what it IS; the body is
+            # it saying what happens. Only the first one answers this
+            # question.
+            #
+            # Precise rather than generous on purpose: a runsheet with no
+            # masthead now hints on the filename alone and may resolve to
+            # nothing, and the confirmation pass below — which has the
+            # model's own reading of the service — is what recovers it.
             detect_hint = " ".join(filter(None, [
-                upload_name, raw[:500]]))
+                upload_name, service_header(raw)]))
             try:
+                pp_playlists = fetch_pp_playlists(base)
                 tmpl_uuid = auto_detect_template_uuid(
-                    fetch_pp_playlists(base),
-                    hint=detect_hint) or ""
+                    pp_playlists, hint=detect_hint) or ""
             except Exception:
                 log.exception("template auto-detect failed; continuing without")
         if tmpl_uuid:
@@ -590,7 +616,7 @@ def api_upload_and_parse():
         if used_model != model:
             log.info(f"OpenRouter routed {log_safe(model)} -> {log_safe(used_model)}")
         content = (body["choices"][0]["message"].get("content") or "")
-        items, service_name = parse_ai_response(content)
+        items, service_name, service_type = parse_ai_response(content)
 
         # A reply can be perfectly valid JSON and still not be a runsheet —
         # `{"safety": "safe"}` parses fine and yields zero items. Without this
@@ -623,6 +649,69 @@ def api_upload_and_parse():
             stats.track("rows_rescued", count=rescued_rows,
                         model=used_model, items=len(items))
 
+        # 7c. Re-resolve the template now that the model has told us WHICH
+        # SERVICE this is. The pick above was made before anything had read
+        # the runsheet — filename plus the first 500 characters — which is
+        # weak evidence in both directions: it misses a youth runsheet
+        # whose filename says nothing, and it matches on a stray "youth"
+        # in a young adults runsheet. A label the model assigns after
+        # reading the whole document does neither.
+        #
+        # This is also what stops the three Auto call sites disagreeing.
+        # Parse, /api/match and create each used to build their own hint
+        # from whatever they had to hand; they now all resolve from this
+        # one label, so create can't silently re-attach a template parse
+        # correctly declined. It costs one extra field in a reply we are
+        # already paying for — no second round-trip.
+        #
+        # A pinned dropdown is an explicit instruction and is left alone.
+        #
+        # `service_name` is the fallback hint: a customised prompt or a
+        # model that ignores the new field leaves service_type empty, and
+        # without a second source of evidence those users would lose
+        # template matching altogether now that a weak hint declines
+        # instead of guessing. The name nearly always carries the service
+        # words too ("Sunday Service — 3 May 2026").
+        confirm_hint = (service_type or service_name or "").strip()
+        if do_matching and not tmpl_pinned and confirm_hint and base:
+            try:
+                if pp_playlists is None:
+                    pp_playlists = fetch_pp_playlists(base)
+                confirmed = auto_detect_template_uuid(
+                    pp_playlists, hint=confirm_hint) or ""
+            except Exception:
+                log.exception("template confirmation failed; keeping the "
+                              "parse-time pick")
+                confirmed = tmpl_uuid
+            if confirmed != tmpl_uuid:
+                log.info("Model read the service as %r — template %s -> %s",
+                         log_safe(confirm_hint),
+                         tmpl_uuid or "(none)", confirmed or "(none)")
+                tmpl_uuid, sections, objects = confirmed, [], []
+                if tmpl_uuid:
+                    # Adopted a template the pre-AI hint couldn't reach.
+                    # Its section names never made it into the prompt, so
+                    # the model tagged nothing — but the deterministic
+                    # title match in the loop below still links items.
+                    try:
+                        raw_items = fetch_pp_playlist_items(base, tmpl_uuid)
+                        sections = playlist_to_sections(raw_items)
+                        objects = playlist_to_objects(raw_items)
+                    except Exception:
+                        log.exception("revised template fetch failed; "
+                                      "continuing without template context")
+
+        # Templates existed but none of them is for this service. Worth
+        # telling the operator, because the playlist they are about to
+        # build has no template media in it and they should know why.
+        # NOT an error: a brand-new event legitimately has no template,
+        # and a ProPresenter with no templates at all says nothing.
+        template_declined = bool(
+            do_matching and not tmpl_pinned and not tmpl_uuid
+            and template_candidates(pp_playlists or []))
+        tmpl_name = next((p.get("name", "") for p in (pp_playlists or [])
+                          if p.get("uuid") == tmpl_uuid), "") if tmpl_uuid else ""
+
         # 8. If the AI didn't supply a service name, derive one from the filename
         if not service_name and upload_name:
             stem = re.sub(r"\.(pdf|png|jpe?g)$", "", upload_name,
@@ -637,6 +726,18 @@ def api_upload_and_parse():
         # dropped to None and the item falls back to existing paths.
         resolved_section_hits = 0
         resolved_object_hits = 0
+        # Section headers as matchable pseudo-objects: a title hit on the
+        # header name expands that whole section. link_items_to_template
+        # has always done this (its comment even says "exactly as at parse
+        # time") — parse itself did not, so the same runsheet could link
+        # differently depending on whether it went through parse or the
+        # create-time rescue. It matters more now: when the template is
+        # adopted AFTER the model replies, its section names were never in
+        # the prompt, so nothing is tagged and title matching is the only
+        # way in.
+        header_objects = [{"name": s_["header"]["name"], "_section": s_}
+                          for s_ in sections
+                          if s_.get("header") and s_["header"].get("name")]
         for it in items:
             if not isinstance(it, dict):
                 continue
@@ -666,6 +767,15 @@ def api_upload_and_parse():
             section = resolve_section(name, sections) if name else None
             if section:
                 it["library_match"] = section
+                resolved_section_hits += 1
+                continue
+            # Title hit on a section header — same rule, no tag needed.
+            # Songs excluded for the same reason as objects below.
+            hdr = (resolve_with_aliases(it.get("title", ""), header_objects,
+                                        settings.get("template_aliases"))
+                   if it.get("type") != "song" else None)
+            if hdr and hdr.get("_section"):
+                it["library_match"] = hdr["_section"]
                 resolved_section_hits += 1
                 continue
             # Item-level fallback: match the runsheet title against the
@@ -734,7 +844,12 @@ def api_upload_and_parse():
                     rescued=rescued_rows,
                     template_links=resolved_section_hits + resolved_object_hits,
                     source="text" if reviewed_text.strip() else "file",
-                    matching=do_matching)
+                    matching=do_matching,
+                    # How often Auto has to say "none of these are for
+                    # this service" — the measure of whether the decline
+                    # rule is earning its place or over-firing. A bool,
+                    # never the service label: that is church content.
+                    template_declined=template_declined)
 
         log.info(f"AI parsed {len(items)} runsheet items, "
                  f"suggested name: {log_safe(service_name)!r}")
@@ -743,6 +858,17 @@ def api_upload_and_parse():
             "rescued_rows":   rescued_rows,
             "filename":       upload_name,
             "suggested_name": service_name,
+            # The template verdict, resolved ONCE here and carried by the
+            # client into /api/match and /api/create_playlist so those
+            # steps never re-derive it and reach a different answer.
+            # `service_label` doubles as the shared hint and as the words
+            # the banner uses ("No template for Young Adults").
+            "template": {
+                "uuid":          tmpl_uuid,
+                "name":          tmpl_name,
+                "declined":      template_declined,
+                "service_label": service_type,
+            },
         })
 
     except json.JSONDecodeError:
@@ -795,9 +921,15 @@ def api_match():
         tmpl = (body.get("template_playlist_uuid")
                 or settings.get("template_playlist_uuid") or "").strip()
         if not tmpl:
-            # "Auto" — pick the template the same way parse does, from
-            # the runsheet's own wording.
-            hint = " ".join((it.get("title") or "") for it in parsed)
+            # "Auto" — resolve from the SAME hint parse used: the service
+            # label the model reported, forwarded by the client. Item
+            # titles used to stand in for it here, which is why this could
+            # reach a different verdict than parse did on the same
+            # runsheet. Titles remain the fallback for a client that
+            # doesn't send a label (or a model that didn't give one).
+            hint = (body.get("service_label") or "").strip()
+            if not hint:
+                hint = " ".join((it.get("title") or "") for it in parsed)
             try:
                 tmpl = auto_detect_template_uuid(fetch_pp_playlists(base),
                                                  hint=hint) or ""

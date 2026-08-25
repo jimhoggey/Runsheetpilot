@@ -152,6 +152,7 @@ from propresenterrunsheet.config import (  # noqa: E402, F401
 from propresenterrunsheet.parsing import (  # noqa: E402, F401
     DEFAULT_PROMPT, _DURATION_RE, _TIME_RE,
     _extract_duration_min, _extract_time_str, extract_pdf_text,
+    parse_ai_response,
 )
 from propresenterrunsheet.propresenter import (  # noqa: E402, F401
     ACTION_NEEDED_COLOR, TYPE_COLORS,

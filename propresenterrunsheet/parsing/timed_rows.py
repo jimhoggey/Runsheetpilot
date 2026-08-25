@@ -81,6 +81,52 @@ def extract_timed_rows(raw) -> list:
     return rows
 
 
+# The masthead is a handful of lines. Capped so a runsheet with a cover
+# page, or one whose rows don't parse at all, can't hand the template
+# picker half the document.
+_HEADER_MAX_LINES = 12
+_HEADER_MAX_CHARS = 400
+
+
+def service_header(raw) -> str:
+    """The runsheet's own masthead — the lines above the first timed row.
+
+        Friday, 21 August, 2026
+        6:00 PM
+        Youth Service : EVANGELISM 101      ← what names the service
+        5:00 PM 30 Team Setup + Band practice   ← first row; masthead ends
+
+    This is the deterministic answer to "which service is this?", and it
+    is a much better one than the first 500 characters of the document.
+    The masthead is where the runsheet SAYS what it is; the body is where
+    it says what happens. Feeding the body to the template picker is how
+    a stray "THIS IS YOUTH" in one row's notes could put youth media on
+    another service's playlist.
+
+    Reuses the same time-plus-title test as `extract_timed_rows`, so the
+    bare service-start time in the header block (line 2 above) doesn't
+    end the masthead early — it isn't a row there and it isn't one here.
+
+    Returns "" when the first line is already a row: no masthead means
+    the runsheet never named its service, and the honest hint is the
+    filename alone. Guessing from the body is what we are removing.
+    """
+    out, chars = [], 0
+    for line in (raw or "").splitlines():
+        m = _ROW_TIME.match(line)
+        if m:
+            rest = _ROW_REST.match(line[m.end():])
+            if rest and rest.group("title"):
+                break
+        s = line.strip()
+        if s:
+            out.append(s)
+            chars += len(s)
+        if len(out) >= _HEADER_MAX_LINES or chars >= _HEADER_MAX_CHARS:
+            break
+    return "\n".join(out)
+
+
 def _covered(row, items) -> bool:
     """Is this raw-text row represented among the model's items?
 

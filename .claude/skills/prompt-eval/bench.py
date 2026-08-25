@@ -72,7 +72,7 @@ def run_once(model, prompt, key):
     cost = (body.get("usage") or {}).get("cost")
     content = body["choices"][0]["message"].get("content") or ""
     try:
-        items, _name = parse_ai_response(content)
+        items, _name, _type = parse_ai_response(content)
     except Exception:
         return None, "unparseable", dt, cost
     return items, "", dt, cost

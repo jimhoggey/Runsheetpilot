@@ -15,6 +15,22 @@
 let libraryItems = [];
 let matchedItems = [];
 let uploadedFile = null;
+// The template verdict from the last parse. Resolved ONCE, server-side,
+// and carried into /api/match and /api/create_playlist so those steps
+// never re-derive it — create used to re-run "Auto" from item titles and
+// could re-attach a template parse had correctly declined. `declined`
+// means ProPresenter has templates but none of them is for this service;
+// `service_label` is what the model called the service, and the words the
+// banner uses. Reset with every new parse.
+let parsedTemplate = {uuid: '', name: '', declined: false, service_label: ''};
+
+// What the three template-resolution points agree on. The dropdown wins
+// when the operator has pinned one — that is an explicit instruction —
+// otherwise we forward whatever parse resolved.
+function templateForRequest() {
+  return document.getElementById('template-playlist').value
+      || parsedTemplate.uuid || '';
+}
 let saveTimer = null;
 let suppressAutoSave = true; // suppress during initial loadSettings()
 
@@ -441,6 +457,9 @@ function handleFileSelect(file) {
   uploadedFile = file;
   // Every new runsheet starts with matching ON. See resetMatchToggle().
   resetMatchToggle();
+  // Last runsheet's template verdict says nothing about this one.
+  parsedTemplate = {uuid: '', name: '', declined: false, service_label: ''};
+  _renderTemplateVerdict();
   _hideOcrReview();
   const dz = document.getElementById('drop-zone');
   dz.classList.add('has-file');
@@ -543,10 +562,37 @@ function onMatchToggle() {
   const status = document.getElementById('template-status');
   if (status) {
     status.innerHTML = on
-      ? '<strong>Auto</strong> routes by runsheet content.'
+      ? '<strong>Auto</strong> picks the template for whichever service ' +
+        'this is — and uses none if there isn\'t one for it.'
       : 'Off — you\'ll get coloured headers and timers only, no songs or ' +
         'template media. Resets on each new runsheet.';
   }
+}
+
+// ─── The template verdict banner ──────────────────────────────────────────
+// Shown when ProPresenter HAS template playlists but none of them is for
+// this service — a Young Adults runsheet on a machine whose only template
+// is "Youth Service - Library". Auto declines rather than reaching for
+// the wrong one, and this says so.
+//
+// Deliberately not an error. Plenty of services have no template built
+// yet, and that is a normal way to use the app — the wording states what
+// you still get (headers, timers, songs) before it mentions what is
+// missing. Nothing is shown when PP has no templates at all: there is no
+// decision to explain.
+function _renderTemplateVerdict() {
+  const el = document.getElementById('template-verdict');
+  if (!el) return;
+  if (!parsedTemplate.declined) { el.hidden = true; el.innerHTML = ''; return; }
+  const label = (parsedTemplate.service_label || '').trim();
+  const who = label ? `for ${escapeHtml(label)}` : 'for this service';
+  el.hidden = false;
+  el.innerHTML =
+    `<div class="notice notice-info">` +
+    `<strong>No template ${who}.</strong> ` +
+    `Building coloured headers, timers and songs — just no template media. ` +
+    `Pick a template in the sidebar and hit ↻ Re-match if you want one.` +
+    `</div>`;
 }
 
 // ─── Template playlist dropdown ───────────────────────────────────────────
@@ -1144,7 +1190,8 @@ async function rematchNow() {
         rematch_template: true,
         host: document.getElementById('pp-host2').value,
         port: document.getElementById('pp-port2').value,
-        template_playlist_uuid: document.getElementById('template-playlist').value,
+        template_playlist_uuid: templateForRequest(),
+        service_label: parsedTemplate.service_label,
       })
     }).then(r => r.json());
     matchedItems = res.items;
@@ -1167,6 +1214,8 @@ function resetFlow() {
   document.getElementById('media-assist-card').hidden = true;
   uploadedFile = null;
   matchedItems = [];
+  parsedTemplate = {uuid: '', name: '', declined: false, service_label: ''};
+  _renderTemplateVerdict();
   document.getElementById('pdf-input').value = '';
   resetMatchToggle();
   _hideOcrReview();
@@ -1274,6 +1323,12 @@ async function parseRunsheet() {
       document.getElementById('playlist-name').value = res.suggested_name;
     }
 
+    // The template verdict, before the match call so it can carry the
+    // service label with it.
+    parsedTemplate = res.template
+        || {uuid: '', name: '', declined: false, service_label: ''};
+    _renderTemplateVerdict();
+
     setLoading(matchingOn()
       ? `AI found ${res.items.length} items — matching to library…`
       : `AI found ${res.items.length} items — building headers…`);
@@ -1282,7 +1337,8 @@ async function parseRunsheet() {
     const matchRes = await fetch('/api/match', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({parsed: res.items, library: libraryItems, threshold,
-                            matching: matchingOn()})
+                            matching: matchingOn(),
+                            service_label: parsedTemplate.service_label})
     }).then(r => r.json());
 
     matchedItems = matchRes.items;
@@ -1478,7 +1534,13 @@ async function createPlaylist() {
         matched:       matchedItems,
         export_dir:    document.getElementById('export-dir').value,
         create_timers: document.getElementById('create-timers').checked,
-        template_playlist_uuid: document.getElementById('template-playlist').value,
+        // The template parse resolved (or the one you pinned), NOT a bare
+        // "Auto" for create to work out again from item titles. That
+        // re-derivation is what let create re-attach a template parse had
+        // declined; the label goes with it so the rescue path, when it
+        // does have to resolve, reaches the same answer.
+        template_playlist_uuid: templateForRequest(),
+        service_label: parsedTemplate.service_label,
         // Carried through so create skips the template rescue and the
         // media-bin walk too — otherwise turning matching off at parse
         // would quietly come back at build time.

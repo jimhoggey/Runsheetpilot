@@ -107,7 +107,7 @@
       <span>Populate with media from PP</span>
     </label>
     <div id="template-status" style="font-size:.72rem;color:var(--muted);line-height:1.5">
-      <strong>Auto</strong> routes by runsheet content.
+      <strong>Auto</strong> picks the template for whichever service this is.
     </div>
   </div>
 
@@ -208,6 +208,13 @@
     </div>
     <div class="step-locked-msg">Upload a runsheet to unlock this step.</div>
   </div>
+
+  <!-- Why nothing populated from a template. Only appears when PP HAS
+       template playlists and none of them is for this service — Auto
+       declines rather than reaching for the wrong one. Rendered by
+       _renderTemplateVerdict(); sits above the results so it is read
+       before the operator wonders where the media went. -->
+  <div id="template-verdict" hidden></div>
 
   <!-- Results table — populated after parse. Hidden until then so the
        empty state doesn't clutter Step 2/3. -->

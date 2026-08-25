@@ -35,6 +35,7 @@ from .templates import (
     fetch_pp_playlists,
     playlist_to_sections,
     resolve_section,
+    template_candidates,
 )
 from .timers import (
     _RB_TIMER_PREFIX,

@@ -333,12 +333,14 @@ def test_auto_detect_template_no_hint_falls_back_to_first(app_module):
     assert app_module.auto_detect_template_uuid(pls) == "u-youth"
 
 
-def test_auto_detect_template_unrecognised_hint_falls_back_to_first(app_module):
-    """Hint mentions nothing distinctive — falls back to first template-named
-    playlist rather than picking arbitrarily."""
+def test_auto_detect_template_unrecognised_hint_declines(app_module):
+    """Hint names a service, and none of the templates is for it → no
+    template. This used to fall back to the first candidate, which is how
+    a Young Adults runsheet came back full of youth media (25 Aug 2026).
+    See tests/test_template_decline.py for the rule and its wiring."""
     pls = _multi_library_setup()
     hint = "Generic service Order of meeting 5 May 2026"
-    assert app_module.auto_detect_template_uuid(pls, hint=hint) == "u-youth"
+    assert app_module.auto_detect_template_uuid(pls, hint=hint) is None
 
 
 def test_auto_detect_template_strips_common_words_from_scoring(app_module):

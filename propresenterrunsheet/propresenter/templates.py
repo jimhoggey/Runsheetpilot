@@ -36,6 +36,16 @@ _TEMPLATE_NAME_FILLERS = {
 }
 
 
+def template_candidates(playlists: list) -> list:
+    """The playlists whose NAME flags them as templates — the only ones
+    Auto will ever consider. Public because callers need to tell "no
+    template is for this service" (worth telling the operator) apart from
+    "this ProPresenter has no templates at all" (nothing to say)."""
+    return [p for p in playlists or []
+            if "library" in (p.get("name") or "").lower()
+            or "template" in (p.get("name") or "").lower()]
+
+
 def _template_signal_tokens(name: str) -> set:
     """Return the distinctive lowercased tokens in a playlist name —
     the ones that identify which service type it's for. The shared
@@ -45,8 +55,14 @@ def _template_signal_tokens(name: str) -> set:
     "Youth Service - Library"  → {"youth"}
     "Sunday Morning Library"   → {"sunday", "morning"}
     "Wednesday Prayer Library" → {"wednesday", "prayer"}
+
+    Underscores split like any other punctuation. `\\w` includes "_", so
+    the old pattern turned "youth_runsheet_may22.pdf" into the single
+    token "youth_runsheet_may22" and the filename contributed no signal
+    at all — invisible while a zero-score fell back to the first
+    template, and load-bearing now that it declines.
     """
-    cleaned = re.sub(r"[^\w\s]", " ", (name or "").lower())
+    cleaned = re.sub(r"[\W_]+", " ", (name or "").lower())
     return {w for w in cleaned.split()
             if w and w not in _TEMPLATE_NAME_FILLERS}
 
@@ -310,21 +326,33 @@ def auto_detect_template_uuid(playlists: list,
     explicitly. Considers only playlists whose name flags them as
     templates — must contain "library" or "template" (case-insensitive).
 
-    When `hint` is non-empty (typically the parsed runsheet text +
-    filename), each candidate playlist is scored by how many of its
-    distinctive name tokens appear in the hint. The highest-scoring
-    candidate wins. So a runsheet mentioning "Youth Service" picks
-    "Youth Service - Library" over "Sunday Morning Library" even though
-    both names contain "library".
+    When `hint` is non-empty (typically the service label the model
+    reports, or the runsheet text + filename before the model has read
+    it), each candidate playlist is scored by how many of its distinctive
+    name tokens appear in the hint. The highest-scoring candidate wins.
+    So a runsheet mentioning "Youth Service" picks "Youth Service -
+    Library" over "Sunday Morning Library" even though both names
+    contain "library".
 
-    With no hint, OR no candidate scoring above zero, falls back to the
-    first candidate in playlist order (preserves previous behaviour).
+    When a hint IS supplied and nothing scores, we DECLINE — return None.
+    A template whose name carries distinctive tokens is a claim about
+    which service it serves; zero overlap means the claim doesn't hold,
+    and an unrelated template is worse than none. This used to fall back
+    to the first candidate, which on a machine with a single "Youth
+    Service - Library" meant a Young Adults runsheet came back
+    pre-populated with youth media (reported 25 Aug 2026). The one
+    exception is a generically named template — a bare "Library" or
+    "Template" — which claims nothing and so cannot contradict a
+    runsheet; it stays usable as the catch-all.
 
-    Returns the matched UUID string or None when no candidate exists at all.
+    With NO hint at all we keep the old first-candidate fallback. No
+    evidence is not the same as evidence of a mismatch, and callers that
+    supply nothing (the dropdown's initial render) still need an answer.
+
+    Returns the matched UUID string, or None when no candidate exists or
+    none of them is for this service.
     """
-    candidates = [p for p in playlists
-                  if "library" in (p.get("name") or "").lower()
-                  or "template" in (p.get("name") or "").lower()]
+    candidates = template_candidates(playlists)
     if not candidates:
         return None
     hint_tokens = _template_signal_tokens(hint) if hint else set()
@@ -343,8 +371,21 @@ def auto_detect_template_uuid(playlists: list,
                            & hint_tokens)
         if best_overlap > 0:
             return best.get("uuid") or None
-    # Fallback: first candidate (preserves prior behaviour for callers
-    # that never supply a hint).
+        # Nothing matched. Prefer a template that makes no claim at all
+        # over one that makes the wrong claim: a name with no distinctive
+        # tokens ("Library") is a catch-all and can still be used.
+        catch_all = next((p for p in candidates
+                          if not _template_signal_tokens(p.get("name", ""))),
+                         None)
+        if catch_all is not None:
+            return catch_all.get("uuid") or None
+        # Every candidate names a service, and none of them names THIS
+        # one. Decline — see the docstring.
+        log.info("No template playlist is for this service; "
+                 "building without one")
+        return None
+    # No hint at all: first candidate (preserves prior behaviour for
+    # callers that never supply one).
     return candidates[0].get("uuid") or None
 
 
