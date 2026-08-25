@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+# Local dev virtualenv. .claude/launch.json points at .venv/bin/python by
+# relative path, so each worktree carries its own and nobody's home
+# directory ends up in a committed file. Create with:
+#   python3 -m venv .venv && .venv/bin/python -m pip install -r requirements-dev.txt
+.venv/
+venv/
+
 # PyInstaller build artifacts
 build/
 dist/

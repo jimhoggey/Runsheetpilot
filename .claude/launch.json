@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "runsheet-pilot",
-      "runtimeExecutable": "/tmp/rpvenv/bin/python",
+      "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["propresenter_app.py", "--headless"],
       "port": 5757
     }
