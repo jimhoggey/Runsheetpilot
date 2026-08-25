@@ -215,3 +215,95 @@ def test_event_body_matches_the_aptabase_contract(monkeypatch):
     assert sp["osName"] and sp["sdkVersion"] and sp["appVersion"]
     assert ev["timestamp"].endswith("Z")
     assert len(ev["eventName"]) <= 60
+
+
+# ── settings_saved: which field changed ─────────────────────────────────────
+#
+# The feature: settings_saved used to report keys=15 on every autosave and
+# nothing else, so the dashboard could not tell "unticked Create timers" from
+# "pasted a new API key". It now names the changed fields.
+#
+# The hazard: the settings dict holds or_key (OpenRouter API key), license_key
+# (Service Mate licence), pp_host (a hostname or LAN IP), and library_dir /
+# export_dir (filesystem paths containing the OS username). track() does not
+# scrub prop values. So these tests are mostly about what must NOT be sent.
+
+_SECRET = "sk-or-v1-DEADBEEFdeadbeef0123456789"
+
+_SENSITIVE = [
+    ("or_key",                 _SECRET),
+    ("license_key",            "RP1-AAAA-BBBB-CCCC-DDDD"),
+    ("pp_host",                "Fynns-MacBook-Air.local"),
+    ("library_dir",            "/Users/fynnj/Documents/ProPresenter/Libraries"),
+    ("export_dir",             "/Users/fynnj/Desktop"),
+    ("template_playlist_uuid", "6C1A0B2E-1111-2222-3333-444455556666"),
+]
+
+
+def test_a_toggle_records_both_the_name_and_its_new_state():
+    """The whole point: "they unticked Create timers" must be legible."""
+    props = stats.settings_change_props({"create_timers": True},
+                                        {"create_timers": False})
+    assert props["changed"] == "create_timers"
+    assert props["n_changed"] == 1
+    assert props["create_timers"] is False
+
+
+@pytest.mark.parametrize("field,value", _SENSITIVE,
+                         ids=[f[0] for f in _SENSITIVE])
+def test_sensitive_fields_record_the_name_but_never_the_value(field, value):
+    """Knowing the API key changed is useful. Knowing the key is a breach."""
+    props = stats.settings_change_props({field: ""}, {field: value})
+    assert props["changed"] == field, "the field name is the useful signal"
+    assert field not in props, f"{field} value must never be a prop"
+    assert value not in repr(props), f"{value!r} leaked: {props}"
+
+
+def test_no_sensitive_value_survives_a_realistic_whole_object_save():
+    """The UI posts all 15 fields at once. One safe field changing must not
+    drag the rest of the object along with it."""
+    after = {"create_timers": False, "threshold": 0.7,
+             **{f: v for f, v in _SENSITIVE}}
+    props = stats.settings_change_props({}, after)
+    blob = repr(props)
+    for _, value in _SENSITIVE:
+        assert value not in blob, f"{value!r} leaked: {blob}"
+    assert props["create_timers"] is False
+    assert props["threshold"] == 0.7
+
+
+def test_unknown_new_settings_are_name_only_by_default():
+    """Deny-by-default. A setting added later must not start transmitting
+    its value because someone forgot this list existed."""
+    props = stats.settings_change_props({}, {"some_future_setting": "value"})
+    assert props["changed"] == "some_future_setting"
+    assert "some_future_setting" not in props
+
+
+def test_a_save_that_changed_nothing_is_reported_as_zero():
+    """Redundant saves stay visible — a loop rewriting identical settings
+    is exactly the bug this should expose, not hide."""
+    same = {"create_timers": True, "threshold": 0.55}
+    props = stats.settings_change_props(dict(same), dict(same))
+    assert props["n_changed"] == 0
+    assert props["changed"] == ""
+
+
+def test_a_partial_save_only_reports_its_own_keys():
+    """The parse-timing writer posts one key; it must not report the other
+    fourteen as unchanged-but-considered, nor as changed."""
+    props = stats.settings_change_props(
+        {"create_timers": True, "or_key": _SECRET, "parse_times": []},
+        {"parse_times": [12.5]})
+    assert props["changed"] == "parse_times"
+    assert _SECRET not in repr(props)
+
+
+def test_meta_prop_names_cannot_be_shadowed_by_a_real_setting():
+    """settings_change_props owns "changed" and "n_changed". A settings
+    field of either name would silently overwrite them."""
+    from propresenterrunsheet.settings import _default_settings
+    for name in stats._SETTINGS_META_PROPS:
+        assert name not in _default_settings(), (
+            f"a real setting is named {name!r}, which collides with the "
+            f"props settings_change_props emits")

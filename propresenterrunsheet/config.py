@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "2.14.0"
+VERSION = "2.14.1"
 APP_NAME = "Runsheet Pilot"
 
 # Shown once by the what's-new popup on the first launch after an update.
@@ -34,13 +34,9 @@ APP_NAME = "Runsheet Pilot"
 # in app.js for the register). The same three lines go in the GitHub
 # release body. tests/test_whats_new.py enforces the cap.
 WHATS_NEW = [
-    "Auto won't reach for a template that isn't yours any more. A young "
-    + "adults runsheet no longer comes back full of youth media just "
-    + "because youth is the only template you've built.",
-    "It works out which service you're running from the top of the "
-    + "runsheet, where you already write it.",
-    "No template for this service yet? Still fine — you get your headers, "
-    + "timers and songs, and a line saying why there's no template media.",
+    "The anonymous usage stats now record WHICH setting you changed — the "
+    + "name of it, never what you typed. Your API key, licence key and "
+    + "folder paths still never leave this machine.",
 ]
 # Old name kept solely for the one-time DATA_DIR migration. Do not use
 # in any UI / log / build flag — that's what APP_NAME is for.

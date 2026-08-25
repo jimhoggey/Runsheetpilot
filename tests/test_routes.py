@@ -447,3 +447,52 @@ def test_non_macos_message_does_not_mention_macos(monkeypatch):
     assert "Local Network" not in msg
     assert "macOS" not in msg
     assert "power cycle" in msg
+
+
+# ── settings_saved reports the changed field, end to end ────────────────────
+#
+# The unit tests in test_stats.py cover settings_change_props in isolation.
+# This one covers the wiring the unit tests cannot: that the route reads the
+# old settings BEFORE writing the new ones. Pass `after` as `before` by
+# mistake and every diff comes back empty, with every unit test still green.
+
+def test_route_diffs_against_what_was_on_disk_before_the_write(
+        client, monkeypatch):
+    from propresenterrunsheet import stats
+
+    sent = []
+    monkeypatch.setattr(stats, "track",
+                        lambda name, **p: sent.append((name, p)))
+
+    client.post("/api/settings", json={"create_timers": True})
+    sent.clear()
+    r = client.post("/api/settings", json={"create_timers": False})
+    assert r.status_code == 200
+
+    name, props = next(e for e in sent if e[0] == "settings_saved")
+    assert props["changed"] == "create_timers"
+    assert props["n_changed"] == 1
+    assert props["create_timers"] is False
+
+
+def test_route_never_puts_the_api_key_in_the_event(client, monkeypatch):
+    """The realistic autosave: the UI posts all 15 fields including or_key."""
+    from propresenterrunsheet import stats
+
+    secret = "sk-or-v1-NEVERSENDTHIS0123456789"
+    sent = []
+    monkeypatch.setattr(stats, "track",
+                        lambda name, **p: sent.append((name, p)))
+
+    r = client.post("/api/settings", json={
+        "or_key": secret, "create_timers": False,
+        "export_dir": "/Users/someone/Desktop", "pp_host": "some-mac.local"})
+    assert r.status_code == 200
+
+    name, props = next(e for e in sent if e[0] == "settings_saved")
+    blob = repr(props)
+    assert secret not in blob, f"API key leaked into the event: {blob}"
+    assert "someone" not in blob and "some-mac" not in blob, blob
+    # ...while still saying WHICH fields moved.
+    assert "or_key" in props["changed"]
+    assert "export_dir" in props["changed"]
