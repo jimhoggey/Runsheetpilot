@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: github/codeql-action/init@v4.37.3
+      - uses: github/codeql-action/init@v4.37.9
         with:
           languages: ${{ matrix.language }}
           # security-and-quality includes both the security pack AND
@@ -51,7 +51,7 @@ jobs:
           # default `security-extended` but catches more.
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@v4.37.3
+      - uses: github/codeql-action/analyze@v4.37.9
         with:
           category: "/language:${{ matrix.language }}"
         # Allow the workflow to PASS even if the SARIF upload fails. The
