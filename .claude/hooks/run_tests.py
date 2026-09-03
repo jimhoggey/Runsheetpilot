@@ -27,6 +27,20 @@ def _python() -> str:
     return sys.executable
 
 
+# Claude's own config lives under .claude/hooks|agents|skills|commands.
+# Do NOT test for "/.claude/" alone: git worktrees live at
+# .claude/worktrees/<name>/, so every source file in a worktree contains
+# that substring and the guard silently disabled this hook for the whole
+# worktree. Match the config subdirectories instead — that stays correct
+# even for a hook file nested inside a worktree.
+_CFG = ("/.claude/hooks/", "/.claude/agents/",
+        "/.claude/skills/", "/.claude/commands/")
+
+
+def _is_claude_config(path_str: str) -> bool:
+    return any(seg in path_str for seg in _CFG)
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -34,7 +48,7 @@ def main() -> int:
         return 0
     tool_input = payload.get("tool_input") or payload
     path_str = str(tool_input.get("file_path") or "")
-    if not path_str.endswith(".py") or "/.claude/" in path_str:
+    if not path_str.endswith(".py") or _is_claude_config(path_str):
         return 0
     if not Path(path_str).exists():
         return 0                      # edit failed, or a phantom path

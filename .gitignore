@@ -4,9 +4,20 @@ __pycache__/
 *.egg-info/
 
 # Local dev virtualenv. .claude/launch.json points at .venv/bin/python by
-# relative path, so each worktree carries its own and nobody's home
-# directory ends up in a committed file. Create with:
-#   python3 -m venv .venv && .venv/bin/python -m pip install -r requirements-dev.txt
+# relative path, so no home directory ends up in a committed file.
+#
+# MAKE IT A SYMLINK, not a real directory. This project lives under
+# ~/Documents, which is synced by iCloud Drive. A venv is ~7,500 files;
+# creating one in place hands all of them to the sync daemon and stalls
+# I/O across the whole folder — measured 27s to `import config` (at 0%
+# CPU) versus 1.3s from a venv outside Documents. Same effect on Desktop.
+#
+#   python3 -m venv ~/.venvs/runsheet-pilot
+#   ~/.venvs/runsheet-pilot/bin/python -m pip install -r requirements-dev.txt
+#   ln -s ~/.venvs/runsheet-pilot .venv
+#
+# Not /tmp either: macOS deletes files there after ~3 days and leaves the
+# bin/ symlinks behind, so the venv looks present and pytest is gone.
 .venv/
 venv/
 
