@@ -151,3 +151,92 @@ def test_encoding_guard_ignores_non_python(tmp_path):
 def test_hooks_survive_junk_input(script, payload):
     """A hook that raises breaks the tool call it was watching."""
     _run(script, payload)          # _run asserts exit 0
+
+
+# ── the worktree path guard ─────────────────────────────────────────────────
+#
+# Both PostToolUse hooks used to skip any path containing "/.claude/". Git
+# worktrees live at .claude/worktrees/<name>/, so EVERY source file in a
+# worktree matched and the hooks silently did nothing for the entire
+# worktree. run_tests.py had been dead in every worktree session before this
+# was found. The guard now matches the config subdirectories instead.
+
+_WORKTREE = "/repo/.claude/worktrees/wt-1"
+
+
+@pytest.mark.parametrize("script,name,body", [
+    ("run_tests.py", "propresenterrunsheet/config.py", "x = 1\n"),
+    ("frontend_guard.py", "static/app.css", ".a{color:#000;background:#111}\n"),
+])
+def test_hooks_are_not_disabled_by_a_worktree_path(tmp_path, script, name, body):
+    """A source file inside .claude/worktrees/ must still be processed."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        script[:-3], Path(__file__).resolve().parent.parent / ".claude" / "hooks" / script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert not mod._is_claude_config(f"{_WORKTREE}/{name}"), (
+        f"{script} would skip a source file merely because the worktree "
+        f"lives under .claude/")
+    # ...while genuine Claude config is still skipped.
+    assert mod._is_claude_config(f"{_WORKTREE}/.claude/hooks/thing.py")
+    assert mod._is_claude_config("/repo/.claude/agents/reviewer.md")
+
+
+# ── frontend_guard ──────────────────────────────────────────────────────────
+
+def _guard(tmp_path, name, text):
+    f = tmp_path / name
+    f.write_text(text, encoding="utf-8")
+    return _run("frontend_guard.py", {"tool_input": {"file_path": str(f)}})
+
+
+def test_frontend_guard_computes_real_contrast(tmp_path):
+    """The shipped .save-dot pairing: --dim on --card is 2.47:1."""
+    out = _guard(tmp_path, "a.css",
+                 ":root{--dim:#5a5a6e;--card:#1c1c34;}\n"
+                 ".save-dot{color:var(--dim);background:var(--card);}\n")
+    assert "2.47:1" in out and "save-dot" in out
+
+
+def test_frontend_guard_flags_a_killed_focus_ring(tmp_path):
+    out = _guard(tmp_path, "a.css",
+                 "button:focus-visible{box-shadow:0 0 0 3px rgba(1,2,3,.16);"
+                 "outline:none;}\n")
+    assert "focus" in out and "outline:none" in out
+
+
+def test_frontend_guard_flags_an_img_with_no_src(tmp_path):
+    out = _guard(tmp_path, "a.html", '<img id="p" alt="preview" width="160">')
+    assert "no src" in out
+
+
+def test_frontend_guard_is_silent_on_clean_css(tmp_path):
+    assert _guard(tmp_path, "a.css",
+                  ":root{--fg:#f2ece2;--bg:#12100f;}\n"
+                  ".ok{color:var(--fg);background:var(--bg);}\n") == ""
+
+
+# ── risk_radar ──────────────────────────────────────────────────────────────
+
+def _radar(path, content=""):
+    return _run("risk_radar.py",
+                {"tool_input": {"file_path": path, "content": content}})
+
+
+def test_risk_radar_routes_analytics_to_the_privacy_auditor():
+    assert "privacy-auditor" in _radar("/r/propresenterrunsheet/stats.py")
+
+
+def test_risk_radar_catches_a_track_call_added_anywhere():
+    out = _radar("/r/propresenterrunsheet/routes/core.py",
+                 'stats.track("thing", n=1)')
+    assert "privacy-auditor" in out
+
+
+def test_risk_radar_routes_the_release_workflow_to_the_build_reviewer():
+    assert "frozen-build-reviewer" in _radar("/r/.github/workflows/release.yml")
+
+
+def test_risk_radar_stays_silent_on_ordinary_files():
+    assert _radar("/r/propresenterrunsheet/parsing/ocr.py", "x = 1") == ""
