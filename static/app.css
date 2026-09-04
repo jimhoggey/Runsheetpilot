@@ -12,7 +12,7 @@
   /* text */
   --text:      #ececf3;
   --muted:     #8b8b9c;
-  --dim:       #5a5a6e;
+  --dim:       #86869c;   /* floor: 4.67:1 on --card. #5a5a6e read at 2.47:1 */
 
   /* accent (kept blue, slightly refined) */
   --acc:       #3b82f6;
@@ -47,6 +47,13 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Author rules beat the UA sheet, so any component that sets `display`
+   (.btn is inline-flex, loaders and hints are flex) silently overrode
+   [hidden] and `el.hidden = true` did nothing for it — the Reset button
+   sat visible on first load. One rule, so it never has to be patched
+   per component again. */
+[hidden] { display: none !important; }
 
 html { color-scheme: dark; }
 body {
@@ -668,10 +675,11 @@ code {
 @keyframes scale-in { from { opacity: 0; transform: translateY(6px) scale(.98); }
                         to { opacity: 1; transform: translateY(0)   scale(1);  } }
 
-/* small helper: focus-visible accessibility */
+/* Keyboard focus on buttons: the glow ring plus the global :focus-visible
+   outline further down. The ring alone is 16% alpha — it read at 1.18:1
+   against the page, so it was never a focus indicator by itself. */
 button:focus-visible, .quit-btn:focus-visible {
   box-shadow: var(--ring);
-  outline: none;
 }
 
 
@@ -748,21 +756,17 @@ button:focus-visible, .quit-btn:focus-visible {
   line-height: 1.55;
 }
 .step-body { display: block; }
-.step-locked-msg {
-  display: none;
-  color: var(--dim);
-  font-size: 0.84rem;
-  padding: 4px 0 0 0;
-}
 
-/* Locked: grey badge, body hidden, lock message shown. */
+/* Locked: grey badge, body hidden. Just the header row — the open step is
+   the only card with anything in it, so the eye lands there. There used
+   to be an "Upload a runsheet to unlock this step" line here; at a
+   legible contrast it read as three competing instructions. */
 .step-card.state-locked {
   opacity: 0.55;
   background: var(--card);
   box-shadow: none;
 }
 .step-card.state-locked .step-body { display: none; }
-.step-card.state-locked .step-locked-msg { display: block; }
 
 /* Active: blue glowing badge with a subtle pulse, full body, glowing card. */
 .step-card.state-active {
@@ -1221,7 +1225,6 @@ button:focus-visible, .quit-btn:focus-visible {
   padding: 14px 0 6px;
   animation: orb-in .35s ease both;
 }
-.orb-loader[hidden] { display: none; }
 @keyframes orb-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
@@ -1411,7 +1414,6 @@ body { animation: page-in .4s ease both; }
   font-size: 0.86rem;
   animation: hint-in .45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
-#next-step-hint[hidden] { display: none; }
 .next-step-icon {
   font-size: 1.05rem;
   animation: hint-nudge 2.2s ease-in-out infinite;

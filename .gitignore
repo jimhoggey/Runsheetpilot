@@ -19,6 +19,7 @@ __pycache__/
 # Not /tmp either: macOS deletes files there after ~3 days and leaves the
 # bin/ symlinks behind, so the venv looks present and pytest is gone.
 .venv/
+.venv
 venv/
 
 # PyInstaller build artifacts
