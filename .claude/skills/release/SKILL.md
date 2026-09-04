@@ -30,12 +30,14 @@ initiative.
 
 - `propresenterrunsheet/config.py` → bump `VERSION`.
   Major = breaking for users · Minor = features · Patch = fixes only.
-- Rewrite `WHATS_NEW` in the same file. **Max three bullets**
-  (`tests/test_whats_new.py` enforces the cap and fails the build
-  otherwise). Operator-facing, in the app's voice — read the idle
-  greetings in `static/app.js` for the register. These same three lines
-  go in the GitHub release body, and the app shows them in the
-  what's-new popup on first launch after updating.
+- Add a `RELEASE_NOTES["X.Y.Z"]` entry at the top of the dict in the
+  same file. `WHATS_NEW` is derived from it — never assign it by hand.
+  **Max three bullets** (`tests/test_whats_new.py` enforces the cap and
+  the derivation, and fails the build otherwise). Operator-facing, in
+  the app's voice — read the idle greetings in `static/app.js` for the
+  register. These same lines go in the GitHub release body, the app
+  shows them in the what's-new popup on first launch after updating,
+  and clicking the version badge shows the last three versions' entries.
 
 ### 2. Branch, test, PR
 
@@ -109,7 +111,7 @@ release.
 ### 7. Release notes
 
 Title is the bare version (`v2.9.0`). Body opens with a greeting in the
-app's voice, then the same three `WHATS_NEW` bullets prefixed with ✨,
+app's voice, then the same `RELEASE_NOTES[VERSION]` bullets prefixed with ✨,
 then a line noting they also appear in-app on first launch.
 
 ### 8. Report honestly

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PostToolUse: run the suite after a Python edit, report only failures.
 
-The suite is ~420 tests in about half a second, so there is no reason to
+The suite is ~670 tests in about two seconds, so there is no reason to
 wait for CI to learn a change broke something. Silent on success —
 a hook that talks when nothing is wrong gets ignored, and then it is
 worth nothing when something is.
@@ -65,6 +65,21 @@ def main() -> int:
              "--tb=no", "-x"],
             cwd=REPO, capture_output=True, text=True,
             timeout=TIMEOUT_S, env=env)
+    except subprocess.TimeoutExpired:
+        # Silence here would read as green. It is not — the edit is
+        # unverified. A stall at ~0% CPU has always been file I/O (an
+        # iCloud-synced venv), never the code; the note in .gitignore
+        # says where the venv has to live.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": (
+                f"TESTS NOT VERIFIED: the suite did not finish within "
+                f"{TIMEOUT_S}s (it normally takes ~2s). This edit is "
+                "unchecked — run `pytest -q` yourself before moving on. "
+                "If it hangs at ~0% CPU that is file I/O, not the code: "
+                "see the venv note in .gitignore."),
+        }}))
+        return 0
     except Exception:
         return 0                      # no pytest, no venv, no problem
 

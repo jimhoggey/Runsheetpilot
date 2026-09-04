@@ -2081,9 +2081,15 @@ async function smSaveAutoTrack() {
   } catch (e) { console.warn('auto-track save failed', e); }
 }
 
+// A blank frame instead of the browser's broken-image icon: shown until the
+// first render lands, and again if the server declines one (Service Mate
+// switched off with a request in flight). Same value as the markup's src.
+const SM_BLANK_FRAME = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
 function smRefreshPreview() {
   const role = document.getElementById('sm-preview-role').value;
   const img = document.getElementById('sm-preview');
+  img.onerror = () => { img.src = SM_BLANK_FRAME; };
   // Match the verbosity of the clock with this role, so preview = what the
   // device will show. Falls back to "compact" if no clock has this role.
   const clock = (smClocksConfig.clocks || []).find(c => c.role === role);

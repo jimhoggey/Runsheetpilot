@@ -21,7 +21,8 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_tests.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_tests.py\"",
+            "timeout": 120
           }
         ]
       },
