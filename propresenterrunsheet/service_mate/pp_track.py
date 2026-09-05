@@ -333,21 +333,34 @@ def _maybe_advance_from_pp(state: dict) -> dict:
 
 
 def _parse_pp_time(s):
-    """ProPresenter's timer endpoint returns time as 'HH:MM:SS' string.
-    Returns total seconds, or None."""
+    """Parse a ProPresenter clock string into whole seconds, or None.
+
+    Accepts 'SS', 'MM:SS', 'HH:MM:SS' and any of those with a fractional
+    seconds component. The fractional form is not hypothetical: the
+    ProPresenter OpenAPI schema for /v1/timers/current gives the example
+    "00:00:01.00". int("01.00") raises, the caller swallows the exception,
+    and pp_remaining_seconds was silently dropped — so the clocks fell back
+    to the runsheet's own duration and quietly stopped following the timer.
+
+    Truncates rather than rounds, matching what `_compute_remaining_seconds`
+    already does to a float. Downstream is whole-second by design (see
+    EndsAtHolder): sub-second precision here would only wobble the deadline
+    the firmware is counting to.
+    """
     if isinstance(s, (int, float)):
         return int(s)
     if not isinstance(s, str):
         return None
     parts = s.strip().split(":")
+    if not 1 <= len(parts) <= 3:
+        return None
     try:
-        if len(parts) == 3:
-            h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
-            return h * 3600 + m * 60 + sec
-        if len(parts) == 2:
-            return int(parts[0]) * 60 + int(parts[1])
-        if len(parts) == 1:
-            return int(parts[0])
-    except Exception:
-        pass
-    return None
+        values = [float(part) for part in parts]
+    except ValueError:
+        return None
+    # Each field is 60x the next: [h, m, s] folds to h*3600 + m*60 + s, and
+    # the same loop handles the 1- and 2-field forms.
+    total = 0.0
+    for value in values:
+        total = total * 60 + value
+    return int(total)

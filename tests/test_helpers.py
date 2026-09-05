@@ -407,6 +407,25 @@ def test_parse_pp_time_recognises_pp_formats(app_module):
     assert app_module._parse_pp_time("nonsense") is None
 
 
+def test_parse_pp_time_accepts_fractional_seconds(app_module):
+    """ProPresenter's own schema for /v1/timers/current gives "00:00:01.00".
+
+    int("01.00") raises, and the caller swallows it, so this shape used to
+    silently drop pp_remaining_seconds and the clocks stopped following the
+    ProPresenter timer with nothing in the log.
+    """
+    assert app_module._parse_pp_time("00:00:01.00") == 1
+    assert app_module._parse_pp_time("00:01:30.50") == 90
+    assert app_module._parse_pp_time("01:02:03.99") == 3723
+    assert app_module._parse_pp_time("90.75") == 90
+    assert app_module._parse_pp_time("12:34.5") == 12 * 60 + 34
+
+
+def test_parse_pp_time_rejects_junk_without_raising(app_module):
+    for junk in ("", "::", "1:2:3:4", "a:b", "00:0x:01", [], {}):
+        assert app_module._parse_pp_time(junk) is None
+
+
 # ── Header decoration stripping (auto-track relies on this) ──────────────────
 
 def test_clean_header_name_strips_action_needed_prefix(app_module):
