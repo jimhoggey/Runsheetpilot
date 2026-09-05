@@ -8,7 +8,7 @@
      6. Parse + render results table
      7. Create playlist in ProPresenter
      8. AI prompt modal
-     9. Quit + boot
+     9. Help + boot
    ───────────────────────────────────────────────────────────────────────── */
 
 // ─── 1. Globals + UI helpers ──────────────────────────────────────────────
@@ -1798,12 +1798,29 @@ function _burstConfetti() {
   setTimeout(() => container.remove(), 3800);
 }
 
-// ─── 9. Quit + boot ───────────────────────────────────────────────────────
-async function quitApp() {
-  if (!confirm('Quit the Runsheet Pilot?\n\nYou can reopen it from your Applications folder.')) return;
-  try { await fetch('/api/quit', {method:'POST'}); } catch (_) {}
-  document.body.innerHTML = '<div style="padding:40px;text-align:center;font-family:sans-serif">'
-    + '<h2>👋 Server stopped.</h2><p style="color:#888;margin-top:10px">You can close this tab.</p></div>';
+// ─── 9. Help + boot ───────────────────────────────────────────────────────
+// The three-step card behind the header's Help button. Quit used to live
+// here: the app runs in its own native window now, so the window's close
+// button is Quit and /api/quit stays only for headless dev runs.
+//
+// Focus goes to the close button on open and back to whatever had it on
+// close, so a keyboard user is never dropped on the page behind a modal.
+let _helpReturnFocus = null;
+
+function openHelp() {
+  _helpReturnFocus = document.activeElement;
+  document.getElementById('help-backdrop').classList.add('active');
+  document.getElementById('help-close').focus();
+}
+
+function closeHelp() {
+  const bd = document.getElementById('help-backdrop');
+  if (!bd.classList.contains('active')) return;
+  bd.classList.remove('active');
+  if (_helpReturnFocus && typeof _helpReturnFocus.focus === 'function') {
+    _helpReturnFocus.focus();
+  }
+  _helpReturnFocus = null;
 }
 
 loadSettings();
@@ -2105,7 +2122,7 @@ smInit();
 document.getElementById('prompt-textarea')
         .addEventListener('input', autoSavePromptDebounced);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closePromptModal();
+  if (e.key === 'Escape') { closePromptModal(); closeHelp(); }
 });
 
 // ─── 11. Self-update ───────────────────────────────────────────────────────
