@@ -31,7 +31,11 @@
       <button class="badge-check" id="badge-check-btn"
               onclick="badgeCheckUpdates()">Check for updates</button>
     </span>
-    <button class="quit-btn" onclick="quitApp()" title="Stop the app and close the browser tab">Quit</button>
+    <button class="help-btn" id="help-btn" onclick="openHelp()"
+            title="What this app does, in three steps"
+            aria-haspopup="dialog" aria-controls="help-backdrop">
+      <span class="help-btn-q" aria-hidden="true">?</span>Help
+    </button>
     <button class="btn btn-dim btn-sm" id="reset-btn" hidden onclick="resetFlow()"
             title="Clear everything and start again from a fresh upload">
       ↺ Start over
@@ -731,6 +735,52 @@
             onclick="dismissWhatsNew()">
       Let's go ✨
     </button>
+  </div>
+</div>
+
+<!-- Help — the whole app in three steps. For the volunteer who has never
+     seen it and for the one who is stuck mid-Sunday. This slot used to be
+     Quit; the app runs in its own window now, so the window's close button
+     is Quit, and the header's spare slot was better spent on the question
+     every new person actually has: "what do I do?" -->
+<div id="help-backdrop" class="modal-backdrop" role="dialog" aria-modal="true"
+     aria-labelledby="help-title" onclick="if(event.target===this)closeHelp()">
+  <div class="modal modal-help">
+    <div class="help-head">
+      <div>
+        <div class="help-eyebrow">How it works</div>
+        <h2 id="help-title">One runsheet in, one ProPresenter playlist out.</h2>
+      </div>
+      <button class="btn btn-dim btn-sm help-close" id="help-close"
+              onclick="closeHelp()" aria-label="Close help">✕</button>
+    </div>
+    <ol class="help-steps">
+      <li class="help-step">
+        <span class="help-num" aria-hidden="true">1</span>
+        <div>
+          <div class="help-step-title">Drop in your runsheet</div>
+          <p>A PDF or a screenshot, whatever you were sent. Drop it on Step&nbsp;1.</p>
+        </div>
+      </li>
+      <li class="help-step">
+        <span class="help-num" aria-hidden="true">2</span>
+        <div>
+          <div class="help-step-title">Let the AI read it</div>
+          <p>It picks out every item on the sheet: songs, sermon, MC moments, countdowns. About ten seconds.</p>
+        </div>
+      </li>
+      <li class="help-step">
+        <span class="help-num" aria-hidden="true">3</span>
+        <div>
+          <div class="help-step-title">Get your playlist</div>
+          <p>Songs are matched to your ProPresenter library and the finished playlist appears in ProPresenter, ready for Sunday.</p>
+        </div>
+      </li>
+    </ol>
+    <div class="help-foot">
+      <span class="help-foot-icon" aria-hidden="true">⚙</span>
+      <p>Stuck? Most problems live in the panel on the left: ProPresenter’s address and your song library.</p>
+    </div>
   </div>
 </div>
 

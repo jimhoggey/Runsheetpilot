@@ -172,24 +172,42 @@ header .badge {
      hidden. Only someone fiddling with it discovers the easter egg. */
   user-select: none;
 }
-.quit-btn {
+/* Help lives where Quit used to. Quiet at rest, accent on hover — it is
+   a door, not an alarm. The ? chip is the one bit of colour so the eye
+   finds it on a first visit without it competing with Step 1. */
+.help-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   background: rgba(255,255,255,0.04);
   color: var(--muted);
   border: 1px solid var(--border-2);
-  padding: 5px 12px;
+  padding: 4px 12px 4px 6px;
   border-radius: var(--r-1);
   font-size: 0.73rem;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  transition: background .15s, border-color .15s, color .15s, transform .06s;
+  transition: background .15s, border-color .15s, color .15s, transform .12s;
 }
-.quit-btn:hover {
-  background: rgba(239,68,68,0.14);
-  border-color: rgba(239,68,68,0.40);
-  color: #fca5a5;
+.help-btn-q {
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.68rem;
+  font-weight: 800;
+  background: var(--acc-soft);
+  color: var(--acc-2);
+  transition: background .15s, color .15s;
 }
-.quit-btn:active { transform: translateY(1px); }
+.help-btn:hover {
+  background: var(--acc-soft);
+  border-color: rgba(59,130,246,0.40);
+  color: var(--text);
+}
+.help-btn:hover .help-btn-q { background: #2563eb; color: #fff; }
+.help-btn:active { transform: scale(0.97); }
 
 /* ─── layout ───────────────────────────────────────────────────────────── */
 /* The sidebar is a PUSH drawer (v2.8.0): closed, the 3-step flow owns the
@@ -678,7 +696,7 @@ code {
 /* Keyboard focus on buttons: the glow ring plus the global :focus-visible
    outline further down. The ring alone is 16% alpha — it read at 1.18:1
    against the page, so it was never a focus indicator by itself. */
-button:focus-visible, .quit-btn:focus-visible {
+button:focus-visible {
   box-shadow: var(--ring);
 }
 
@@ -1182,7 +1200,7 @@ button:focus-visible, .quit-btn:focus-visible {
 }
 .badge-check {
   /* Rendered LEFT of the version pill (order:-1) so the tab grows into
-     the empty header space instead of shoving the Quit button. */
+     the empty header space instead of shoving the Help button. */
   order: -1;
   max-width: 0;
   opacity: 0;
@@ -1334,7 +1352,7 @@ body { animation: page-in .4s ease both; }
    badge · title · meta · button, button pinned to the card's right edge.
    (The base header grid is 3 columns; without this the button wrapped
    onto its own row.) */
-/* Start over sits in the header's top-right corner, after Quit — global
+/* Start over sits in the header's top-right corner, after Help — global
    scene controls live together up there, always at full brightness. */
 #reset-btn { flex-shrink: 0; white-space: nowrap; color: var(--text); }
 
@@ -1508,4 +1526,104 @@ body { animation: page-in .4s ease both; }
 }
 @media (prefers-reduced-motion: reduce) {
   .whatsnew-card, .whatsnew-wave, .whatsnew-notes li { animation: none; }
+}
+
+/* ─── Help card ────────────────────────────────────────────────────────── */
+/* Reuses .modal-backdrop / .modal for the blur, the centred scale-in and
+   the shadow, then overrides the editor-sized defaults. The numbered
+   badges echo the active step badge on the page behind, so the "1 2 3"
+   in the card are visibly the same 1 2 3 the volunteer is about to use. */
+.modal-help {
+  max-width: 520px;
+  height: auto;
+  gap: var(--s-5);
+  padding: var(--s-6) var(--s-6) var(--s-5);
+}
+.help-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.help-eyebrow {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--acc-2);
+  margin-bottom: 6px;
+}
+.modal-help h2 {
+  font-size: 1.12rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+.help-close { padding: 4px 9px; flex-shrink: 0; }
+.help-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.help-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  /* Land one after the other. Rare surface, so a little ceremony is fine;
+     60 ms apart keeps it under the "slow" line. */
+  animation: help-step-in .28s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.help-step:nth-child(2) { animation-delay: 60ms; }
+.help-step:nth-child(3) { animation-delay: 120ms; }
+@keyframes help-step-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.help-num {
+  flex-shrink: 0;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: #fff;
+  /* One shade deeper than the page's step badge so white numerals clear
+     4.5:1 (5.2:1 at the light end); the glow keeps it reading as the same
+     family as the active step. */
+  background: linear-gradient(180deg, #2563eb, #1d4ed8);
+  box-shadow: 0 0 0 4px var(--acc-soft);
+}
+.help-step-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin: 5px 0 3px;
+}
+.help-step p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+.help-foot {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 14px;
+  border-radius: var(--r-2);
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.help-foot-icon { color: var(--acc-2); line-height: 1.5; }
+.help-foot p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-step { animation: none; }
 }
