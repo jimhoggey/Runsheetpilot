@@ -174,7 +174,7 @@ from .config import DATA_DIR, VERSION
 
 log = logging.getLogger("pp_runsheet")
 
-REPO = "jimhoggey/propresenter-runsheet-builder"
+REPO = "jimhoggey/RunsheetPilot-App"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 ASSET_MAC = "Runsheet-Pilot-mac.zip"
@@ -1189,7 +1189,7 @@ function renderUpdateState(st) {
       '⚠ Update failed: ' + (st.error || 'unknown error') + ' ';
     const link = document.getElementById('update-notes-link');
     link.textContent = 'Download manually';
-    link.href = 'https://github.com/jimhoggey/propresenter-runsheet-builder/releases/latest';
+    link.href = 'https://github.com/jimhoggey/RunsheetPilot-App/releases/latest';
     link.hidden = false;
     const btn = document.getElementById('update-apply-btn');
     btn.disabled = false;

@@ -998,7 +998,7 @@ function closeSettingsModal() {
 // TODO(owner): point this at your real store/landing URL once you pick one
 // (Gumroad / Lemon Squeezy / Stripe). For now it links to the README.
 const SERVICE_MATE_BUY_URL =
-  'https://github.com/jimhoggey/Runsheetpilot#service-mate-paid-add-on';
+  'https://github.com/jimhoggey/RunsheetPilot-App#service-mate-paid-add-on';
 
 let _licenseState = 'trial_unstarted';
 
@@ -2174,7 +2174,7 @@ function renderUpdateState(st) {
     _setPill('⚠ Update failed — retry', {available: true});
     setStatus('Update failed: ' + escapeHtml(st.error || 'unknown error') +
               ' — you can also download it manually from ' +
-              '<a href="https://github.com/jimhoggey/Runsheetpilot/releases/latest" ' +
+              '<a href="https://github.com/jimhoggey/RunsheetPilot-App/releases/latest" ' +
               'target="_blank" rel="noopener">the releases page</a>.', 'var(--org)');
   } else if (st.state !== 'downloading' && st.state !== 'verifying'
              && st.state !== 'applying') {

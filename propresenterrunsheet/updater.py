@@ -44,7 +44,7 @@ log = logging.getLogger("pp_runsheet")
 # redirects by default, so builds up to v2.3.6 keep updating fine — but that
 # redirect only survives while nobody claims the old name, so point at the
 # real one.
-REPO = "jimhoggey/Runsheetpilot"
+REPO = "jimhoggey/RunsheetPilot-App"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 # The LIST endpoint, which is what we actually prefer. /releases/latest is
 # GitHub's "latest" POINTER: the most recently PUBLISHED non-draft,

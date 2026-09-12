@@ -33,7 +33,7 @@ Four pieces, mirroring existing patterns (licensing.py / routes/license.py / lic
 
 State machine exposed to the UI: `idle → available → downloading → verifying → ready → applying → error`.
 
-- `check_for_update() -> dict | None` — GET `https://api.github.com/repos/jimhoggey/propresenter-runsheet-builder/releases/latest`, 5 s timeout. Parse tag (`v2.3.0` → `(2,3,0)`), tuple-compare against `VERSION`. Returns `{version, notes_url, asset_url, sha_url}` or `None`. Any exception → log + `None`.
+- `check_for_update() -> dict | None` — GET `https://api.github.com/repos/jimhoggey/RunsheetPilot-App/releases/latest`, 5 s timeout. Parse tag (`v2.3.0` → `(2,3,0)`), tuple-compare against `VERSION`. Returns `{version, notes_url, asset_url, sha_url}` or `None`. Any exception → log + `None`.
 - `_semver(s) -> tuple` — pure, unit-tested. Non-semver tags → treated as no update.
 - `_platform_asset(assets) -> dict | None` — picks `Runsheet-Pilot-mac.zip` (darwin) / `Runsheet-Pilot-windows.exe` (win32) from the release's asset list by exact name. Missing asset → no update offered (old releases without stable assets are invisible to the updater — correct, since they predate it).
 - `download_and_verify(info) -> Path` — stream to `DATA_DIR/updates/` with `.part` suffix, rename when complete, SHA-256 against the entry in `SHA256SUMS.txt` (downloaded from the same release). Mismatch → delete + raise.
